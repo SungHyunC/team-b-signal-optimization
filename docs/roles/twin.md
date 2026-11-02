@@ -2,7 +2,9 @@
 
 Owner: **Seong Hyeon (Joshua) Kim** (software & integration).
 Code: `teamb/twin/` (server) and `teamb/twin/static/` (web app, no build step).
-Tests: `tests/test_twin.py` (9 tests, ~15 s: one short SUMO session at max speed plus REST checks).
+Tests: `tests/test_twin.py` (9 tests, ~15 s: one short SUMO session at max speed plus REST checks),
+`tests/test_site.py` (online demo: encoding, a short recorded run, the static page).
+Online demo: **https://sunghyunc.github.io/team-b-signal-optimization/** (recorded runs, see below).
 
 The twin runs one live SUMO simulation and shows it in 3D in the browser: cars, trucks, buses,
 ambulances and fire trucks drive through the four signals, the signal heads change color, queues
@@ -38,6 +40,31 @@ seconds to fast-forward to), `speed` (1, 2, 5, 10, 20, max), `camera` (overview,
 Keys: **Space** play/pause · **.** one step · **0** overview · **1–4** junctions · **T** top view ·
 **F** follow the newest emergency vehicle · **P** hide the side panels · **Esc** close the road menu.
 
+## Online demo (GitHub Pages)
+
+GitHub Pages only serves files, so SUMO cannot run there. `teamb/twin/site.py` simulates each
+run in `DEMO_RUNS` once (same `SimEnv`, seed 1), saves every frame, and publishes the same web
+app with `window.TWIN_STATIC` set. `static/js/replay.js` then plays the files through the same
+interface as the WebSocket, so the panels and the 3D view work unchanged: pick a run, play,
+pause, change speed, click anywhere on the timeline (a recording can rewind). Actions, the AI
+card's buttons and the coverage/EV switches explain that they need the live twin.
+
+```bash
+python -m teamb.twin.site build     # ~3 min: records all runs into site/ (gitignored)
+python -m teamb.twin.site serve     # http://127.0.0.1:8001, check it before publishing
+python -m teamb.twin.site deploy    # build + force-push site/ to the gh-pages branch
+```
+
+- **Add a run:** append a `DemoRun(scenario, controller, note)` to `DEMO_RUNS`. A variant with
+  different `controller_params` needs its own `key` and `label` (see the detector cross-check run).
+- **Data:** `data/runs/<id>/run.json` (status, vehicle ids, events, KPI history) plus one file per
+  5 simulated minutes, loaded only when playback reaches it (~0.7 MB per 30 min over the wire).
+  Vehicles are delta-encoded (`encode_vehicles`), unchanged fields are left out.
+- **Results tab:** `results/experiments/*/report.json` when you have them, else the published
+  copies in `docs/results/reports/`.
+- **When to redeploy:** after a change on `main` that shows in the twin (controllers, scenarios,
+  web app). The gh-pages branch is replaced on every deploy, so it never grows.
+
 ## What is where
 
 | File | What it does |
@@ -46,6 +73,8 @@ Keys: **Space** play/pause · **.** one step · **0** overview · **1–4** junc
 | `twin/session.py` | `TwinSession`: the one live `SimEnv`, its sim thread, pacing, fast-forward, broadcasting |
 | `twin/meta.py` | `/api/meta` (controllers, scenarios, closable roads, EV routes, attack targets), `/api/results` |
 | `twin/vendor.py` | downloads the pinned three.js files for offline use |
+| `twin/site.py` | online demo: records `DEMO_RUNS`, writes the static site, publishes it on gh-pages |
+| `static/js/replay.js` | online demo: `ReplaySocket` plays recorded runs like the server would |
 | `static/index.html`, `static/css/twin.css` | page layout and the dark "operations center" style |
 | `static/js/main.js` | entry point: loads meta + geometry, builds everything, routes WebSocket messages |
 | `static/js/net.js` | REST helpers, `TwinSocket` (auto-reconnect, `control()`/`command()` return the reply) |
@@ -153,6 +182,10 @@ implements `pending_recommendation()` gets the AI card.
   between frames, which can cut corners slightly at high speed.
 - The city (buildings, trees) is decorative and generated from the road layout; only roads,
   signals and vehicles come from the simulation.
+- The online demo shows recordings: one seed per run, and nothing can be dispatched, closed or
+  approved there. Positions are stored to 10 cm and headings to 1°, which is invisible on screen.
+- On phones the 3D view takes touch drags for the camera; scroll the page from the top bar or
+  the panels below it.
 
 ## Next improvements (good first tasks)
 

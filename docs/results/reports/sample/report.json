@@ -1,0 +1,1764 @@
+{
+  "name": "sample",
+  "created": "2026-11-02T00:55:30",
+  "baseline": "fixed_time",
+  "rows": [
+    {
+      "scenario": "emergency",
+      "controller": "fixed_time",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 72.14,
+        "ci95": 5.834
+      },
+      "p95_travel_time_s": {
+        "mean": 277.867,
+        "ci95": 34.839
+      },
+      "stops_per_veh": {
+        "mean": 1.779,
+        "ci95": 0.308
+      },
+      "unfinished_pct": {
+        "mean": 11.877,
+        "ci95": 3.249
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 110.267,
+        "ci95": 7.638
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_diff_s": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "p_value": null,
+      "n_paired": 3,
+      "variant": "fixed_time",
+      "controller_params": {},
+      "scenario_variant": "emergency",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": true,
+      "baseline_match": "self",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 163.357,
+          "ci95": 6.725
+        },
+        "throughput_veh_h": {
+          "mean": 3019.333,
+          "ci95": 169.324
+        },
+        "arterial_mean_delay_s": {
+          "mean": 108.437,
+          "ci95": 13.242
+        },
+        "cross_mean_delay_s": {
+          "mean": 32.19,
+          "ci95": 4.9
+        },
+        "queue_p95_veh": {
+          "mean": 15.667,
+          "ci95": 1.434
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 72.253,
+          "ci95": 5.871
+        },
+        "ev_mean_delay_s": {
+          "mean": 38.837,
+          "ci95": 7.831
+        },
+        "ev_extra_delay_others_s": {
+          "mean": 21.383,
+          "ci95": 11.624
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1509.667,
+          "ci95": 84.662
+        },
+        "unfinished": {
+          "mean": 203.333,
+          "ci95": 54.221
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 74.04,
+          "ci95": 11.138
+        },
+        "wall_time_s": {
+          "mean": 45.367,
+          "ci95": 5.732
+        }
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "actuated",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 30.873,
+        "ci95": 4.69
+      },
+      "p95_travel_time_s": {
+        "mean": 173.567,
+        "ci95": 7.185
+      },
+      "stops_per_veh": {
+        "mean": 1.154,
+        "ci95": 0.261
+      },
+      "unfinished_pct": {
+        "mean": 6.96,
+        "ci95": 2.441
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 95.067,
+        "ci95": 4.167
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 57.151,
+        "ci95": 8.527
+      },
+      "mean_delay_diff_s": {
+        "mean": -41.267,
+        "ci95": 8.834
+      },
+      "p_value": 0.0025,
+      "n_paired": 3,
+      "improvement_of_means_pct": 57.204,
+      "variant": "actuated",
+      "controller_params": {},
+      "scenario_variant": "emergency",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": false,
+      "baseline_match": "exact",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 120.507,
+          "ci95": 6.562
+        },
+        "throughput_veh_h": {
+          "mean": 3187.333,
+          "ci95": 60.718
+        },
+        "arterial_mean_delay_s": {
+          "mean": 35.197,
+          "ci95": 8.061
+        },
+        "cross_mean_delay_s": {
+          "mean": 25.693,
+          "ci95": 0.484
+        },
+        "queue_p95_veh": {
+          "mean": 4.0,
+          "ci95": 0.0
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 30.897,
+          "ci95": 4.708
+        },
+        "ev_mean_delay_s": {
+          "mean": 23.53,
+          "ci95": 4.346
+        },
+        "ev_extra_delay_others_s": {
+          "mean": 6.193,
+          "ci95": 2.891
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1593.667,
+          "ci95": 30.359
+        },
+        "unfinished": {
+          "mean": 119.333,
+          "ci95": 44.603
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 30.02,
+          "ci95": 4.247
+        },
+        "wall_time_s": {
+          "mean": 49.6,
+          "ci95": 3.249
+        }
+      },
+      "p_holm": 0.005
+    },
+    {
+      "scenario": "emergency",
+      "controller": "coordinated",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 48.673,
+        "ci95": 2.465
+      },
+      "p95_travel_time_s": {
+        "mean": 251.15,
+        "ci95": 19.278
+      },
+      "stops_per_veh": {
+        "mean": 1.24,
+        "ci95": 0.027
+      },
+      "unfinished_pct": {
+        "mean": 8.013,
+        "ci95": 2.425
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 91.667,
+        "ci95": 13.28
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 32.464,
+        "ci95": 7.967
+      },
+      "mean_delay_diff_s": {
+        "mean": -23.467,
+        "ci95": 7.638
+      },
+      "p_value": 0.0057,
+      "n_paired": 3,
+      "improvement_of_means_pct": 32.529,
+      "variant": "coordinated",
+      "controller_params": {},
+      "scenario_variant": "emergency",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": false,
+      "baseline_match": "exact",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 138.777,
+          "ci95": 4.504
+        },
+        "throughput_veh_h": {
+          "mean": 3151.333,
+          "ci95": 73.753
+        },
+        "arterial_mean_delay_s": {
+          "mean": 59.733,
+          "ci95": 3.662
+        },
+        "cross_mean_delay_s": {
+          "mean": 35.653,
+          "ci95": 0.553
+        },
+        "queue_p95_veh": {
+          "mean": 9.333,
+          "ci95": 1.434
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 48.763,
+          "ci95": 2.482
+        },
+        "ev_mean_delay_s": {
+          "mean": 20.223,
+          "ci95": 13.182
+        },
+        "ev_extra_delay_others_s": {
+          "mean": 24.277,
+          "ci95": 3.346
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1575.667,
+          "ci95": 36.877
+        },
+        "unfinished": {
+          "mean": 137.333,
+          "ci95": 44.186
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 47.357,
+          "ci95": 2.289
+        },
+        "wall_time_s": {
+          "mean": 47.567,
+          "ci95": 4.233
+        }
+      },
+      "p_holm": 0.0057
+    },
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 29.777,
+        "ci95": 1.784
+      },
+      "p95_travel_time_s": {
+        "mean": 167.55,
+        "ci95": 7.435
+      },
+      "stops_per_veh": {
+        "mean": 1.039,
+        "ci95": 0.111
+      },
+      "unfinished_pct": {
+        "mean": 6.9,
+        "ci95": 2.584
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 90.6,
+        "ci95": 6.459
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 58.694,
+        "ci95": 4.234
+      },
+      "mean_delay_diff_s": {
+        "mean": -42.363,
+        "ci95": 6.196
+      },
+      "p_value": 0.0012,
+      "n_paired": 3,
+      "improvement_of_means_pct": 58.724,
+      "variant": "max_pressure",
+      "controller_params": {},
+      "scenario_variant": "emergency",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": false,
+      "baseline_match": "exact",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 119.507,
+          "ci95": 0.316
+        },
+        "throughput_veh_h": {
+          "mean": 3189.333,
+          "ci95": 62.521
+        },
+        "arterial_mean_delay_s": {
+          "mean": 29.927,
+          "ci95": 2.348
+        },
+        "cross_mean_delay_s": {
+          "mean": 29.597,
+          "ci95": 1.146
+        },
+        "queue_p95_veh": {
+          "mean": 3.333,
+          "ci95": 1.434
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 29.807,
+          "ci95": 1.774
+        },
+        "ev_mean_delay_s": {
+          "mean": 19.273,
+          "ci95": 6.746
+        },
+        "ev_extra_delay_others_s": {
+          "mean": 5.45,
+          "ci95": 3.38
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1594.667,
+          "ci95": 31.261
+        },
+        "unfinished": {
+          "mean": 118.333,
+          "ci95": 46.962
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 28.887,
+          "ci95": 1.739
+        },
+        "wall_time_s": {
+          "mean": 47.633,
+          "ci95": 1.456
+        }
+      },
+      "p_holm": 0.0036
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "fixed_time",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 71.027,
+        "ci95": 10.494
+      },
+      "p95_travel_time_s": {
+        "mean": 272.667,
+        "ci95": 74.378
+      },
+      "stops_per_veh": {
+        "mean": 1.625,
+        "ci95": 0.38
+      },
+      "unfinished_pct": {
+        "mean": 10.27,
+        "ci95": 1.044
+      },
+      "ev_mean_travel_time_s": {
+        "mean": null,
+        "ci95": null
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_diff_s": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "p_value": null,
+      "n_paired": 3,
+      "variant": "fixed_time",
+      "controller_params": {},
+      "scenario_variant": "rush_hour",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": true,
+      "baseline_match": "self",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 161.753,
+          "ci95": 13.01
+        },
+        "throughput_veh_h": {
+          "mean": 3065.333,
+          "ci95": 132.052
+        },
+        "arterial_mean_delay_s": {
+          "mean": 106.917,
+          "ci95": 18.296
+        },
+        "cross_mean_delay_s": {
+          "mean": 30.253,
+          "ci95": 5.174
+        },
+        "queue_p95_veh": {
+          "mean": 16.0,
+          "ci95": 2.484
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 71.027,
+          "ci95": 10.494
+        },
+        "ev_mean_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "ev_extra_delay_others_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1532.667,
+          "ci95": 66.026
+        },
+        "unfinished": {
+          "mean": 175.333,
+          "ci95": 12.504
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 70.147,
+          "ci95": 14.66
+        },
+        "wall_time_s": {
+          "mean": 35.933,
+          "ci95": 9.832
+        }
+      }
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "actuated",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 30.71,
+        "ci95": 4.965
+      },
+      "p95_travel_time_s": {
+        "mean": 173.0,
+        "ci95": 17.212
+      },
+      "stops_per_veh": {
+        "mean": 1.116,
+        "ci95": 0.205
+      },
+      "unfinished_pct": {
+        "mean": 7.153,
+        "ci95": 2.51
+      },
+      "ev_mean_travel_time_s": {
+        "mean": null,
+        "ci95": null
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 56.72,
+        "ci95": 6.687
+      },
+      "mean_delay_diff_s": {
+        "mean": -40.317,
+        "ci95": 9.099
+      },
+      "p_value": 0.0027,
+      "n_paired": 3,
+      "improvement_of_means_pct": 56.763,
+      "variant": "actuated",
+      "controller_params": {},
+      "scenario_variant": "rush_hour",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": false,
+      "baseline_match": "exact",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 120.337,
+          "ci95": 6.82
+        },
+        "throughput_veh_h": {
+          "mean": 3171.333,
+          "ci95": 33.083
+        },
+        "arterial_mean_delay_s": {
+          "mean": 34.503,
+          "ci95": 8.458
+        },
+        "cross_mean_delay_s": {
+          "mean": 26.17,
+          "ci95": 0.701
+        },
+        "queue_p95_veh": {
+          "mean": 3.667,
+          "ci95": 1.434
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 30.71,
+          "ci95": 4.965
+        },
+        "ev_mean_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "ev_extra_delay_others_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1585.667,
+          "ci95": 16.542
+        },
+        "unfinished": {
+          "mean": 122.333,
+          "ci95": 46.167
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 29.873,
+          "ci95": 5.041
+        },
+        "wall_time_s": {
+          "mean": 32.933,
+          "ci95": 1.745
+        }
+      },
+      "p_holm": 0.0081
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "coordinated",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 48.377,
+        "ci95": 2.193
+      },
+      "p95_travel_time_s": {
+        "mean": 254.833,
+        "ci95": 16.865
+      },
+      "stops_per_veh": {
+        "mean": 1.176,
+        "ci95": 0.053
+      },
+      "unfinished_pct": {
+        "mean": 8.29,
+        "ci95": 2.621
+      },
+      "ev_mean_travel_time_s": {
+        "mean": null,
+        "ci95": null
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 31.76,
+        "ci95": 8.434
+      },
+      "mean_delay_diff_s": {
+        "mean": -22.65,
+        "ci95": 9.425
+      },
+      "p_value": 0.0092,
+      "n_paired": 3,
+      "improvement_of_means_pct": 31.889,
+      "variant": "coordinated",
+      "controller_params": {},
+      "scenario_variant": "rush_hour",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": false,
+      "baseline_match": "exact",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 138.623,
+          "ci95": 4.518
+        },
+        "throughput_veh_h": {
+          "mean": 3132.667,
+          "ci95": 85.677
+        },
+        "arterial_mean_delay_s": {
+          "mean": 59.623,
+          "ci95": 2.941
+        },
+        "cross_mean_delay_s": {
+          "mean": 35.167,
+          "ci95": 0.77
+        },
+        "queue_p95_veh": {
+          "mean": 10.0,
+          "ci95": 2.484
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 48.377,
+          "ci95": 2.193
+        },
+        "ev_mean_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "ev_extra_delay_others_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1566.333,
+          "ci95": 42.838
+        },
+        "unfinished": {
+          "mean": 141.667,
+          "ci95": 47.29
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 47.323,
+          "ci95": 2.036
+        },
+        "wall_time_s": {
+          "mean": 35.833,
+          "ci95": 6.598
+        }
+      },
+      "p_holm": 0.011
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 29.19,
+        "ci95": 2.91
+      },
+      "p95_travel_time_s": {
+        "mean": 167.667,
+        "ci95": 14.557
+      },
+      "stops_per_veh": {
+        "mean": 1.011,
+        "ci95": 0.172
+      },
+      "unfinished_pct": {
+        "mean": 6.903,
+        "ci95": 3.15
+      },
+      "ev_mean_travel_time_s": {
+        "mean": null,
+        "ci95": null
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 58.746,
+        "ci95": 9.876
+      },
+      "mean_delay_diff_s": {
+        "mean": -41.837,
+        "ci95": 13.347
+      },
+      "p_value": 0.0055,
+      "n_paired": 3,
+      "improvement_of_means_pct": 58.903,
+      "variant": "max_pressure",
+      "controller_params": {},
+      "scenario_variant": "rush_hour",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": false,
+      "baseline_match": "exact",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 118.92,
+          "ci95": 3.376
+        },
+        "throughput_veh_h": {
+          "mean": 3180.0,
+          "ci95": 75.025
+        },
+        "arterial_mean_delay_s": {
+          "mean": 28.517,
+          "ci95": 5.731
+        },
+        "cross_mean_delay_s": {
+          "mean": 30.0,
+          "ci95": 0.569
+        },
+        "queue_p95_veh": {
+          "mean": 3.333,
+          "ci95": 1.434
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 29.19,
+          "ci95": 2.91
+        },
+        "ev_mean_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "ev_extra_delay_others_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 1590.0,
+          "ci95": 37.513
+        },
+        "unfinished": {
+          "mean": 118.0,
+          "ci95": 56.159
+        },
+        "never_inserted": {
+          "mean": 0.667,
+          "ci95": 2.869
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 28.333,
+          "ci95": 2.726
+        },
+        "wall_time_s": {
+          "mean": 38.333,
+          "ci95": 11.706
+        }
+      },
+      "p_holm": 0.011
+    }
+  ],
+  "definitions": {
+    "mean_delay_s": "Mean SUMO timeLoss (s/veh) of trips that depart in [warmup, end) and finish (primary endpoint).",
+    "ci95": "Half-width of the 95 % t confidence interval over seeds (mean \u00b1 ci95); null with one seed.",
+    "delta_vs_baseline_pct": "Paired improvement in mean delay vs the baseline on matched seeds: mean over seeds of 100 \u00d7 (baseline \u2212 candidate) / baseline. Positive = better (less delay) than the baseline.",
+    "mean_delay_diff_s": "Paired difference candidate \u2212 baseline in mean delay (s/veh); negative = better.",
+    "p_value": "Two-sided paired t-test on the per-seed delay differences.",
+    "p_holm": "p_value after Holm\u2013Bonferroni correction over the candidates of the same scenario.",
+    "unfinished_pct": "100 \u00d7 (trips still in the network at the end + trips never inserted) / (completed + unfinished) (PERF-01).",
+    "ev_mean_travel_time_s": "Mean travel time of emergency vehicles that finished.",
+    "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage."
+  },
+  "matrix": {
+    "scenarios": [
+      "emergency",
+      "rush_hour"
+    ],
+    "controllers": [
+      "actuated",
+      "coordinated",
+      "fixed_time",
+      "max_pressure"
+    ],
+    "scenario_params": {},
+    "controller_params": {},
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "coverages": [
+      1.0
+    ],
+    "samplings": [
+      "uniform"
+    ],
+    "ev_preemption": [
+      true
+    ],
+    "end_time": [
+      2700.0
+    ],
+    "warmup_s": 900
+  },
+  "coverage_sweep": [],
+  "estimation": [
+    {
+      "sampling": "uniform",
+      "coverage": 1.0,
+      "n_runs": 24,
+      "probe_share": {
+        "mean": 1.0,
+        "ci95": 0.0
+      },
+      "probe_share_arterial": {
+        "mean": 1.0,
+        "ci95": 0.0
+      },
+      "probe_share_cross": {
+        "mean": 1.0,
+        "ci95": 0.0
+      },
+      "est_queue_mae": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_bias": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_bias_arterial": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_bias_cross": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_adj_mae": {
+        "mean": 0.03,
+        "ci95": 0.003
+      },
+      "est_queue_adj_bias": {
+        "mean": 0.03,
+        "ci95": 0.003
+      },
+      "det_queue_mae": {
+        "mean": 0.237,
+        "ci95": 0.051
+      },
+      "fused_queue_mae": {
+        "mean": 0.208,
+        "ci95": 0.022
+      },
+      "est_flow_mae": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_flow_bias": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "false_alarm_s": {
+        "mean": 0.0,
+        "ci95": 0.0
+      }
+    }
+  ],
+  "security": [],
+  "recovery": [],
+  "emergency": [
+    {
+      "scenario": "emergency",
+      "controller": "actuated",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "ev_count": {
+        "mean": 5.0,
+        "ci95": 0.0
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 95.067,
+        "ci95": 4.167
+      },
+      "ev_mean_delay_s": {
+        "mean": 23.53,
+        "ci95": 4.346
+      },
+      "others_mean_delay_s": {
+        "mean": 30.897,
+        "ci95": 4.708
+      },
+      "ev_extra_delay_others_s": {
+        "mean": 6.193,
+        "ci95": 2.891
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "coordinated",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "ev_count": {
+        "mean": 5.0,
+        "ci95": 0.0
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 91.667,
+        "ci95": 13.28
+      },
+      "ev_mean_delay_s": {
+        "mean": 20.223,
+        "ci95": 13.182
+      },
+      "others_mean_delay_s": {
+        "mean": 48.763,
+        "ci95": 2.482
+      },
+      "ev_extra_delay_others_s": {
+        "mean": 24.277,
+        "ci95": 3.346
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "fixed_time",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "ev_count": {
+        "mean": 5.0,
+        "ci95": 0.0
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 110.267,
+        "ci95": 7.638
+      },
+      "ev_mean_delay_s": {
+        "mean": 38.837,
+        "ci95": 7.831
+      },
+      "others_mean_delay_s": {
+        "mean": 72.253,
+        "ci95": 5.871
+      },
+      "ev_extra_delay_others_s": {
+        "mean": 21.383,
+        "ci95": 11.624
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "ev_count": {
+        "mean": 5.0,
+        "ci95": 0.0
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 90.6,
+        "ci95": 6.459
+      },
+      "ev_mean_delay_s": {
+        "mean": 19.273,
+        "ci95": 6.746
+      },
+      "others_mean_delay_s": {
+        "mean": 29.807,
+        "ci95": 1.774
+      },
+      "ev_extra_delay_others_s": {
+        "mean": 5.45,
+        "ci95": 3.38
+      }
+    }
+  ],
+  "perf01": [
+    {
+      "scenario": "emergency",
+      "controller": "actuated",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1593.67,
+        "ci95": 30.36
+      },
+      "unfinished": {
+        "mean": 119.33,
+        "ci95": 44.6
+      },
+      "unfinished_pct": {
+        "mean": 6.96,
+        "ci95": 2.44
+      },
+      "in_network_at_end": {
+        "mean": 118.67,
+        "ci95": 47.42
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 30.87,
+        "ci95": 4.69
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 30.02,
+        "ci95": 4.25
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "coordinated",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1575.67,
+        "ci95": 36.88
+      },
+      "unfinished": {
+        "mean": 137.33,
+        "ci95": 44.19
+      },
+      "unfinished_pct": {
+        "mean": 8.01,
+        "ci95": 2.43
+      },
+      "in_network_at_end": {
+        "mean": 136.67,
+        "ci95": 46.9
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 48.67,
+        "ci95": 2.47
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 47.36,
+        "ci95": 2.29
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "fixed_time",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1509.67,
+        "ci95": 84.66
+      },
+      "unfinished": {
+        "mean": 203.33,
+        "ci95": 54.22
+      },
+      "unfinished_pct": {
+        "mean": 11.88,
+        "ci95": 3.25
+      },
+      "in_network_at_end": {
+        "mean": 202.67,
+        "ci95": 54.79
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 72.14,
+        "ci95": 5.83
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 74.04,
+        "ci95": 11.14
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1594.67,
+        "ci95": 31.26
+      },
+      "unfinished": {
+        "mean": 118.33,
+        "ci95": 46.96
+      },
+      "unfinished_pct": {
+        "mean": 6.9,
+        "ci95": 2.58
+      },
+      "in_network_at_end": {
+        "mean": 117.67,
+        "ci95": 49.77
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 29.78,
+        "ci95": 1.78
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 28.89,
+        "ci95": 1.74
+      }
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "actuated",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1585.67,
+        "ci95": 16.54
+      },
+      "unfinished": {
+        "mean": 122.33,
+        "ci95": 46.17
+      },
+      "unfinished_pct": {
+        "mean": 7.15,
+        "ci95": 2.51
+      },
+      "in_network_at_end": {
+        "mean": 121.67,
+        "ci95": 49.02
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 30.71,
+        "ci95": 4.96
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 29.87,
+        "ci95": 5.04
+      }
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "coordinated",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1566.33,
+        "ci95": 42.84
+      },
+      "unfinished": {
+        "mean": 141.67,
+        "ci95": 47.29
+      },
+      "unfinished_pct": {
+        "mean": 8.29,
+        "ci95": 2.62
+      },
+      "in_network_at_end": {
+        "mean": 141.0,
+        "ci95": 49.87
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 48.38,
+        "ci95": 2.19
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 47.32,
+        "ci95": 2.04
+      }
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "fixed_time",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1532.67,
+        "ci95": 66.03
+      },
+      "unfinished": {
+        "mean": 175.33,
+        "ci95": 12.5
+      },
+      "unfinished_pct": {
+        "mean": 10.27,
+        "ci95": 1.04
+      },
+      "in_network_at_end": {
+        "mean": 174.67,
+        "ci95": 10.34
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 71.03,
+        "ci95": 10.49
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 70.15,
+        "ci95": 14.66
+      }
+    },
+    {
+      "scenario": "rush_hour",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 1590.0,
+        "ci95": 37.51
+      },
+      "unfinished": {
+        "mean": 118.0,
+        "ci95": 56.16
+      },
+      "unfinished_pct": {
+        "mean": 6.9,
+        "ci95": 3.15
+      },
+      "in_network_at_end": {
+        "mean": 117.33,
+        "ci95": 58.91
+      },
+      "never_inserted": {
+        "mean": 0.67,
+        "ci95": 2.87
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 29.19,
+        "ci95": 2.91
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 28.33,
+        "ci95": 2.73
+      }
+    }
+  ],
+  "compute": {
+    "runs_ok": 24,
+    "runs_failed": 0,
+    "experiment_wall_time_s": 518.1,
+    "sum_run_wall_time_s": 1033.5,
+    "workers": [
+      2
+    ],
+    "simulated_s": 64800.0,
+    "sim_speedup": 62.7,
+    "mean_run_wall_by_controller_s": {
+      "actuated": 42.6,
+      "coordinated": 43.1,
+      "fixed_time": 42.3,
+      "max_pressure": 44.3
+    },
+    "mean_step_ms_by_controller": {
+      "actuated": 15.28,
+      "coordinated": 15.44,
+      "fixed_time": 15.06,
+      "max_pressure": 15.92
+    },
+    "data_bytes": 58590909,
+    "data_mb_per_run": 2.44,
+    "data_mb_per_sim_hour": 3.26
+  },
+  "failed_runs": [],
+  "code_revision": "49b7d1b-dirty",
+  "sumo_version": "SUMO 1.28.0",
+  "commands": [
+    "python -m teamb.experiments run --name sample --scenarios rush_hour,emergency --controllers fixed_time,coordinated,actuated,max_pressure --seeds 1-3 --end 2700 --workers 2"
+  ]
+}

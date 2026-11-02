@@ -11,6 +11,9 @@ export class ActionsPanel {
     this.attack = null;
     const { meta } = ctx;
     const root = $('#actions');
+    if (ctx.static) {
+      root.append(h('div', { class: 'demo-note' }, 'Online demo: these controls need the live twin. Clone the repo and run ', h('code', {}, 'python -m teamb twin'), '.'));
+    }
 
     // --- emergency vehicle
     this.evKind = h('select', { title: 'Vehicle type' });
@@ -73,7 +76,7 @@ export class ActionsPanel {
 
   async send(command, okText) {
     const r = await this.ctx.socket.command(command);
-    if (r.ok === false) toast(r.error || 'command failed', 'error', 6000);
+    if (r.ok === false) toast(r.error || 'command failed', r.demo ? 'info' : 'error', 6000);
     else if (okText) toast(typeof okText === 'function' ? okText(r) : okText, 'ok');
     return r;
   }

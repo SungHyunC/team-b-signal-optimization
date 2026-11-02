@@ -6,10 +6,14 @@
 //
 // URL parameters start a specific demo, e.g.
 //   /?scenario=emergency&controller=coordinated&start=1170&speed=2&camera=J2&present=1
+//
+// The online demo (python -m teamb.twin.site) sets window.TWIN_STATIC: the same app then
+// replays recorded runs (replay.js) instead of talking to a server.
 window.__twinBooted = true; // the three.js imports resolved (see the fallback note in index.html)
 
 import * as THREE from 'three';
-import { api, TwinSocket } from './net.js';
+import { api as liveApi, TwinSocket } from './net.js';
+import { ReplaySocket, staticApi } from './replay.js';
 import { createView } from './scene.js';
 import { buildRoads } from './roads.js';
 import { buildCity } from './city.js';
@@ -45,11 +49,15 @@ function urlConfig(params) {
   return cfg;
 }
 
+const STATIC = window.TWIN_STATIC || null;
+
 async function boot() {
+  const api = STATIC ? staticApi(STATIC.data) : liveApi;
   const [meta, geometry] = await Promise.all([api.get('/api/meta'), api.get('/api/geometry')]);
   const index = indexGeometry(geometry);
   const bus = new Bus();
-  const socket = new TwinSocket();
+  const socket = STATIC ? new ReplaySocket(meta, STATIC.data) : new TwinSocket();
+  if (STATIC) api.player = socket;
 
   // --- 3D scene
   const view = createView($('#scene-host'), geometry);
@@ -59,6 +67,7 @@ async function boot() {
   const vehicles = new VehicleLayer(view.scene);
   const ctx = {
     meta, geometry, index, api, socket, bus, view,
+    static: STATIC, // set in the online demo: panels hide or explain what needs the live twin
     scene: view.scene,
     layers: { roads, signals, vehicles },
     state: { status: null, frame: null },
@@ -108,7 +117,8 @@ async function boot() {
   function autostart(s) {
     // Open the page -> something is moving. A URL config restarts the run if it differs.
     if (params.get('autostart') === '0') return;
-    const want = urlConfig(params);
+    let want = urlConfig(params);
+    if (STATIC && !want.scenario) want = { ...meta.demo.default, ...want }; // the demo opens on its best moment
     const differs = s.config && Object.entries(want).some(([k, v]) => k !== 'speed' && k !== 'start_at' && s.config[k] !== v);
     if (Object.keys(want).length) ctx.topbar.setForm(want);
     if (['idle', 'error', 'finished'].includes(s.state) || differs) ctx.topbar.start(want);

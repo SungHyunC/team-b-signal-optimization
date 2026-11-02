@@ -11,6 +11,8 @@ teamb/network/generated/
 teamb/twin/static/vendor/
 results/*
 !results/README.md
+# online demo build (python -m teamb.twin.site build; published on the gh-pages branch)
+site/
 
 # OS / editor
 .DS_Store

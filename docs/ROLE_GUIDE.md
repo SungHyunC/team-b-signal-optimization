@@ -18,6 +18,8 @@ python -m pytest                           # must pass before you push
 git push -u origin <your-name>/<topic>     # then open a pull request
 ```
 
+- After a change that shows in the twin is merged to `main`, refresh the online demo with
+  `python -m teamb.twin.site deploy` (~3 min; details in [`roles/twin.md`](roles/twin.md#online-demo-github-pages)).
 - Stay inside your folders; if you need a change in someone else's part, ask in Discord or open an issue.
 - Keep the data contracts in [`ARCHITECTURE.md`](ARCHITECTURE.md): adding fields is fine, renaming or removing breaks others.
 - AI coding tools are allowed for everything (research, organizing, code).
@@ -27,7 +29,7 @@ git push -u origin <your-name>/<topic>     # then open a pull request
 | | |
 |---|---|
 | Folders | `teamb/network/`, `teamb/sim/`, `teamb/safety/`, `teamb/controllers/base.py`, `teamb/controllers/fixed_time.py`, `teamb/twin/` |
-| Tests | `tests/test_core.py` (NET-01, SIG-01, SIG-02, REP-01, PERF-01), `tests/test_twin.py` |
+| Tests | `tests/test_core.py` (NET-01, SIG-01, SIG-02, REP-01, PERF-01), `tests/test_twin.py`, `tests/test_site.py` |
 | Done when | one-command reproducible baseline on all four junctions · fixed-time vs coordinated comparison · validated signal transitions · exported results · setup README · demo recording |
 | Next | CI on GitHub Actions running `pytest` · a proper `SimEnv` "fast" option (no sensors / sparse KPIs) to replace the wrappers in `controllers/fast_env.py` · read departed/arrived/time from one simulation subscription · pedestrian phases and protected left turns · twin: split-screen A/B compare, several sessions, demo script for Nov 5 (`python -m teamb.twin.vendor` before going offline) |
 | Notes | [`roles/twin.md`](roles/twin.md) |

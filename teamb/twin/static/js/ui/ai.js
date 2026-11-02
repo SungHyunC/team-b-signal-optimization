@@ -193,7 +193,7 @@ export class AiCard {
       const r = await this.ctx.socket.command(command);
       this.busy = false;
       this.lastKey = null;
-      if (r.ok === false) toast(r.error || 'the controller did not accept the command', 'error', 6000);
+      if (r.ok === false) toast(r.error || 'the controller did not accept the command', r.demo ? 'info' : 'error', 6000);
       else toast(command.type === 'approve' ? 'Plan approved: the new timing is being applied.' : command.type === 'reject' ? 'Plan rejected: keeping the current timing.' : 'Optimization started.', 'ok');
     });
     return b;
