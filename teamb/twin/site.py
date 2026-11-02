@@ -442,7 +442,9 @@ def deploy(out: Path = SITE_DIR, branch: str = "gh-pages", message: str | None =
         _git("init", "--quiet", "--initial-branch", branch, env=env)
         _git("add", "--all", env=env)
         _git("commit", "--quiet", "--message", message, env=env)
-        subprocess.run(["git", "push", "--force", remote, f"HEAD:refs/heads/{branch}"], cwd=config.ROOT, env=env, check=True)
+        # ~30 MB of recordings: a bigger HTTP buffer avoids "the remote end hung up unexpectedly"
+        push = ["git", "-c", "http.postBuffer=524288000", "push", "--force", remote, f"HEAD:refs/heads/{branch}"]
+        subprocess.run(push, cwd=config.ROOT, env=env, check=True)
     urls = github_urls(remote)
     if urls:
         _enable_pages(urls[0].removeprefix("https://github.com/"), branch)
