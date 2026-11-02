@@ -58,6 +58,14 @@ class Controller(ABC):
         """React to a twin command such as {"type": "approve"}; return a short status."""
         return None
 
+    def drain_events(self) -> list[dict]:
+        """Events the controller wants in the run log / twin, e.g. {"t", "type": "plan_applied", ...}."""
+        return []
+
+    def summary(self) -> dict | None:
+        """Controller-specific results for summary.json (e.g. the plan the AI recommender applied)."""
+        return None
+
     def describe(self) -> dict:
         return {"name": self.name, "label": self.label, "description": self.description, "owner": self.owner}
 

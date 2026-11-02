@@ -55,7 +55,9 @@ Every simulation step is 1 s. Runs are 900 s warm-up + 3600 s measurement by def
       "approaches": {               // side the traffic comes FROM: W, E, N, S
         "W": {
           "detector": {"queue": 4, "count": 7, "occupancy": 12.5, "speed": 3.1, "flow_vph": 820.0, "gap_s": 2.4},
-          "probe":    {"queue_est": 8.0, "n": 2, "halted": 2, "speed": 0.4, "flow_est_vph": 760.0, "trusted": true},
+          "probe":    {"queue_est": 8.0, "n": 2, "halted": 2, "speed": 0.4, "flow_est_vph": 760.0, "trusted": true,
+                       "queue_est_adj": 7.1, "penetration_est": 0.28},   // scaled by the *estimated* probe share
+          "fused":    {"queue": 4, "flow_vph": 820.0, "source": "detector"},   // best available estimate
           "oracle":   {"queue": 5, "count": 8}      // ONLY if controller.observation_source == "oracle"
         }
       },
@@ -112,7 +114,8 @@ Register with `@register`; set `name`, `label`, `description`, `owner`, `observa
 
 Vehicle kinds: `car`, `probe` (car sharing navigation data), `ambulance`, `firetruck`, `truck`, `bus`.
 Event types: `started`, `ev_dispatched`, `ev_arrived`, `preemption`, `road_closed`, `road_reopened`,
-`attack_started`, `attack_stopped` (controllers may add their own, e.g. `recommendation_ready`).
+`attack_started`, `attack_stopped`, `event_failed` (an event that could not run, with the reason);
+controllers may add their own, e.g. `recommendation_ready`.
 
 ### Geometry (env → twin), `SimEnv.geometry()` / `Topology.geometry()`
 
@@ -134,13 +137,29 @@ Edge kinds: `arterial`, `cross`, `back`.
 
 ### Signal data for navigation apps (`SimEnv.spat()`, `/api/v1/...`)
 
-`{"t", "source", "junctions": {J: <same as frame.signals[J]>}}`.
+`SimEnv.spat()` → `{"t", "source", "junctions": {J: <same as frame.signals[J]>}}`. While the twin runs,
+`teamb/api/signal_data.py` serves it to apps:
+
+| Endpoint | What |
+|---|---|
+| `GET /api/v1/spat` | signal phase & timing for every junction |
+| `GET /api/v1/spat/{junction}` | one junction (404 if unknown) |
+| `GET /api/v1/advisories` | closures, active emergency preemptions, approaching-emergency warnings |
+| `GET /api/v1/network` | static junction/approach description for app developers |
+
+All return 503 when no simulation is running. Every kind in `teamb.scenarios.events.EVENT_KINDS`
+is also accepted as a twin command. `close()` writes `events_report.json` (EV dispatch → arrival
+times, closure/attack history, reroutes).
 
 ### Run outputs (`results/runs/<run_id>/`)
 
 `summary.json` (metrics + run info), `manifest.json` (code revision, SUMO version, network and
 demand hashes, seed, full config), `trips.csv` (one row per trip), `signal_events.csv`,
-`preemptions.json`, `tripinfo.xml`, `routes.rou.xml`.
+`preemptions.json`, `events_report.json` (EV dispatch → arrival, closures, attacks, reroutes),
+`timeseries.csv` (KPIs every 5 s), `estimation.csv` (probe/detector/fused estimates vs ground truth —
+evaluation only), `detector_intervals.csv`, `evaluation.json` (spillback, recovery, estimation error),
+`tripinfo.xml`, `routes.rou.xml`. Batch experiments live in `results/experiments/<name>/` with
+`summary.csv`, `report.md` and `report.json` (the twin's Results tab reads the latter).
 
 ## Network conventions
 

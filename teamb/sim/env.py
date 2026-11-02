@@ -33,7 +33,7 @@ from teamb.network.build import ensure_network, file_hash
 from teamb.network.topology import load_topology
 from teamb.safety.supervisor import SafetySupervisor
 from teamb.scenarios import get_scenario
-from teamb.scenarios.events import ScenarioRuntime
+from teamb.scenarios.events import EVENT_KINDS, ScenarioRuntime
 from teamb.sensors import SensorSuite
 from teamb.sim.phases import approach_colors, axis_of, build_state, is_conflict_free
 from teamb.sumo_paths import binary
@@ -83,7 +83,7 @@ class SimEnv:
         self.end_time = float(end_time if end_time is not None else self.scenario.duration)
         self.frames = frames
         self.run_id = (
-            f"{self.scenario.name}__{self.controller.name}__s{self.seed}__c{round(self.coverage * 100)}__{uuid.uuid4().hex[:6]}"
+            f"{self.scenario.name}__{self.controller.name}__s{self.seed}__c{round(self.coverage * 100)}__{self.sampling}__{uuid.uuid4().hex[:6]}"
         )
         self.output_dir = Path(output_dir) if output_dir else config.RESULTS / "runs" / self.run_id
         self.label = f"teamb{next(_labels)}_{uuid.uuid4().hex[:6]}"
@@ -207,6 +207,7 @@ class SimEnv:
         self.metrics.on_step(self.t, departed, arrived)
         self.runtime.on_step(self.t)
         self.controller.log(self.step_count)
+        self.events.extend(self.controller.drain_events())
         self.step_count += 1
 
     def _ask(self, observation, state):
@@ -332,7 +333,7 @@ class SimEnv:
         if kind == "set_preemption":
             self.ev_preemption = bool(params.get("enabled", True))
             return {"ok": True, "ev_preemption": self.ev_preemption}
-        if kind in ("dispatch_ev", "close_road", "reopen_road", "start_attack", "stop_attack"):
+        if kind in EVENT_KINDS:  # every scenario event type is also a twin command
             return {"ok": True, "result": getattr(self.runtime, kind)(**params)}
         reply = self.controller.handle_command(command)
         return reply if reply is not None else {"ok": False, "error": f"unknown command '{kind}'"}
@@ -346,10 +347,11 @@ class SimEnv:
                 self.conn.close()
             except Exception:
                 pass
+        controller_summary = self.controller.summary()  # before close(), which may free its state
         self.controller.close()
         departs = getattr(self.scenario, "departs", [])
         planned = sum(1 for d in departs if self.scenario.warmup <= d < self.end_time) + self.extra_in_window
-        metrics = self.metrics.finalize(self.tripinfo_path, planned_in_window=planned)
+        metrics = self.metrics.finalize(self.tripinfo_path, planned_in_window=planned, events=self.events)
         trips = metrics.pop("trips")
         self.summary = {
             "run_id": self.run_id,
@@ -368,6 +370,8 @@ class SimEnv:
             "preemptions": len(self.preemptions),
             "signal_switches": sum(1 for e in self.supervisor.events if e.reason in ("switch", "preempt")) if self.conn else 0,
         }
+        if controller_summary is not None:
+            self.summary["controller_summary"] = controller_summary
         if self.conn is not None:
             self._write_outputs(trips)
         return self.summary
@@ -389,6 +393,7 @@ class SimEnv:
                 "trips": "trips.csv",
                 "signal_events": "signal_events.csv",
                 "preemptions": "preemptions.json",
+                "events": "events_report.json",
                 "tripinfo": "tripinfo.xml",
             },
         }
@@ -404,3 +409,5 @@ class SimEnv:
             for e in self.supervisor.events:
                 writer.writerow([e.t, e.junction, e.requested, e.executed, e.reason, e.detail])
         (out / "preemptions.json").write_text(json.dumps(self.preemptions, indent=2))
+        # per-emergency-vehicle dispatch → arrival times, closure/attack history, reroutes
+        (out / "events_report.json").write_text(json.dumps(self.runtime.report(), indent=2, default=str))
