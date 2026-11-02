@@ -73,19 +73,21 @@ Before presenting offline, run `python -m teamb.twin.vendor` once (saves three.j
 | `earthquake` | several closures plus emergency response |
 | `fake_data_attack` | 99 fake "phones" report a jam on J2's north approach (2020 Berlin case) |
 
-**First results** (rush hour, 3 paired seeds, runs to 2700 s — [`docs/results/sample-report.md`](docs/results/sample-report.md)):
+**First results** (3 paired seeds, synthetic demand — pilot numbers; full tables in [`docs/results/`](docs/results/README.md)):
 
-| Controller | Mean delay (s/veh) | vs fixed-time | Unfinished trips |
-|---|---:|---:|---:|
-| fixed_time | 71.0 | — | 10.3 % |
-| coordinated | 48.4 | −31.8 % | 8.3 % |
-| actuated | 30.7 | −56.7 % | 7.2 % |
-| max_pressure | 29.2 | −58.7 % | 6.9 % |
+| Controller | Rush hour delay (s/veh) | vs fixed-time | Flood closure delay | Fake-data attack delay |
+|---|---:|---:|---:|---:|
+| fixed_time | 71.0 | — | 119.6 | 79.5 |
+| coordinated | 48.4 | −31.8 % | | |
+| ai_recommender | 37.6 | −47.0 % | | |
+| actuated | 30.7 | −56.7 % | 83.8 | |
+| rl | 30.6 | −56.7 % | 170.2 (unstable) | |
+| max_pressure | 29.2 | −58.7 % | 94.7 | 29.4 |
+| max_pressure_probe (navigation data only) | | | | 175.6 → 48.2 with the detector cross-check |
 
-In a separate controller check (rush hour, 2 seeds) RL reached 30.9 s and the AI recommender 35.8 s,
-against 29.7 s for max-pressure and 69.4 s for fixed-time. Under the fake-data attack, max-pressure fed only by navigation data degrades to ≈ 96 s; with the
-detector cross-check on, it stays at ≈ 41 s. These are pilot numbers on synthetic demand; run more
-seeds before quoting them (see the role guide).
+Two lessons for Report 3: the RL controller, trained only on rush hour, breaks down when a road
+floods; and a controller that trusts navigation data alone can be steered by fake reports unless
+it cross-checks the loop detectors. Emergency vehicles cross the corridor in ≈ 90 s instead of 110 s.
 
 **How the prototype tests our three questions from Report 1**
 
