@@ -3,3 +3,18 @@ __pycache__/
 *.pyc
 .venv/
 .ipynb_checkpoints/
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# SUMO outputs (regenerated on demand)
+teamb/network/generated/
+results/*
+!results/README.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
