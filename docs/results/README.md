@@ -63,6 +63,10 @@ sensor estimation accuracy.
 
 ## Reproduce
 
+The `report.json` behind each table is copied in [`reports/`](reports/); the online demo's
+Results tab shows them. After re-running an experiment, copy its new
+`results/experiments/<name>/report.json` there too.
+
 ```bash
 python -m teamb.experiments run --name v1-main --scenarios rush_hour,emergency \
   --controllers fixed_time,coordinated,actuated,max_pressure,ai_recommender,rl --seeds 1-3 --end 2700 \

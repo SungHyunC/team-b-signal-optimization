@@ -1,0 +1,374 @@
+{
+  "name": "v1-security-defense",
+  "created": "2026-11-02T01:25:18",
+  "baseline": "fixed_time",
+  "rows": [
+    {
+      "scenario": "fake_data_attack",
+      "controller": "max_pressure_probe",
+      "coverage": 0.25,
+      "n_seeds": 3,
+      "mean_delay_s": {
+        "mean": 48.233,
+        "ci95": 12.675
+      },
+      "p95_travel_time_s": {
+        "mean": 217.65,
+        "ci95": 56.358
+      },
+      "stops_per_veh": {
+        "mean": 1.482,
+        "ci95": 0.533
+      },
+      "unfinished_pct": {
+        "mean": 2.677,
+        "ci95": 0.296
+      },
+      "ev_mean_travel_time_s": {
+        "mean": null,
+        "ci95": null
+      },
+      "delta_vs_baseline_pct": {
+        "mean": null,
+        "ci95": null
+      },
+      "p_value": null,
+      "n_paired": 0,
+      "variant": "max_pressure_probe-584350",
+      "controller_params": {
+        "defense": true
+      },
+      "scenario_variant": "fake_data_attack",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "is_baseline": false,
+      "baseline_match": null,
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 140.073,
+          "ci95": 14.973
+        },
+        "throughput_veh_h": {
+          "mean": 3250.333,
+          "ci95": 91.494
+        },
+        "arterial_mean_delay_s": {
+          "mean": 35.463,
+          "ci95": 6.387
+        },
+        "cross_mean_delay_s": {
+          "mean": 63.86,
+          "ci95": 20.471
+        },
+        "queue_p95_veh": {
+          "mean": 7.333,
+          "ci95": 1.434
+        },
+        "spillback_duration_s": {
+          "mean": 20.0,
+          "ci95": 86.06
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 48.233,
+          "ci95": 12.675
+        },
+        "ev_mean_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "ev_extra_delay_others_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "recovery_time_s": {
+          "mean": 652.667,
+          "ci95": 192.57
+        },
+        "excess_delay_veh_h": {
+          "mean": 13.015,
+          "ci95": 11.837
+        },
+        "est_queue_mae": {
+          "mean": 1.136,
+          "ci95": 0.209
+        },
+        "est_queue_bias": {
+          "mean": -0.257,
+          "ci95": 0.05
+        },
+        "est_flow_mae": {
+          "mean": 112.403,
+          "ci95": 18.231
+        },
+        "alert_s": {
+          "mean": 1807.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": 2.0,
+          "ci95": 0.0
+        },
+        "completed": {
+          "mean": 3250.333,
+          "ci95": 91.494
+        },
+        "unfinished": {
+          "mean": 89.333,
+          "ci95": 10.04
+        },
+        "never_inserted": {
+          "mean": 0.333,
+          "ci95": 1.434
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 47.563,
+          "ci95": 12.064
+        },
+        "wall_time_s": {
+          "mean": 11.6,
+          "ci95": 0.43
+        }
+      },
+      "p_holm": null
+    }
+  ],
+  "definitions": {
+    "mean_delay_s": "Mean SUMO timeLoss (s/veh) of trips that depart in [warmup, end) and finish (primary endpoint).",
+    "ci95": "Half-width of the 95 % t confidence interval over seeds (mean \u00b1 ci95); null with one seed.",
+    "delta_vs_baseline_pct": "Paired improvement in mean delay vs the baseline on matched seeds: mean over seeds of 100 \u00d7 (baseline \u2212 candidate) / baseline. Positive = better (less delay) than the baseline.",
+    "mean_delay_diff_s": "Paired difference candidate \u2212 baseline in mean delay (s/veh); negative = better.",
+    "p_value": "Two-sided paired t-test on the per-seed delay differences.",
+    "p_holm": "p_value after Holm\u2013Bonferroni correction over the candidates of the same scenario.",
+    "unfinished_pct": "100 \u00d7 (trips still in the network at the end + trips never inserted) / (completed + unfinished) (PERF-01).",
+    "ev_mean_travel_time_s": "Mean travel time of emergency vehicles that finished.",
+    "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage."
+  },
+  "matrix": {
+    "scenarios": [
+      "fake_data_attack"
+    ],
+    "controllers": [
+      "max_pressure_probe-584350"
+    ],
+    "scenario_params": {},
+    "controller_params": {
+      "max_pressure_probe-584350": {
+        "defense": true
+      }
+    },
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "coverages": [
+      0.25
+    ],
+    "samplings": [
+      "uniform"
+    ],
+    "ev_preemption": [
+      true
+    ],
+    "end_time": [],
+    "warmup_s": 900
+  },
+  "coverage_sweep": [],
+  "estimation": [
+    {
+      "sampling": "uniform",
+      "coverage": 0.25,
+      "n_runs": 3,
+      "probe_share": {
+        "mean": 0.262,
+        "ci95": 0.01
+      },
+      "probe_share_arterial": {
+        "mean": 0.262,
+        "ci95": 0.01
+      },
+      "probe_share_cross": {
+        "mean": 0.262,
+        "ci95": 0.027
+      },
+      "est_queue_mae": {
+        "mean": 1.136,
+        "ci95": 0.209
+      },
+      "est_queue_bias": {
+        "mean": -0.257,
+        "ci95": 0.05
+      },
+      "est_queue_bias_arterial": {
+        "mean": -0.137,
+        "ci95": 0.163
+      },
+      "est_queue_bias_cross": {
+        "mean": -0.385,
+        "ci95": 0.207
+      },
+      "est_queue_adj_mae": {
+        "mean": 1.189,
+        "ci95": 0.233
+      },
+      "est_queue_adj_bias": {
+        "mean": -0.204,
+        "ci95": 0.105
+      },
+      "det_queue_mae": {
+        "mean": 0.243,
+        "ci95": 0.118
+      },
+      "fused_queue_mae": {
+        "mean": 0.309,
+        "ci95": 0.144
+      },
+      "est_flow_mae": {
+        "mean": 112.403,
+        "ci95": 18.231
+      },
+      "est_flow_bias": {
+        "mean": 27.932,
+        "ci95": 19.584
+      },
+      "false_alarm_s": {
+        "mean": 0.0,
+        "ci95": 0.0
+      }
+    }
+  ],
+  "security": [
+    {
+      "scenario": "fake_data_attack",
+      "controller": "max_pressure_probe-584350",
+      "coverage": 0.25,
+      "sampling": "uniform",
+      "n_seeds": 3,
+      "detected_share": 1.0,
+      "detection_delay_s": {
+        "mean": 2.0,
+        "ci95": 0.0
+      },
+      "alert_s": {
+        "mean": 1807.0,
+        "ci95": 0.0
+      },
+      "false_alarm_s": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 48.233,
+        "ci95": 12.675
+      }
+    }
+  ],
+  "recovery": [
+    {
+      "scenario": "fake_data_attack",
+      "controller": "max_pressure_probe-584350",
+      "coverage": 0.25,
+      "sampling": "uniform",
+      "n_seeds": 3,
+      "recovery_time_s": {
+        "mean": 652.667,
+        "ci95": 192.57
+      },
+      "censored": 0,
+      "excess_delay_veh_h": {
+        "mean": 13.015,
+        "ci95": 11.837
+      },
+      "spillback_duration_s": {
+        "mean": 20.0,
+        "ci95": 86.06
+      }
+    }
+  ],
+  "emergency": [],
+  "perf01": [
+    {
+      "scenario": "fake_data_attack",
+      "controller": "max_pressure_probe-584350",
+      "coverage": 0.25,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 3,
+      "completed": {
+        "mean": 3250.33,
+        "ci95": 91.49
+      },
+      "unfinished": {
+        "mean": 89.33,
+        "ci95": 10.04
+      },
+      "unfinished_pct": {
+        "mean": 2.68,
+        "ci95": 0.3
+      },
+      "in_network_at_end": {
+        "mean": 89.0,
+        "ci95": 8.96
+      },
+      "never_inserted": {
+        "mean": 0.33,
+        "ci95": 1.43
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 48.23,
+        "ci95": 12.68
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 47.56,
+        "ci95": 12.06
+      }
+    }
+  ],
+  "compute": {
+    "runs_ok": 3,
+    "runs_failed": 0,
+    "experiment_wall_time_s": 13.1,
+    "sum_run_wall_time_s": 38.4,
+    "workers": [
+      3
+    ],
+    "simulated_s": 13500.0,
+    "sim_speedup": 351.7,
+    "mean_run_wall_by_controller_s": {
+      "max_pressure_probe-584350": 12.8
+    },
+    "mean_step_ms_by_controller": {
+      "max_pressure_probe-584350": 2.58
+    },
+    "data_bytes": 11235992,
+    "data_mb_per_run": 3.75,
+    "data_mb_per_sim_hour": 3.0
+  },
+  "failed_runs": [],
+  "code_revision": "c0cbfb9",
+  "sumo_version": "SUMO 1.28.0",
+  "commands": [
+    "python -m teamb.experiments run --name v1-security-defense --scenarios fake_data_attack --controllers max_pressure_probe --coverages 25 --seeds 1-3 --workers 3 --controller-params '{\"max_pressure_probe\": {\"defense\": true}}'"
+  ]
+}

@@ -1,6 +1,7 @@
 // SPaT panel: polls the real signal-data API (GET /api/v1/spat, teamb/api/signal_data.py) once
 // a second and shows what a navigation app would receive: per junction, the color each approach
-// sees, how long it has been shown and the earliest time it can change.
+// sees, how long it has been shown and the earliest time it can change. The online demo has no
+// API server, so there it shows the same fields from the recorded frames.
 import { $, h } from './dom.js';
 
 const ENDPOINT = '/api/v1/spat';
@@ -16,12 +17,10 @@ export class SpatPanel {
     this.table = h('table', {});
     this.pre = h('pre', {});
     this.details = h('details', {}, h('summary', { class: 'act-note' }, 'raw JSON (what an app downloads)'), this.pre);
-    $('#spat').append(
-      h('div', { class: 'endpoint' }, h('span', {}, h('code', {}, `GET ${ENDPOINT}`), this.time), h('a', { href: ENDPOINT, target: '_blank', rel: 'noopener' }, 'open ↗')),
-      this.message,
-      this.table,
-      this.details,
-    );
+    const link = ctx.static
+      ? h('span', { class: 'act-note', title: 'The API answers while the live twin runs (python -m teamb twin)' }, 'from the recording')
+      : h('a', { href: ENDPOINT, target: '_blank', rel: 'noopener' }, 'open ↗');
+    $('#spat').append(h('div', { class: 'endpoint' }, h('span', {}, h('code', {}, `GET ${ENDPOINT}`), this.time), link), this.message, this.table, this.details);
     $('#spat-head').addEventListener('click', () => {
       this.card.classList.toggle('collapsed');
       this.poll();
@@ -35,11 +34,22 @@ export class SpatPanel {
       if (!this.live) this.render(null, s.state === 'loading' ? 'Starting the simulation…' : 'No simulation running.');
     });
     this.render(null, 'waiting for the simulation…');
+    if (ctx.static) {
+      let shown = 0;
+      ctx.bus.on('frame', (f) => {
+        const now = performance.now();
+        if (now - shown < 1000 || this.card.classList.contains('collapsed') || !f.signals) return;
+        shown = now;
+        this.render({ t: f.t, source: 'recording', junctions: f.signals });
+      });
+      return;
+    }
     this.poll();
   }
 
   async poll() {
     clearTimeout(this.timer);
+    if (this.ctx.static) return;
     const open = !this.card.classList.contains('collapsed') && this.visible && !document.hidden && this.live;
     if (open) {
       try {

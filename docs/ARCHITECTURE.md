@@ -117,6 +117,10 @@ Event types: `started`, `ev_dispatched`, `ev_arrived`, `preemption`, `road_close
 `attack_started`, `attack_stopped`, `event_failed` (an event that could not run, with the reason);
 controllers may add their own, e.g. `recommendation_ready`.
 
+The online demo records these frames as they are (`teamb/twin/site.py`): new top-level fields are
+saved too (only when they change), so they reach the online demo after the next deploy.
+`vehicles` must keep its six columns.
+
 ### Geometry (env → twin), `SimEnv.geometry()` / `Topology.geometry()`
 
 `bounds`, `lanes[{id, edge, index, kind, width, speed, length, shape[[x, y]...]}]`,

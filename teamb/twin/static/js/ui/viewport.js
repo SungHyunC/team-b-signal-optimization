@@ -125,6 +125,7 @@ export class ViewportChrome {
     this.title.append(
       h('div', { class: 't1' }, `${sc ? sc.title : s.config.scenario}`),
       h('div', { class: 't2' }, `${ct ? ct.label : s.config.controller} · seed ${s.config.seed}${cov != null ? ` · nav-app coverage ${Math.round(cov * 100)}%` : ''}`),
+      s.note ? h('div', { class: 't3' }, s.note) : null, // online demo: what this recording shows
     );
   }
 
@@ -186,7 +187,7 @@ export class ViewportChrome {
         return show(
           [
             h('div', { style: { fontWeight: 700, fontSize: '16px' } }, 'Run finished'),
-            h('div', { style: { color: '#8b9ab3' } }, `Outputs saved to ${s.output_dir || 'results/twin/'}`),
+            h('div', { style: { color: '#8b9ab3' } }, this.ctx.static ? 'End of the recording. Replay it, or pick another run above.' : `Outputs saved to ${s.output_dir || 'results/twin/'}`),
             h('div', { class: 'chips', style: { justifyContent: 'center', maxWidth: '520px' } }, ...items.map(([k, v]) => h('span', { class: 'chip' }, `${k}: ${v}`))),
           ],
           false,
@@ -219,5 +220,6 @@ export class ViewportChrome {
     const head = h('h3', {}, 'Legend', h('span', {}, '▾'));
     head.addEventListener('click', () => root.classList.toggle('collapsed'));
     root.append(head, body);
+    if (window.matchMedia('(max-width: 640px)').matches) root.classList.add('collapsed'); // phones: keep the road visible
   }
 }

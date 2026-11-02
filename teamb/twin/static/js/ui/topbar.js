@@ -48,13 +48,19 @@ export class TopBar {
       timeline: $('#timeline'),
     };
     const el = this.el;
+    // Online demo: only the recorded runs can be picked, and their settings are fixed.
+    this.demo = ctx.static ? meta.demo : null;
+    const scenarios = this.demo ? meta.scenarios.filter((s) => this.demo.runs.some((r) => r.scenario === s.name)) : meta.scenarios;
 
-    fillSelect(el.scenario, meta.scenarios.map((s) => ({ value: s.name, label: s.title || s.name, title: s.description })));
-    fillSelect(
-      el.controller,
-      meta.controllers.map((c) => ({ value: c.name, label: c.label || c.name, title: `${c.description || ''}${c.owner ? ` — ${c.owner}` : ''}` })),
-    );
+    fillSelect(el.scenario, scenarios.map((s) => ({ value: s.name, label: s.title || s.name, title: s.description })));
+    this.fillControllerOptions();
     this.fillStartOptions();
+    if (this.demo) {
+      for (const x of [el.seed, el.coverage, el.ev]) x.disabled = true;
+      el.seed.title = 'The recordings use seed 1';
+      el.coverage.closest('label').title = el.ev.closest('label').title = 'Fixed in the recording. Change it in the live twin (python -m teamb twin).';
+      el.conn.title = 'This page replays runs recorded with SUMO';
+    }
 
     for (const s of meta.speeds) {
       const b = h('button', { 'data-speed': s, title: s === 'max' ? 'As fast as SUMO can go' : `${s} simulated seconds per second` }, s === 'max' ? 'Max' : `${s}×`);
@@ -63,6 +69,7 @@ export class TopBar {
     }
 
     el.scenario.addEventListener('change', () => {
+      this.fillControllerOptions();
       this.fillStartOptions();
       // Each scenario has a design coverage (e.g. 25 % for the fake-data test): start from it.
       const sc = meta.scenarios.find((s) => s.name === el.scenario.value);
@@ -87,11 +94,24 @@ export class TopBar {
     ctx.bus.on('connection', (ok) => {
       el.conn.classList.toggle('ok', ok);
       el.conn.classList.toggle('bad', !ok);
-      el.conn.querySelector('.conn-label').textContent = ok ? 'live' : 'reconnecting…';
+      el.conn.querySelector('.conn-label').textContent = ok ? (this.demo ? 'recorded demo' : 'live') : 'reconnecting…';
     });
   }
 
   // --- the session form ---------------------------------------------------------------
+  fillControllerOptions() {
+    const { meta } = this.ctx;
+    let list = meta.controllers;
+    if (this.demo) {
+      const names = this.demo.runs.filter((r) => r.scenario === this.el.scenario.value).map((r) => r.controller);
+      list = names.map((name) => meta.controllers.find((c) => c.name === name) || { name });
+    }
+    fillSelect(
+      this.el.controller,
+      list.map((c) => ({ value: c.name, label: c.label || c.name, title: `${c.description || ''}${c.owner ? ` — ${c.owner}` : ''}` })),
+    );
+  }
+
   fillStartOptions() {
     const sc = this.ctx.meta.scenarios.find((s) => s.name === this.el.scenario.value) || {};
     const warm = sc.warmup ?? 900;
@@ -131,6 +151,7 @@ export class TopBar {
     const el = this.el;
     if (cfg.scenario) {
       el.scenario.value = cfg.scenario;
+      this.fillControllerOptions();
       this.fillStartOptions();
     }
     if (cfg.controller) el.controller.value = cfg.controller;
@@ -330,7 +351,7 @@ export class TopBar {
   jumpWithConfirm(t) {
     const s = this.status;
     if (!s || !['running', 'paused', 'finished'].includes(s.state)) return;
-    if (t < this.t || s.state === 'finished') {
+    if (!this.demo && (t < this.t || s.state === 'finished')) { // a recording can rewind, SUMO cannot
       const ok = confirm(`SUMO cannot rewind. Restart this run and fast-forward to ${fmtClock(t)}?`);
       if (!ok) return;
     }
