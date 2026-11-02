@@ -8,11 +8,23 @@
 // vehicles are delta-encoded (decodeVehicles undoes encode_vehicles in site.py) and fields that
 // did not change since the previous frame are left out (carried over here).
 
+import { addKo, t } from './i18n.js';
+
+addKo({
+  'This online demo replays recorded runs. To dispatch vehicles, close roads, fake data or approve AI plans yourself, run the live twin: python -m teamb twin (see the README).':
+    '이 온라인 데모는 녹화된 실행을 재생해요. 긴급차량 출동, 도로 폐쇄, 가짜 데이터, AI 계획 승인을 직접 해 보려면 실시간 트윈을 실행하세요: python -m teamb twin (README 참고).',
+  'Loading the recorded run…': '녹화된 실행을 불러오는 중…',
+  'Could not load the recording ({error}). Reload the page to try again.': '녹화를 불러오지 못했어요 ({error}). 페이지를 새로고침해 주세요.',
+  'Could not load the next part of the recording ({error}).': '녹화의 다음 부분을 불러오지 못했어요 ({error}).',
+  'no recorded run is loaded yet': '아직 불러온 녹화가 없어요',
+});
+
 const FPS = 12; // frames per wall second at most, like the live server
 const MAX_SPEED = 60; // "max" replays one simulated minute per second
 const KEEP_CHUNKS = 4; // decoded chunks kept in memory
-export const LIVE_ONLY =
-  'This online demo replays recorded runs. To dispatch vehicles, close roads, fake data or approve AI plans yourself, run the live twin: python -m teamb twin (see the README).';
+export const LIVE_ONLY = t(
+  'This online demo replays recorded runs. To dispatch vehicles, close roads, fake data or approve AI plans yourself, run the live twin: python -m teamb twin (see the README).',
+);
 
 async function getJson(url) {
   const r = await fetch(url);
@@ -117,7 +129,7 @@ export class ReplaySocket {
 
   async control(action, extra = {}) {
     if (extra.speed != null) this.setSpeed(extra.speed);
-    if (!this.run) return { ok: false, error: 'no recorded run is loaded yet' };
+    if (!this.run) return { ok: false, error: t('no recorded run is loaded yet') };
     switch (action) {
       case 'speed':
         break;
@@ -157,14 +169,14 @@ export class ReplaySocket {
     const sid = ++this.sid;
     this.stopClock();
     Object.assign(this, { state: 'loading', playing: false, run: null, info, config: null, error: null });
-    this.message = 'Loading the recorded run…';
+    this.message = t('Loading the recorded run…');
     this.publishStatus();
     let run;
     try {
       run = await getJson(`${this.base}runs/${info.id}/run.json`);
     } catch (err) {
       if (sid === this.sid) {
-        Object.assign(this, { state: 'error', error: `Could not load the recording (${err.message}). Reload the page to try again.` });
+        Object.assign(this, { state: 'error', error: t('Could not load the recording ({error}). Reload the page to try again.', { error: err.message }) });
         this.publishStatus();
       }
       throw err;
@@ -210,6 +222,7 @@ export class ReplaySocket {
       step_ms: null,
       output_dir: null,
       note: this.info ? this.info.note : null,
+      note_ko: this.info ? this.info.note_ko : null,
       recorded: this.run ? this.run.recorded : null,
     };
   }
@@ -300,7 +313,7 @@ export class ReplaySocket {
         (err) => {
           if (sid !== this.sid) return;
           this.pause();
-          this.error = `Could not load the next part of the recording (${err.message}).`;
+          this.error = t('Could not load the next part of the recording ({error}).', { error: err.message });
           this.publishStatus();
         },
       );

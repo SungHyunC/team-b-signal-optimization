@@ -11,6 +11,7 @@ SUMO 기반 4교차로 **디지털 트윈**입니다. 차량과 신호가 3D로 
 **▶ Online demo: https://sunghyunc.github.io/team-b-signal-optimization/** — 13 recorded runs
 (rush hour, ambulances, flood, earthquake, fake-data attack, …) replayed in the browser, on phones too.
 설치 없이 브라우저(휴대폰 포함)에서 녹화된 시뮬레이션 13개를 바로 볼 수 있습니다.
+The page switches between **English and 한국어** (top bar, or `?lang=ko`). 상단의 EN | 한국어 버튼으로 언어를 바꿀 수 있어요.
 
 ![An ambulance gets a green path at J2 while max-pressure runs the corridor](docs/img/twin-emergency.jpg)
 

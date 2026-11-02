@@ -6,6 +6,15 @@
 // around the 3D view are not part of the canvas.
 import { fmtClock, fmtNum } from './util.js';
 import { toast } from './ui/dom.js';
+import { addKo, t } from './i18n.js';
+
+addKo({
+  'This browser cannot record video (try Chrome or Edge).': '이 브라우저에서는 영상을 녹화할 수 없어요 (Chrome이나 Edge를 써 보세요).',
+  'Stop {time}': '중지 {time}',
+  'Recording the 3D view… press Stop to save the video.': '3D 화면을 녹화하고 있어요… 저장하려면 중지를 누르세요.',
+  Record: '녹화',
+  'Saved {file} ({size} MB)': '녹화를 저장했어요: {file} ({size} MB)',
+});
 
 export class Recorder {
   /** hud() returns {title, subtitle, clock, phase, kpis: [[label, value]], event} */
@@ -32,7 +41,7 @@ export class Recorder {
 
   start() {
     if (typeof MediaRecorder === 'undefined' || !this.canvas.captureStream) {
-      toast('This browser cannot record video (try Chrome or Edge).', 'error');
+      toast(t('This browser cannot record video (try Chrome or Edge).'), 'error');
       return;
     }
     const src = this.view.renderer.domElement;
@@ -48,16 +57,16 @@ export class Recorder {
     this.recorder.start(1000);
     this.startedAt = performance.now();
     this.button.classList.add('recording');
-    this.button.querySelector('.rec-label').textContent = 'Stop 0:00';
-    toast('Recording the 3D view… press Stop to save the video.');
+    this.button.querySelector('.rec-label').textContent = t('Stop {time}', { time: '0:00' });
+    toast(t('Recording the 3D view… press Stop to save the video.'));
   }
 
   stop() {
     if (!this.recorder) return;
     this.recorder.stop();
-    for (const t of this.stream.getTracks()) t.stop();
+    for (const track of this.stream.getTracks()) track.stop();
     this.button.classList.remove('recording');
-    this.button.querySelector('.rec-label').textContent = 'Record';
+    this.button.querySelector('.rec-label').textContent = t('Record');
   }
 
   save() {
@@ -73,7 +82,7 @@ export class Recorder {
       URL.revokeObjectURL(a.href);
       a.remove();
     }, 2000);
-    toast(`Saved ${a.download} (${fmtNum(blob.size / 1e6, 1)} MB)`, 'ok', 6000);
+    toast(t('Saved {file} ({size} MB)', { file: a.download, size: fmtNum(blob.size / 1e6, 1) }), 'ok', 6000);
   }
 
   capture() {
@@ -88,7 +97,7 @@ export class Recorder {
     g.drawImage(src, 0, 0);
     this.drawHud(g, c.width, c.height);
     const secs = Math.floor((performance.now() - this.startedAt) / 1000);
-    this.button.querySelector('.rec-label').textContent = `Stop ${fmtClock(secs)}`;
+    this.button.querySelector('.rec-label').textContent = t('Stop {time}', { time: fmtClock(secs) });
   }
 
   drawHud(g, W, H) {
@@ -101,13 +110,15 @@ export class Recorder {
       g.fill();
     };
     g.textBaseline = 'top';
-    // title (top left)
-    g.font = `700 ${18 * s}px -apple-system, Segoe UI, Roboto, sans-serif`;
-    const tw = Math.max(g.measureText(info.title).width, 260 * s);
+    // title (top left); the panel fits the wider of title and subtitle
+    g.font = `500 ${13 * s}px -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
+    const sw = g.measureText(info.subtitle).width;
+    g.font = `700 ${18 * s}px -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
+    const tw = Math.max(g.measureText(info.title).width, sw, 260 * s);
     panel(14 * s, 14 * s, tw + 28 * s, 58 * s);
     g.fillStyle = '#ffffff';
     g.fillText(info.title, 28 * s, 22 * s);
-    g.font = `500 ${13 * s}px -apple-system, Segoe UI, Roboto, sans-serif`;
+    g.font = `500 ${13 * s}px -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
     g.fillStyle = '#9fb0c9';
     g.fillText(info.subtitle, 28 * s, 46 * s);
     // clock (top right)
@@ -116,7 +127,7 @@ export class Recorder {
     panel(W - cw - 14 * s, 14 * s, cw, 62 * s);
     g.fillStyle = '#ffffff';
     g.fillText(info.clock, W - cw + 2 * s, 20 * s);
-    g.font = `600 ${11 * s}px -apple-system, Segoe UI, Roboto, sans-serif`;
+    g.font = `600 ${11 * s}px -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
     g.fillStyle = '#9fb0c9';
     g.fillText(info.phase.toUpperCase(), W - cw + 2 * s, 54 * s);
     // KPIs (bottom left)
@@ -126,17 +137,17 @@ export class Recorder {
       panel(14 * s, H - 74 * s, colW * kp.length + 20 * s, 60 * s);
       kp.forEach(([label, value], i) => {
         const x = 28 * s + i * colW;
-        g.font = `600 ${11 * s}px -apple-system, Segoe UI, Roboto, sans-serif`;
+        g.font = `600 ${11 * s}px -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
         g.fillStyle = '#9fb0c9';
         g.fillText(label.toUpperCase(), x, H - 66 * s);
-        g.font = `700 ${22 * s}px -apple-system, Segoe UI, Roboto, sans-serif`;
+        g.font = `700 ${22 * s}px -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
         g.fillStyle = '#ffffff';
         g.fillText(value, x, H - 48 * s);
       });
     }
     // latest event (bottom right)
     if (info.event) {
-      g.font = `600 ${13 * s}px -apple-system, Segoe UI, Roboto, sans-serif`;
+      g.font = `600 ${13 * s}px -apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
       const ew = g.measureText(info.event).width + 28 * s;
       panel(W - ew - 14 * s, H - 50 * s, ew, 36 * s);
       g.fillStyle = '#ffd7a8';

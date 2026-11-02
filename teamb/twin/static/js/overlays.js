@@ -8,6 +8,20 @@
 // To add one, write a class like these and append it to OVERLAYS at the bottom.
 import * as THREE from 'three';
 import { approachFrame, clamp, DEG, getGlowTexture, makeLabel, APPROACH_NAMES } from './util.js';
+import { addKo, t } from './i18n.js';
+
+addKo({
+  FLOODED: '침수',
+  SINKHOLE: '싱크홀',
+  CRASH: '사고',
+  'EARTHQUAKE: BRIDGE DAMAGE': '지진: 다리 손상',
+  'EARTHQUAKE: DEBRIS': '지진: 잔해',
+  'ROAD CLOSED · {cause}\n{edge}': '도로 폐쇄 · {cause}\n{edge}',
+  'FAKE DATA': '가짜 데이터',
+  'FAKE NAV DATA · {n} phantom phones\n{junction} {side} approach': '가짜 내비 데이터 · 가짜 휴대폰 {n}대\n{junction} {side} 진입로',
+  'FAKE DATA SUSPECTED': '가짜 데이터 의심',
+  'FAKE DATA SUSPECTED\nprobes say {probe} queued · loops see {loops}': '가짜 데이터 의심\n내비 데이터 대기 {probe}대 · 루프 감지기 {loops}대',
+});
 
 const flatPlane = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
 
@@ -240,8 +254,16 @@ export class ClosureOverlay {
         group.add(b);
       }
     }
-    const what = { flood: 'FLOODED', sinkhole: 'SINKHOLE', accident: 'CRASH' }[cause] || cause.toUpperCase();
-    const label = makeLabel(`ROAD CLOSED · ${what}\n${closure.edge}`, { fontSize: 15, px: 17, background: 'rgba(160,70,8,0.92)', border: 'rgba(255,200,120,0.8)' });
+    const what =
+      {
+        flood: t('FLOODED'),
+        sinkhole: t('SINKHOLE'),
+        accident: t('CRASH'),
+        // the earthquake scenario's causes (English: the cause in capitals, as for any other cause)
+        'earthquake: bridge damage': t('EARTHQUAKE: BRIDGE DAMAGE'),
+        'earthquake: debris': t('EARTHQUAKE: DEBRIS'),
+      }[cause] || cause.toUpperCase();
+    const label = makeLabel(t('ROAD CLOSED · {cause}\n{edge}', { cause: what, edge: closure.edge }), { fontSize: 15, px: 17, background: 'rgba(160,70,8,0.92)', border: 'rgba(255,200,120,0.8)' });
     label.position.set(mid[0], 9, -mid[1]);
     group.add(label);
     this.scene.add(group);
@@ -300,7 +322,7 @@ export class AttackOverlay {
     this.ring.visible = false;
     this.ring.renderOrder = 5;
     scene.add(this.ring);
-    this.attackLabel = makeLabel('FAKE DATA', { fontSize: 15, px: 17, background: 'rgba(88,28,160,0.92)', border: 'rgba(220,180,255,0.8)' });
+    this.attackLabel = makeLabel(t('FAKE DATA'), { fontSize: 15, px: 17, background: 'rgba(88,28,160,0.92)', border: 'rgba(220,180,255,0.8)' });
     this.attackLabel.visible = false;
     scene.add(this.attackLabel);
     this.alertLabels = new Map(); // "J2:N" -> {label, until}
@@ -329,7 +351,14 @@ export class AttackOverlay {
       this.ring.visible = true;
       this.attackLabel.visible = true;
       this.attackLabel.position.set(a.stop[0] - a.dx * c, 13, -(a.stop[1] - a.dy * c));
-      this.attackLabel.userData.setText(`FAKE NAV DATA · ${attack.n} phantom phones\n${attack.junction} ${APPROACH_NAMES[attack.approach] || attack.approach} approach`);
+      // APPROACH_NAMES is already in the current language.
+      this.attackLabel.userData.setText(
+        t('FAKE NAV DATA · {n} phantom phones\n{junction} {side} approach', {
+          n: attack.n,
+          junction: attack.junction,
+          side: APPROACH_NAMES[attack.approach] || attack.approach,
+        }),
+      );
     } else {
       this.ring.visible = false;
       this.attackLabel.visible = false;
@@ -342,7 +371,7 @@ export class AttackOverlay {
       let entry = this.alertLabels.get(key);
       if (!entry) {
         const a = approachFrame(this.index, alert.junction, alert.approach);
-        const label = makeLabel('FAKE DATA SUSPECTED', { fontSize: 15, px: 17, background: 'rgba(170,20,30,0.94)', border: 'rgba(255,170,170,0.9)' });
+        const label = makeLabel(t('FAKE DATA SUSPECTED'), { fontSize: 15, px: 17, background: 'rgba(170,20,30,0.94)', border: 'rgba(255,170,170,0.9)' });
         // Further up the approach than the attack label (30 m) so the two never overlap.
         label.position.set(a.stop[0] - a.dx * 75, 6, -(a.stop[1] - a.dy * 75));
         this.scene.add(label);
@@ -350,7 +379,7 @@ export class AttackOverlay {
         this.alertLabels.set(key, entry);
       }
       const probe = alert.probe_queue != null ? Math.round(alert.probe_queue) : '?';
-      entry.label.userData.setText(`FAKE DATA SUSPECTED\nprobes say ${probe} queued · loops see ${alert.detector_queue ?? '?'}`);
+      entry.label.userData.setText(t('FAKE DATA SUSPECTED\nprobes say {probe} queued · loops see {loops}', { probe, loops: alert.detector_queue ?? '?' }));
       entry.until = now + 4000;
     }
   }

@@ -60,8 +60,10 @@ class DemoRun:
     scenario: str
     controller: str
     note: str  # one line shown under the run's title
+    note_ko: str = ""  # the same in Korean (the page switches EN / 한국어)
     key: str = ""  # controller name in the demo UI, when params make the run a variant
     label: str = ""  # UI label for that variant
+    label_ko: str = ""
     params: dict = field(default_factory=dict)  # controller_params
     approve_after: float | None = None  # AI recommender: the engineer approves this many s after a plan appears
 
@@ -75,30 +77,73 @@ class DemoRun:
 
 
 DEMO_RUNS = [
-    DemoRun("emergency", "max_pressure", "Ten ambulances and fire trucks cross the corridor; signals give them a green path."),
-    DemoRun("emergency", "fixed_time", "The same emergencies with fixed-time signals (preemption still on)."),
-    DemoRun("rush_hour", "fixed_time", "Baseline: the same 90 s timing every cycle, whatever the traffic."),
-    DemoRun("rush_hour", "max_pressure", "Green to the axis with the biggest queue imbalance: about 59 % less delay than fixed-time in our tests."),
+    DemoRun(
+        "emergency",
+        "max_pressure",
+        "Ten ambulances and fire trucks cross the corridor; signals give them a green path.",
+        "구급차와 소방차 10대가 구간을 지나가고, 신호가 녹색 길을 열어 줘요.",
+    ),
+    DemoRun(
+        "emergency",
+        "fixed_time",
+        "The same emergencies with fixed-time signals (preemption still on).",
+        "같은 긴급 상황을 고정 신호로 보여 줘요 (긴급차량 우선 신호는 켜져 있어요).",
+    ),
+    DemoRun("rush_hour", "fixed_time", "Baseline: the same 90 s timing every cycle, whatever the traffic.", "기준: 교통량과 상관없이 매 90초 같은 신호예요."),
+    DemoRun(
+        "rush_hour",
+        "max_pressure",
+        "Green to the axis with the biggest queue imbalance: about 59 % less delay than fixed-time in our tests.",
+        "대기열 차이가 가장 큰 방향에 녹색을 줘요. 우리 실험에서 고정 신호보다 지연이 약 59% 줄었어요.",
+    ),
     DemoRun(
         "rush_hour",
         "ai_recommender",
         "The AI proposes a plan at 10:00 from navigation data; in this recording the engineer approves it a minute later.",
+        "AI가 10:00에 내비 데이터로 신호 계획을 제안하고, 이 녹화에서는 엔지니어가 1분 뒤에 승인해요.",
         params={"sync": True},
         approve_after=60,
     ),
-    DemoRun("rush_hour", "rl", "Q-learning controller trained in SUMO on rush hour."),
-    DemoRun("road_closure", "actuated", "A flood closes the arterial J2 → J3 at 25:00 for 30 min; traffic detours over the back street."),
-    DemoRun("road_closure", "rl", "The RL controller, trained only on rush hour, struggles once the flood changes the network."),
-    DemoRun("sinkhole_cross", "max_pressure", "A sinkhole cuts the cross street north of J2; turning traffic moves to J1 and J3."),
-    DemoRun("earthquake", "max_pressure", "A damaged bridge and debris close two roads while seven emergency vehicles respond."),
-    DemoRun("special_event", "max_pressure", "A stadium north of J3 empties onto one cross street."),
-    DemoRun("fake_data_attack", "max_pressure_probe", "99 phantom phones report a jam at J2 north; a controller that trusts navigation data falls for it."),
+    DemoRun("rush_hour", "rl", "Q-learning controller trained in SUMO on rush hour.", "SUMO에서 출퇴근 교통으로 학습한 Q-러닝 제어예요."),
+    DemoRun(
+        "road_closure",
+        "actuated",
+        "A flood closes the arterial J2 → J3 at 25:00 for 30 min; traffic detours over the back street.",
+        "25:00에 침수로 간선도로 J2 → J3가 30분간 막히고, 차들이 뒷길로 우회해요.",
+    ),
+    DemoRun(
+        "road_closure",
+        "rl",
+        "The RL controller, trained only on rush hour, struggles once the flood changes the network.",
+        "출퇴근만 학습한 강화학습 제어는 침수로 도로망이 바뀌자 크게 흔들려요.",
+    ),
+    DemoRun(
+        "sinkhole_cross",
+        "max_pressure",
+        "A sinkhole cuts the cross street north of J2; turning traffic moves to J1 and J3.",
+        "싱크홀로 J2 북쪽 교차 도로가 끊기고, 회전 교통이 J1과 J3로 몰려요.",
+    ),
+    DemoRun(
+        "earthquake",
+        "max_pressure",
+        "A damaged bridge and debris close two roads while seven emergency vehicles respond.",
+        "다리 손상과 잔해로 도로 두 곳이 막힌 가운데 긴급차량 7대가 출동해요.",
+    ),
+    DemoRun("special_event", "max_pressure", "A stadium north of J3 empties onto one cross street.", "J3 북쪽 경기장의 차량이 한꺼번에 교차 도로로 쏟아져 나와요."),
+    DemoRun(
+        "fake_data_attack",
+        "max_pressure_probe",
+        "99 phantom phones report a jam at J2 north; a controller that trusts navigation data falls for it.",
+        "가짜 휴대폰 99대가 J2 북쪽에 정체를 보고하고, 내비 데이터만 믿는 제어가 속아 넘어가요.",
+    ),
     DemoRun(
         "fake_data_attack",
         "max_pressure_probe",
         "Same attack, but probe queues are cross-checked against the loop detectors: the fake jam is flagged and ignored.",
+        "같은 공격이지만 내비 데이터를 루프 감지기와 교차검증해서 가짜 정체를 잡아내고 무시해요.",
         key="max_pressure_probe+defense",
         label="Max-pressure on nav data + detector cross-check",
+        label_ko="맥스프레셔 (내비 데이터) + 감지기 교차검증",
         params={"defense": True},
     ),
 ]
@@ -279,6 +324,7 @@ def record_run(run: dict, runs_dir: str, end_time: float | None = None) -> dict:
         "controller": run.ui_controller,
         "frame_controller": frame_controller,
         "note": run.note,
+        "note_ko": run.note_ko or None,
         "status": status,
         "ids": list(rec.ids),
         "kinds": list(rec.kinds),
@@ -328,7 +374,8 @@ def index_html(repo_url: str | None, pages_url: str | None) -> str:
     html = html.replace('<script type="module"', f"<script>window.TWIN_STATIC = {json.dumps(flag)};</script>\n  <script type=\"module\"", 1)
     description = (
         "Team B's SUMO digital twin of a four-junction corridor: AI signal control, ambulances, floods "
-        "and a fake-navigation-data attack, recorded and replayed in your browser."
+        "and a fake-navigation-data attack, recorded and replayed in your browser. "
+        "B팀의 4교차로 SUMO 디지털 트윈: AI 신호 제어, 구급차, 침수, 가짜 내비 데이터 공격을 브라우저에서 재생해요."
     )
     tags = [
         f'<meta name="description" content="{description}">',
@@ -362,13 +409,16 @@ def demo_meta(runs: list[DemoRun], recorded: dict[str, dict]) -> dict:
     for run in runs:
         if run.key and run.key not in known:
             base = dict(known.get(run.controller, {"name": run.controller}))
-            base.update(name=run.key, label=run.label or run.key, params=run.params)
+            base.update(name=run.key, label=run.label or run.key, label_ko=run.label_ko or None, params=run.params)
             data["controllers"].append(base)
             known[run.key] = base
     present = [r for r in runs if r.id in recorded]
     default = next((r for r in present if r.scenario == DEFAULT_VIEW["scenario"] and r.controller == DEFAULT_VIEW["controller"]), None)
     data["demo"] = {
-        "runs": [{"id": r.id, "scenario": r.scenario, "controller": r.ui_controller, "note": r.note, **recorded[r.id]} for r in present],
+        "runs": [
+            {"id": r.id, "scenario": r.scenario, "controller": r.ui_controller, "note": r.note, "note_ko": r.note_ko or None, **recorded[r.id]}
+            for r in present
+        ],
         "default": DEFAULT_VIEW if default else {"scenario": present[0].scenario, "controller": present[0].ui_controller, "start_at": 240, "speed": 2},
     }
     return jsonable(data)

@@ -19,6 +19,8 @@
   <script type="module" src="/static/js/main.js"></script>
 </head>
 <body>
+<!-- Text marked data-i18n (or tooltips marked data-i18n-title) is translated at start-up by
+     translatePage() in js/i18n.js; the Korean for these lines is registered in main.js. -->
 <div id="app">
   <!-- ===== Top bar: session setup, playback, clock ===== -->
   <header id="topbar">
@@ -26,52 +28,53 @@
       <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="9" y="2" width="14" height="28" rx="4"/><circle cx="16" cy="9" r="3.6" class="l-r"/><circle cx="16" cy="16" r="3.6" class="l-y"/><circle cx="16" cy="23" r="3.6" class="l-g"/></svg>
       <div>
         <div class="brand-title">Signal Twin</div>
-        <div class="brand-sub">Team B · 4-junction corridor</div>
+        <div class="brand-sub" data-i18n>Team B · 4-junction corridor</div>
       </div>
     </div>
 
     <div class="tb-group" id="session-form">
-      <label class="field">Scenario<select id="f-scenario"></select></label>
-      <label class="field">Controller<select id="f-controller"></select></label>
-      <label class="field narrow">Seed<input id="f-seed" type="number" min="0" step="1" value="1"></label>
-      <label class="field">Start at<select id="f-start"></select></label>
-      <button id="btn-apply" class="btn primary" title="Start a new run with these settings">Start</button>
+      <label class="field"><span data-i18n>Scenario</span><select id="f-scenario"></select></label>
+      <label class="field"><span data-i18n>Controller</span><select id="f-controller"></select></label>
+      <label class="field narrow"><span data-i18n>Seed</span><input id="f-seed" type="number" min="0" step="1" value="1"></label>
+      <label class="field"><span data-i18n>Start at</span><select id="f-start"></select></label>
+      <button id="btn-apply" class="btn primary" title="Start a new run with these settings" data-i18n-title>Start</button>
     </div>
 
     <div class="tb-group" id="live-settings">
-      <label class="field coverage" title="Share of vehicles whose navigation app shares data (applies to vehicles departing from now on)">
-        <span>Nav-app coverage <b id="f-coverage-val">100%</b></span>
+      <label class="field coverage" title="Share of vehicles whose navigation app shares data (applies to vehicles departing from now on)" data-i18n-title>
+        <span><span data-i18n>Nav-app coverage</span> <b id="f-coverage-val">100%</b></span>
         <input id="f-coverage" type="range" min="10" max="100" step="5" value="100">
       </label>
-      <label class="switch" title="Give emergency vehicles a green path (signal preemption)">
-        <input id="f-ev" type="checkbox" checked><span class="slider"></span><span class="switch-label">EV priority</span>
+      <label class="switch" title="Give emergency vehicles a green path (signal preemption)" data-i18n-title>
+        <input id="f-ev" type="checkbox" checked><span class="slider"></span><span class="switch-label" data-i18n>EV priority</span>
       </label>
     </div>
 
     <div class="tb-group" id="playback">
-      <button id="btn-play" class="btn icon" title="Play / pause (Space)"><svg viewBox="0 0 24 24"><path class="ico-play" d="M8 5v14l11-7z"/><path class="ico-pause" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
-      <button id="btn-step" class="btn icon" title="Advance one second (.)"><svg viewBox="0 0 24 24"><path d="M6 5v14l9-7zM16 5h3v14h-3z"/></svg></button>
-      <button id="btn-reset" class="btn icon" title="Restart this run from the beginning"><svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
+      <button id="btn-play" class="btn icon" title="Play / pause (Space)" data-i18n-title><svg viewBox="0 0 24 24"><path class="ico-play" d="M8 5v14l11-7z"/><path class="ico-pause" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
+      <button id="btn-step" class="btn icon" title="Advance one second (.)" data-i18n-title><svg viewBox="0 0 24 24"><path d="M6 5v14l9-7zM16 5h3v14h-3z"/></svg></button>
+      <button id="btn-reset" class="btn icon" title="Restart this run from the beginning" data-i18n-title><svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
       <div class="speed" id="speed-buttons" role="group" aria-label="Simulation speed"></div>
     </div>
 
     <div class="clock" id="clock">
       <div class="clock-time" id="clock-time">--:--</div>
-      <div class="clock-sub" id="clock-sub">not running</div>
+      <div class="clock-sub" id="clock-sub" data-i18n>not running</div>
     </div>
 
     <div class="tb-group right">
-      <button id="btn-record" class="btn rec" title="Record the 3D view to a WebM video"><span class="rec-dot"></span><span class="rec-label">Record</span></button>
+      <button id="btn-record" class="btn rec" title="Record the 3D view to a WebM video" data-i18n-title><span class="rec-dot"></span><span class="rec-label" data-i18n>Record</span></button>
       <div class="tabs" role="tablist">
-        <button class="tab active" data-view="live" role="tab">Live twin</button>
-        <button class="tab" data-view="results" role="tab">Results</button>
+        <button class="tab active" data-view="live" role="tab" data-i18n>Live twin</button>
+        <button class="tab" data-view="results" role="tab" data-i18n>Results</button>
       </div>
-      <span id="conn" class="conn" title="Connection to the twin server"><span class="dot"></span><span class="conn-label">connecting</span></span>
+      <div class="lang-switch" id="lang-switch" role="group" aria-label="Language / 언어"></div>
+      <span id="conn" class="conn" title="Connection to the twin server" data-i18n-title><span class="dot"></span><span class="conn-label" data-i18n>connecting</span></span>
     </div>
   </header>
 
   <!-- ===== Timeline: warm-up, scheduled scenario events, current time (click to jump) ===== -->
-  <div id="timeline" title="Click to jump to a time">
+  <div id="timeline" title="Click to jump to a time" data-i18n-title>
     <div class="tl-track"><div class="tl-warmup"></div><div class="tl-progress"></div><div class="tl-ff"></div><div class="tl-cursor"></div></div>
     <div class="tl-marks"></div>
   </div>
@@ -80,11 +83,11 @@
   <main id="live-view" class="view">
     <aside id="left-panel" class="side">
       <section class="card" id="kpi-panel">
-        <h2>Live KPIs <span class="hint" id="kpi-hint"></span></h2>
+        <h2><span data-i18n>Live KPIs</span> <span class="hint" id="kpi-hint"></span></h2>
         <div class="kpis" id="kpis"></div>
       </section>
       <section class="card grow" id="junction-panel">
-        <h2>Signals <span class="hint">click to fly there</span></h2>
+        <h2><span data-i18n>Signals</span> <span class="hint" data-i18n>click to fly there</span></h2>
         <div id="junctions"></div>
       </section>
     </aside>
@@ -98,22 +101,22 @@
       <div class="legend" id="legend"></div>
       <div id="road-menu" class="popover" hidden></div>
       <div id="toasts"></div>
-      <div id="vp-overlay" class="vp-overlay"><div class="spinner"></div><div class="vp-overlay-text">Loading the 3D scene…</div></div>
-      <button class="side-toggle left" id="toggle-left" title="Hide/show the left panel (P hides both)">‹</button>
-      <button class="side-toggle right" id="toggle-right" title="Hide/show the right panel (P hides both)">›</button>
+      <div id="vp-overlay" class="vp-overlay"><div class="spinner"></div><div class="vp-overlay-text" data-i18n>Loading the 3D scene…</div></div>
+      <button class="side-toggle left" id="toggle-left" title="Hide/show the left panel (P hides both)" data-i18n-title>‹</button>
+      <button class="side-toggle right" id="toggle-right" title="Hide/show the right panel (P hides both)" data-i18n-title>›</button>
     </section>
 
     <aside id="right-panel" class="side">
       <section class="card" id="actions-panel">
-        <h2>Actions</h2>
+        <h2 data-i18n>Actions</h2>
         <div id="actions"></div>
       </section>
       <section class="card grow" id="events-panel">
-        <h2>Event log <span class="hint" id="events-count"></span></h2>
+        <h2><span data-i18n>Event log</span> <span class="hint" id="events-count"></span></h2>
         <ol id="events" class="events"></ol>
       </section>
       <section class="card collapsible" id="spat-panel">
-        <h2 class="clickable" id="spat-head">SPaT feed <span class="hint">what navigation apps receive</span><span class="chev">▾</span></h2>
+        <h2 class="clickable" id="spat-head"><span data-i18n>SPaT feed</span> <span class="hint" data-i18n>what navigation apps receive</span><span class="chev">▾</span></h2>
         <div id="spat" class="spat"></div>
       </section>
     </aside>

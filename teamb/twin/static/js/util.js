@@ -5,6 +5,13 @@
 // (0° = north, 90° = east, clockwise); a model whose nose points along local -z gets
 // rotation.y = -heading.
 import * as THREE from 'three';
+import { addKo, t } from './i18n.js';
+
+// 'north', 'Ambulance', 'Fire truck', ... are shared words registered in i18n.js.
+addKo({
+  'Probe car': '내비 데이터 공유 차량',
+  '{kind} {number}': '{kind} {number}',
+});
 
 export const DEG = Math.PI / 180;
 
@@ -72,14 +79,15 @@ export function fmtNum(v, digits = 0) {
   return Number(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-export const APPROACH_NAMES = { N: 'north', S: 'south', E: 'east', W: 'west' };
-export const KIND_LABELS = { ambulance: 'Ambulance', firetruck: 'Fire truck', car: 'Car', probe: 'Probe car', truck: 'Truck', bus: 'Bus' };
+// Display names in the current language ('north' / '북쪽'); the language is fixed per page load.
+export const APPROACH_NAMES = { N: t('north'), S: t('south'), E: t('east'), W: t('west') };
+export const KIND_LABELS = { ambulance: t('Ambulance'), firetruck: t('Fire truck'), car: t('Car'), probe: t('Probe car'), truck: t('Truck'), bus: t('Bus') };
 
-/** "ambulance_3" -> "Ambulance 3" */
+/** "ambulance_3" -> "Ambulance 3" (구급차 3) */
 export function vehicleLabel(id) {
   const m = /^([a-z]+)_(\d+)$/.exec(id || '');
   if (!m) return id;
-  return `${KIND_LABELS[m[1]] || m[1]} ${m[2]}`;
+  return t('{kind} {number}', { kind: KIND_LABELS[m[1]] || m[1], number: m[2] });
 }
 
 // --- text sprites ------------------------------------------------------------------
@@ -106,7 +114,7 @@ function applyLabelScale(sprite) {
 function drawLabel(canvas, text, opts) {
   const ctx = canvas.getContext('2d');
   const scale = 2; // draw at 2x for crisp text
-  const font = `${opts.weight || 700} ${opts.fontSize * scale}px ${opts.font || '-apple-system, Segoe UI, Roboto, sans-serif'}`;
+  const font = `${opts.weight || 700} ${opts.fontSize * scale}px ${opts.font || '-apple-system, Segoe UI, Roboto, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif'}`;
   ctx.font = font;
   const lines = String(text).split('\n');
   const padX = 10 * scale;

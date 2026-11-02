@@ -92,6 +92,7 @@ def test_github_urls():
 def test_demo_runs_exist_and_variants_get_their_own_entry():
     for run in site.DEMO_RUNS:
         assert run.scenario in SCENARIOS and run.controller in CONTROLLERS
+        assert run.note_ko and (not run.key or run.label_ko), f"{run.id}: the page also switches to Korean"
     assert len({r.id for r in site.DEMO_RUNS}) == len(site.DEMO_RUNS)
     recorded = {r.id: {"frames": 1, "mb": 0.1} for r in site.DEMO_RUNS}
     data = site.demo_meta(site.DEMO_RUNS, recorded)

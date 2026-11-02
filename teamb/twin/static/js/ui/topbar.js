@@ -1,23 +1,72 @@
 // Top bar: session setup (scenario, controller, seed, start time), live settings (navigation-app
 // coverage, EV priority), playback (play/pause/step/reset, speed), the sim clock and the timeline.
+import { addKo, controllerDescription, controllerLabel, lang, scenarioDescription, scenarioTitle, t } from '../i18n.js';
 import { fmtClock } from '../util.js';
 import { $, $$, fillSelect, h, toast } from './dom.js';
 
+addKo({
+  '{vehicle} {origin}→{destination}': '{vehicle} {origin}→{destination}',
+  'Close {edge} ({cause})': '{edge} 폐쇄 ({cause})',
+  'Reopen {edge}': '{edge} 재개통',
+  'Fake data at {junction} {approach}': '{junction} {approach} 가짜 데이터',
+  'Attack stops': '공격 종료',
+  'As fast as SUMO can go': 'SUMO가 낼 수 있는 최고 속도',
+  '{s} simulated seconds per second': '1초에 시뮬레이션 {s}초',
+  Max: '최대',
+  'The recordings use seed 1': '녹화는 시드 1로 만들었어요',
+  'Fixed in the recording. Change it in the live twin (python -m teamb twin).': '녹화에 고정된 값이에요. 실시간 트윈(python -m teamb twin)에서 바꿀 수 있어요.',
+  'This page replays runs recorded with SUMO': 'SUMO로 녹화한 실행을 재생하는 페이지예요',
+  'recorded demo': '녹화 데모',
+  live: '실시간 연결',
+  'reconnecting…': '다시 연결 중…',
+  '0:00 · empty roads': '0:00 · 빈 도로',
+  '4:00 · traffic built up': '4:00 · 차량이 찬 상태',
+  '{time} · measurement starts': '{time} · 측정 시작',
+  '{time} · before: {event}': '{time} · 직전: {event}',
+  '{time} · custom': '{time} · 직접 지정',
+  Start: '시작',
+  Restart: '다시 시작',
+  'Restart with changes': '바꾼 설정으로 다시 시작',
+  'Starting {scenario} with {controller}…': '{scenario} · {controller} 시작 중…',
+  'Could not start: {error}': '시작하지 못했어요: {error}',
+  'Navigation-app coverage {pct}% (for vehicles departing from now on)': '내비 데이터 비율 {pct}% (지금부터 출발하는 차량에 적용)',
+  'could not set coverage': '내비 데이터 비율을 바꾸지 못했어요',
+  'Emergency-vehicle priority on': '긴급차량 우선 신호 켬',
+  'Emergency-vehicle priority off': '긴급차량 우선 신호 끔',
+  'could not change EV priority': '긴급차량 우선 신호를 바꾸지 못했어요',
+  'could not change speed': '속도를 바꾸지 못했어요',
+  'Fast-forwarding to {time}…': '{time}까지 빨리 감는 중…',
+  'not running': '실행 전',
+  'starting SUMO…': 'SUMO 시작 중…',
+  error: '오류',
+  'run finished': '실행 종료',
+  'fast-forward → {time}': '빨리 감기 → {time}',
+  'warm-up': '워밍업',
+  measuring: '측정 중',
+  'paused · {phase}': '일시정지 · {phase}',
+  '{time} · {event} (click to jump just before it)': '{time} · {event} (클릭하면 직전으로 이동)',
+  'measurement {from}–{to}': '측정 {from}–{to}',
+  'SUMO cannot rewind. Restart this run and fast-forward to {time}?': 'SUMO는 되감을 수 없어요. 이 실행을 다시 시작해서 {time}까지 빨리 감을까요?',
+});
+
 const EVENT_COLORS = { dispatch_ev: '#ff4d4d', close_road: '#fb923c', reopen_road: '#22c55e', start_attack: '#a855f7', stop_attack: '#c4a5ff' };
+const APPROACH_WORDS = { N: 'north', S: 'south', E: 'east', W: 'west' };
 
 function eventLabel(e) {
   const p = e.params || {};
   switch (e.kind) {
     case 'dispatch_ev':
-      return `${p.kind === 'firetruck' ? 'Fire truck' : 'Ambulance'} ${p.origin || ''}→${p.destination || ''}`;
+      return t('{vehicle} {origin}→{destination}', { vehicle: t(p.kind === 'firetruck' ? 'Fire truck' : 'Ambulance'), origin: p.origin || '', destination: p.destination || '' });
     case 'close_road':
-      return `Close ${p.edge} (${p.cause || 'flood'})`;
+      return t('Close {edge} ({cause})', { edge: p.edge, cause: t(p.cause || 'flood') });
     case 'reopen_road':
-      return `Reopen ${p.edge}`;
-    case 'start_attack':
-      return `Fake data at ${p.junction || 'J2'} ${p.approach || 'N'}`;
+      return t('Reopen {edge}', { edge: p.edge });
+    case 'start_attack': {
+      const approach = p.approach || 'N'; // English keeps the letter (N), Korean says 북쪽
+      return t('Fake data at {junction} {approach}', { junction: p.junction || 'J2', approach: lang === 'ko' ? t(APPROACH_WORDS[approach] || approach) : approach });
+    }
     case 'stop_attack':
-      return 'Attack stops';
+      return t('Attack stops');
     default:
       return e.kind;
   }
@@ -52,18 +101,18 @@ export class TopBar {
     this.demo = ctx.static ? meta.demo : null;
     const scenarios = this.demo ? meta.scenarios.filter((s) => this.demo.runs.some((r) => r.scenario === s.name)) : meta.scenarios;
 
-    fillSelect(el.scenario, scenarios.map((s) => ({ value: s.name, label: s.title || s.name, title: s.description })));
+    fillSelect(el.scenario, scenarios.map((s) => ({ value: s.name, label: scenarioTitle(s), title: scenarioDescription(s) })));
     this.fillControllerOptions();
     this.fillStartOptions();
     if (this.demo) {
       for (const x of [el.seed, el.coverage, el.ev]) x.disabled = true;
-      el.seed.title = 'The recordings use seed 1';
-      el.coverage.closest('label').title = el.ev.closest('label').title = 'Fixed in the recording. Change it in the live twin (python -m teamb twin).';
-      el.conn.title = 'This page replays runs recorded with SUMO';
+      el.seed.title = t('The recordings use seed 1');
+      el.coverage.closest('label').title = el.ev.closest('label').title = t('Fixed in the recording. Change it in the live twin (python -m teamb twin).');
+      el.conn.title = t('This page replays runs recorded with SUMO');
     }
 
     for (const s of meta.speeds) {
-      const b = h('button', { 'data-speed': s, title: s === 'max' ? 'As fast as SUMO can go' : `${s} simulated seconds per second` }, s === 'max' ? 'Max' : `${s}×`);
+      const b = h('button', { 'data-speed': s, title: s === 'max' ? t('As fast as SUMO can go') : t('{s} simulated seconds per second', { s }) }, s === 'max' ? t('Max') : `${s}×`);
       b.addEventListener('click', () => this.setSpeed(s));
       el.speeds.append(b);
     }
@@ -88,13 +137,13 @@ export class TopBar {
     el.timeline.addEventListener('click', (e) => this.onTimelineClick(e));
 
     for (const tab of $$('.tab')) tab.addEventListener('click', () => ctx.bus.emit('view', tab.dataset.view));
-    ctx.bus.on('view', (name) => $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name)));
+    ctx.bus.on('view', (name) => $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.view === name)));
     ctx.bus.on('status', (s) => this.onStatus(s));
     ctx.bus.on('frame', (f) => this.onFrame(f));
     ctx.bus.on('connection', (ok) => {
       el.conn.classList.toggle('ok', ok);
       el.conn.classList.toggle('bad', !ok);
-      el.conn.querySelector('.conn-label').textContent = ok ? (this.demo ? 'recorded demo' : 'live') : 'reconnecting…';
+      el.conn.querySelector('.conn-label').textContent = ok ? t(this.demo ? 'recorded demo' : 'live') : t('reconnecting…');
     });
   }
 
@@ -108,7 +157,7 @@ export class TopBar {
     }
     fillSelect(
       this.el.controller,
-      list.map((c) => ({ value: c.name, label: c.label || c.name, title: `${c.description || ''}${c.owner ? ` — ${c.owner}` : ''}` })),
+      list.map((c) => ({ value: c.name, label: controllerLabel(c), title: `${controllerDescription(c)}${c.owner ? ` — ${c.owner}` : ''}` })),
     );
   }
 
@@ -116,13 +165,13 @@ export class TopBar {
     const sc = this.ctx.meta.scenarios.find((s) => s.name === this.el.scenario.value) || {};
     const warm = sc.warmup ?? 900;
     const opts = [
-      { value: 0, label: '0:00 · empty roads' },
-      { value: 240, label: '4:00 · traffic built up' },
-      { value: warm, label: `${fmtClock(warm)} · measurement starts` },
+      { value: 0, label: t('0:00 · empty roads') },
+      { value: 240, label: t('4:00 · traffic built up') },
+      { value: warm, label: t('{time} · measurement starts', { time: fmtClock(warm) }) },
     ];
     for (const e of sc.events || []) {
-      const t = Math.max(0, e.time - 30);
-      opts.push({ value: t, label: `${fmtClock(t)} · before: ${eventLabel(e)}` });
+      const at = Math.max(0, e.time - 30);
+      opts.push({ value: at, label: t('{time} · before: {event}', { time: fmtClock(at), event: eventLabel(e) }) });
     }
     const seen = new Set();
     fillSelect(
@@ -160,7 +209,7 @@ export class TopBar {
     if (cfg.ev_preemption != null) el.ev.checked = !!cfg.ev_preemption;
     if (cfg.start_at != null) {
       if (![...el.start.options].some((o) => Number(o.value) === Number(cfg.start_at))) {
-        el.start.append(h('option', { value: cfg.start_at }, `${fmtClock(cfg.start_at)} · custom`));
+        el.start.append(h('option', { value: cfg.start_at }, t('{time} · custom', { time: fmtClock(cfg.start_at) })));
       }
       el.start.value = cfg.start_at;
     }
@@ -177,7 +226,7 @@ export class TopBar {
     const f = this.formConfig();
     const running = s && s.config && !['idle', 'error'].includes(s.state);
     const dirty = running && (f.scenario !== s.config.scenario || f.controller !== s.config.controller || f.seed !== s.config.seed);
-    this.el.apply.textContent = !running ? 'Start' : dirty ? 'Restart with changes' : 'Restart';
+    this.el.apply.textContent = t(!running ? 'Start' : dirty ? 'Restart with changes' : 'Restart');
     this.el.apply.classList.toggle('pulse', !!dirty);
   }
 
@@ -186,9 +235,10 @@ export class TopBar {
     try {
       await this.ctx.api.post('/api/session', cfg);
       const sc = this.ctx.meta.scenarios.find((s) => s.name === cfg.scenario);
-      toast(`Starting ${sc ? sc.title : cfg.scenario} with ${cfg.controller}…`);
+      const ct = this.ctx.meta.controllers.find((c) => c.name === cfg.controller);
+      toast(t('Starting {scenario} with {controller}…', { scenario: sc ? scenarioTitle(sc) : cfg.scenario, controller: ct ? controllerLabel(ct) : cfg.controller }));
     } catch (err) {
-      toast(`Could not start: ${err.message}`, 'error', 6000);
+      toast(t('Could not start: {error}', { error: err.message }), 'error', 6000);
     }
   }
 
@@ -197,16 +247,16 @@ export class TopBar {
     const share = Number(this.el.coverage.value) / 100;
     if (!this.isLive()) return; // used by the next start
     const r = await this.ctx.socket.command({ type: 'set_coverage', value: share });
-    if (r.ok) toast(`Navigation-app coverage ${Math.round(share * 100)}% (for vehicles departing from now on)`, 'ok');
-    else toast(r.error || 'could not set coverage', 'error');
+    if (r.ok) toast(t('Navigation-app coverage {pct}% (for vehicles departing from now on)', { pct: Math.round(share * 100) }), 'ok');
+    else toast(r.error || t('could not set coverage'), 'error');
   }
 
   async applyPreemption() {
     if (!this.isLive()) return;
     const enabled = this.el.ev.checked;
     const r = await this.ctx.socket.command({ type: 'set_preemption', enabled });
-    if (r.ok) toast(`Emergency-vehicle priority ${enabled ? 'on' : 'off'}`, 'ok');
-    else toast(r.error || 'could not change EV priority', 'error');
+    if (r.ok) toast(t(enabled ? 'Emergency-vehicle priority on' : 'Emergency-vehicle priority off'), 'ok');
+    else toast(r.error || t('could not change EV priority'), 'error');
   }
 
   isLive() {
@@ -216,7 +266,7 @@ export class TopBar {
   // --- playback ---------------------------------------------------------------------------
   async setSpeed(speed) {
     const r = await this.ctx.socket.control('speed', { speed });
-    if (!r.ok) toast(r.error || 'could not change speed', 'error');
+    if (!r.ok) toast(r.error || t('could not change speed'), 'error');
   }
 
   async togglePlay() {
@@ -238,10 +288,10 @@ export class TopBar {
     if (!r.ok) toast(r.error, 'error');
   }
 
-  async jump(t) {
-    const r = await this.ctx.socket.control('jump', { t });
+  async jump(at) {
+    const r = await this.ctx.socket.control('jump', { t: at });
     if (!r.ok) toast(r.error, 'error');
-    else toast(`Fast-forwarding to ${fmtClock(t)}…`);
+    else if (!this.demo) toast(t('Fast-forwarding to {time}…', { time: fmtClock(at) }));
   }
 
   // --- status and frames ----------------------------------------------------------------
@@ -278,18 +328,19 @@ export class TopBar {
     const s = this.status;
     const el = this.el;
     el.clockTime.textContent = s && s.state !== 'idle' ? fmtClock(this.t) : '--:--';
-    let text = 'not running';
+    let text = t('not running');
     let cls = '';
     if (s) {
-      if (s.state === 'loading') text = 'starting SUMO…';
-      else if (s.state === 'error') text = 'error';
-      else if (s.state === 'finished') text = 'run finished';
+      if (s.state === 'loading') text = t('starting SUMO…');
+      else if (s.state === 'error') text = t('error');
+      else if (s.state === 'finished') text = t('run finished');
       else if (s.fast_forward_to != null) {
-        text = `fast-forward → ${fmtClock(s.fast_forward_to)}`;
+        text = t('fast-forward → {time}', { time: fmtClock(s.fast_forward_to) });
         cls = 'ff';
       } else if (s.warmup != null) {
         const measuring = this.t >= s.warmup;
-        text = `${s.state === 'paused' ? 'paused · ' : ''}${measuring ? 'measuring' : 'warm-up'}`;
+        const phase = t(measuring ? 'measuring' : 'warm-up');
+        text = s.state === 'paused' ? t('paused · {phase}', { phase }) : phase;
         cls = measuring ? 'measuring' : 'warmup';
       }
     }
@@ -311,7 +362,7 @@ export class TopBar {
       if (e.time > end) continue;
       const m = h(
         'div',
-        { class: 'tl-mark', style: { left: `${(100 * e.time) / end}%` }, title: `${fmtClock(e.time)} · ${eventLabel(e)} (click to jump just before it)` },
+        { class: 'tl-mark', style: { left: `${(100 * e.time) / end}%` }, title: t('{time} · {event} (click to jump just before it)', { time: fmtClock(e.time), event: eventLabel(e) }) },
         h('i', { style: { background: EVENT_COLORS[e.kind] || '#8b9ab3' } }),
       );
       m.addEventListener('click', (ev) => {
@@ -320,9 +371,9 @@ export class TopBar {
       });
       marks.append(m);
     }
-    const lbl = (t, text) => marks.append(h('div', { class: 'tl-label', style: { left: `calc(${(100 * t) / end}% + 4px)` } }, text));
-    if (s.warmup) lbl(0, 'warm-up');
-    if (s.warmup) lbl(s.warmup, `measurement ${fmtClock(s.warmup)}–${fmtClock(end)}`);
+    const lbl = (at, text) => marks.append(h('div', { class: 'tl-label', style: { left: `calc(${(100 * at) / end}% + 4px)` } }, text));
+    if (s.warmup) lbl(0, t('warm-up'));
+    if (s.warmup) lbl(s.warmup, t('measurement {from}–{to}', { from: fmtClock(s.warmup), to: fmtClock(end) }));
     this.renderCursor();
   }
 
@@ -348,13 +399,13 @@ export class TopBar {
     this.jumpWithConfirm(Math.round(k * s.end_time));
   }
 
-  jumpWithConfirm(t) {
+  jumpWithConfirm(at) {
     const s = this.status;
     if (!s || !['running', 'paused', 'finished'].includes(s.state)) return;
-    if (!this.demo && (t < this.t || s.state === 'finished')) { // a recording can rewind, SUMO cannot
-      const ok = confirm(`SUMO cannot rewind. Restart this run and fast-forward to ${fmtClock(t)}?`);
+    if (!this.demo && (at < this.t || s.state === 'finished')) { // a recording can rewind, SUMO cannot
+      const ok = confirm(t('SUMO cannot rewind. Restart this run and fast-forward to {time}?', { time: fmtClock(at) }));
       if (!ok) return;
     }
-    this.jump(t);
+    this.jump(at);
   }
 }
