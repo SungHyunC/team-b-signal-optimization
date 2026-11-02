@@ -465,7 +465,10 @@ def _enable_pages(repo: str, branch: str) -> None:
         capture_output=True,
         text=True,
     )
-    print("GitHub Pages enabled" if r.returncode == 0 else f"note: could not enable GitHub Pages ({r.stderr.strip()}); {hint}")
+    if r.returncode == 0:
+        print("GitHub Pages enabled")
+    elif "already enabled" not in r.stderr:  # pushing a gh-pages branch can switch Pages on by itself
+        print(f"note: could not enable GitHub Pages ({r.stderr.strip()}); {hint}")
 
 
 def main(argv: list[str] | None = None) -> int:
