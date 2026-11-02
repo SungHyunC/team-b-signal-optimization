@@ -1,0 +1,229 @@
+"""FastAPI server for the digital twin.
+
+    python -m teamb twin --port 8000            # then open http://127.0.0.1:8000
+
+HTTP
+    GET  /                 the 3D web app (teamb/twin/static)
+    GET  /api/meta         controllers, scenarios, closable roads, EV routes, attack targets
+    GET  /api/geometry     network geometry (works without a running simulation)
+    GET  /api/state        session status (state, config, speed, t, ...)
+    POST /api/session      (re)start the simulation; body = SessionConfig fields, ?wait=1 waits for SUMO
+    POST /api/control      {"action": "play"|"pause"|"step"|"reset"|"speed"|"jump", "speed": 5, "t": 1200}
+    POST /api/command      a SimEnv command, e.g. {"type": "dispatch_ev", "origin": "W0_J1", "destination": "J4_E5"}
+    GET  /api/results      experiment reports (results/experiments/*/report.json)
+    GET  /api/v1/...       signal data for navigation apps (teamb/api/signal_data.py)
+
+WebSocket /ws
+    server -> client  {"type": "hello", "status", "events", "kpi_history"}   once, on connect
+                      {"type": "frame", "sid", ...SimEnv.frame()}           up to 12 per second
+                      {"type": "status", "state", "speed", ...}             when something changes
+                      {"type": "reply", "id", "ok", ...}                    answer to a client message
+    client -> server  {"type": "control", "id": 1, "action": "pause", "speed": 5}
+                      {"type": "command", "id": 2, "command": {"type": "dispatch_ev", ...}}
+                      (also accepted: {"type": "command", "cmd": "dispatch_ev", "origin": ...})
+"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import re
+from pathlib import Path
+
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+from teamb import config
+from teamb.twin import meta
+from teamb.twin.session import CALL_TIMEOUT_S, Client, Hub, SessionConfig, TwinSession, dumps
+
+log = logging.getLogger("teamb.twin")
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+THREE_VERSION = "0.160.0"  # keep in sync with the importmap in static/index.html
+THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{THREE_VERSION}/"
+VENDOR_DIR = STATIC_DIR / "vendor" / f"three@{THREE_VERSION}"  # optional offline copy (python -m teamb.twin.vendor)
+
+
+def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | None = None) -> FastAPI:
+    """Build the app. Nothing heavy happens until the lifespan starts (no SUMO, no threads)."""
+    hub = Hub()
+    session = TwinSession(hub, runs_dir=runs_dir)
+    reports_dir = Path(results_dir) if results_dir else config.RESULTS / "experiments"
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await asyncio.to_thread(meta.geometry)  # builds the network on first use (netconvert)
+        hub.bind(asyncio.get_running_loop())
+        session.start_thread()
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(session.shutdown)
+
+    app = FastAPI(title="Team B Signal Twin", version="1.0", lifespan=lifespan)
+    app.state.session = session
+    app.state.hub = hub
+
+    async def wait_for(fut, timeout: float = CALL_TIMEOUT_S) -> dict:
+        try:
+            result = await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "timed out waiting for the simulation thread") from None
+        except ValueError as exc:  # bad parameters, e.g. an invalid speed
+            raise HTTPException(400, str(exc)) from None
+        return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    @app.middleware("http")
+    async def no_stale_frontend(request, call_next):
+        # Teammates edit the JS/CSS while the server runs: always revalidate (cheap 304s).
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    # --- web app ---------------------------------------------------------------
+    @app.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
+
+    @app.get("/vendor/three/{path:path}", include_in_schema=False)
+    def vendor_three(path: str):
+        """three.js for the importmap: a local copy if one was downloaded, else the pinned CDN."""
+        if not re.fullmatch(r"[A-Za-z0-9_./-]+", path) or ".." in path:
+            raise HTTPException(404)
+        local = VENDOR_DIR / path
+        if local.is_file():
+            return FileResponse(local, media_type="text/javascript")
+        return RedirectResponse(THREE_CDN + path, status_code=307)
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    # --- REST API ----------------------------------------------------------------
+    @app.get("/api/meta")
+    def get_meta():
+        return meta.build_meta()
+
+    @app.get("/api/geometry")
+    def get_geometry():
+        return Response(meta.geometry_json(), media_type="application/json")
+
+    @app.get("/api/state")
+    def get_state():
+        return session.status()
+
+    @app.post("/api/session")
+    async def post_session(body: dict = Body(default_factory=dict), wait: bool = False):
+        try:
+            cfg = SessionConfig.from_dict(body)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from None
+        fut = session.restart(cfg)
+        if wait:  # scripts and tests: block until SUMO is up
+            result = await wait_for(fut, timeout=120)
+            return {**result, "config": cfg.to_dict()}
+        return {"ok": True, "state": "loading", "config": cfg.to_dict()}
+
+    @app.post("/api/control")
+    async def post_control(body: dict = Body(...)):
+        return await wait_for(session.control(body.get("action"), body.get("speed"), body.get("t")), timeout=120)
+
+    @app.post("/api/command")
+    async def post_command(body: dict = Body(...)):
+        if not isinstance(body.get("type"), str):
+            raise HTTPException(400, "a command needs a 'type', e.g. 'dispatch_ev'")
+        return await wait_for(session.command(body))
+
+    @app.get("/api/results")
+    def get_results():
+        return meta.list_reports(reports_dir)
+
+    # --- signal data for navigation apps (owned by teamb/api) ---------------------------
+    try:
+        from teamb.api.signal_data import build_router
+
+        app.include_router(build_router(session.get_env))
+    except Exception:  # the twin must still start if that module is mid-edit
+        log.exception("could not mount the signal-data API (teamb.api.signal_data)")
+
+    # --- WebSocket ------------------------------------------------------------------
+    @app.websocket("/ws")
+    async def websocket(ws: WebSocket):
+        await ws.accept()
+        client = Client(ws)
+        hub.add(client)
+        client.offer(dumps(session.hello()), droppable=False)
+        if session.last_frame_text:
+            client.offer(session.last_frame_text, droppable=True)
+        pump = asyncio.create_task(_pump(client))
+        tasks: set[asyncio.Task] = set()
+        try:
+            while True:
+                text = await ws.receive_text()
+                task = asyncio.create_task(_handle(client, text))
+                tasks.add(task)
+                task.add_done_callback(tasks.discard)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            hub.remove(client)
+            pump.cancel()
+            for task in tasks:
+                task.cancel()
+
+    async def _pump(client: Client) -> None:
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await client.pump()
+
+    async def _handle(client: Client, text: str) -> None:
+        import json
+
+        try:
+            msg = json.loads(text)
+            if not isinstance(msg, dict):
+                raise ValueError("expected a JSON object")
+        except ValueError as exc:
+            client.offer(dumps({"type": "reply", "id": None, "ok": False, "error": f"bad message: {exc}"}), droppable=False)
+            return
+        kind = msg.get("type")
+        try:
+            if kind == "control":
+                fut = session.control(msg.get("action"), msg.get("speed"), msg.get("t"))
+            elif kind == "command":
+                command = msg.get("command")
+                if command is None:  # flat form: {"type": "command", "cmd": "dispatch_ev", ...params}
+                    command = {k: v for k, v in msg.items() if k not in ("type", "id", "cmd")}
+                    command["type"] = msg.get("cmd")
+                if not isinstance(command, dict) or not isinstance(command.get("type"), str):
+                    raise ValueError("a command needs a 'type', e.g. {'type': 'dispatch_ev', ...}")
+                fut = session.command(command)
+            elif kind == "ping":
+                fut = None
+            else:
+                raise ValueError(f"unknown message type '{kind}' (expected 'control' or 'command')")
+            result = {"ok": True} if fut is None else await asyncio.wait_for(asyncio.wrap_future(fut), 120)
+        except asyncio.TimeoutError:
+            result = {"ok": False, "error": "timed out waiting for the simulation thread"}
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        if not isinstance(result, dict):
+            result = {"ok": True, "result": result}
+        client.offer(dumps({**result, "type": "reply", "id": msg.get("id"), "request": kind}), droppable=False)
+
+    return app
+
+
+def main(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Entry point for `python -m teamb twin`."""
+    import uvicorn
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    print(f"\n  Team B signal twin  ->  http://{host}:{port}\n", flush=True)
+    uvicorn.run(create_app(), host=host, port=port, log_level="info", access_log=False)
+
+
+app = create_app()  # for `uvicorn teamb.twin.server:app --reload` while working on the frontend
+
+if __name__ == "__main__":
+    main()

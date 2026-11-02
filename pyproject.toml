@@ -1,0 +1,9 @@
+[project]
+name = "teamb-signal-twin"
+version = "0.1.0"
+description = "Team B: traffic signal optimization digital twin on SUMO (2026 Crimson Silicon Valley SW·AI Leaders)"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

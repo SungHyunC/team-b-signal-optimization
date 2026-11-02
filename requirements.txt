@@ -1,0 +1,15 @@
+# Simulation (eclipse-sumo bundles the SUMO binaries: sumo, netconvert, sumo-gui)
+eclipse-sumo>=1.24
+traci>=1.24
+sumolib>=1.24
+# Data, AI and evaluation
+numpy>=1.26
+pandas>=2.1
+optuna>=3.6
+pyyaml>=6.0
+# Digital twin server
+fastapi>=0.110
+uvicorn[standard]>=0.29
+# Tests
+pytest>=8.0
+httpx>=0.27

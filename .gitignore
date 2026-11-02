@@ -3,3 +3,19 @@ __pycache__/
 *.pyc
 .venv/
 .ipynb_checkpoints/
+.pytest_cache/
+
+# SUMO outputs (regenerated on demand)
+teamb/network/generated/
+# offline three.js copy (python -m teamb.twin.vendor)
+teamb/twin/static/vendor/
+results/*
+!results/README.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# local tool config
+.claude/
