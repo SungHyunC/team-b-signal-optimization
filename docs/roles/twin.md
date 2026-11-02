@@ -88,6 +88,7 @@ python -m teamb.twin.site deploy    # build + force-push site/ to the gh-pages b
 | `static/js/results.js` | Results tab: charts and tables from `results/experiments/*/report.json` |
 | `static/js/recorder.js` | Record button: 3D view + small HUD to a WebM file |
 | `static/js/util.js` | coordinates, seeded random, formatting, constant-size text sprites |
+| `static/js/i18n.js` | English / 한국어: `t()`, `addKo()`, the language switch, shared names |
 
 ## How it works
 
@@ -151,10 +152,28 @@ Use `approachFrame(index, 'J2', 'N')` from `util.js` to get an approach's stop p
 width and length, and `makeLabel(text)` for a label that stays readable at any zoom (and shows
 up in recordings).
 
+## English / 한국어
+
+The **EN | 한국어** buttons in the top bar switch the language; the page reloads at the same
+run, time and speed. The first visit follows `?lang=ko|en`, then the last choice, then the
+browser language. How it works (`static/js/i18n.js`):
+
+- The code keeps the English and wraps what users see in `t()`: `t('Start')`,
+  `t('Road {edge} closed', { edge })`. Without a Korean entry the English shows, so new text
+  never breaks anything — it just stays English until someone adds the Korean.
+- Each file registers its Korean at the top, next to the English it translates:
+  `addKo({ 'Road {edge} closed': '{edge} 도로 폐쇄' })`. Keys are the exact English strings, so one
+  English word with two meanings needs two keys (see `'Close road'` in `ui/actions.js`).
+- Static labels in `index.html` carry `data-i18n` / `data-i18n-title`; their Korean is in `main.js`.
+- Controller and scenario names: `controllerLabel(c)`, `scenarioTitle(s)` (scenarios carry
+  `title_ko`), and descriptions via `controllerDescription` / `scenarioDescription`.
+- Korean style: short nouns on buttons (시작, 승인), 해요체 in messages (구급차를 출동시켰어요).
+- The live server's own progress and error messages stay English.
+
 ## How to add a panel
 
 1. Add a container to `static/index.html` (e.g. a `<section class="card">` in a side column).
-2. Write `static/js/ui/mypanel.js` with a class whose constructor subscribes to the bus:
+2. Write `static/js/ui/mypanel.js` (text through `t()`, Korean in an `addKo` block) with a class whose constructor subscribes to the bus:
    `ctx.bus.on('frame', f => …)`, `'status'`, `'hello'`, `'session'` (a new run started).
    Send things with `await ctx.socket.command({type: …})` or `ctx.socket.control('pause')`.
 3. Create it in `main.js` next to the others: `new MyPanel(ctx);`.

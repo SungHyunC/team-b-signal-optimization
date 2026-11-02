@@ -8,6 +8,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { approachFrame, DEG, getGlowTexture, makeLabel } from './util.js';
+import { addKo, t } from './i18n.js';
+
+addKo({ '{junction} · EV priority': '{junction} · 긴급차량 우선 신호' });
 
 const LAMP_ON = { R: '#ff3b30', Y: '#ffc21a', G: '#1cf28f' };
 const LAMP_OFF = { R: '#3a1513', Y: '#3a3012', G: '#103424' };
@@ -147,7 +150,7 @@ export class SignalLayer {
       const label = this.labels.get(j);
       if (label) {
         const pre = !!s.preempted_by;
-        label.userData.setText(pre ? `${j} · EV priority` : j, {
+        label.userData.setText(pre ? t('{junction} · EV priority', { junction: j }) : j, {
           background: pre ? 'rgba(150,20,28,0.9)' : 'rgba(8,13,24,0.8)',
           border: pre ? 'rgba(255,160,160,0.7)' : 'rgba(255,255,255,0.25)',
         });

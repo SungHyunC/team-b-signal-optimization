@@ -1,11 +1,26 @@
 // Per-junction signal state: a mini intersection (arms colored by what each approach sees),
 // the current state and how long it has been shown, the earliest possible change, queues,
 // and an "EV priority" badge during emergency preemption. Click a row to fly the camera there.
+import { addKo, lang, t } from '../i18n.js';
 import { $, h } from './dom.js';
+
+addKo({
+  'Fly the camera to {j}': '{j} 교차로로 카메라 이동',
+  'East–West': '동서',
+  'North–South': '남북',
+  green: '녹색',
+  yellow: '황색',
+  'all-red': '전적색',
+  'next change in ≥ {s} s': '다음 변경까지 ≥ {s} s',
+  'can change now': '지금 변경 가능',
+  'queue W {W} · E {E} · N {N} · S {S}': '대기열 서 {W} · 동 {E} · 북 {N} · 남 {S}',
+  'EV priority · {axis}': '긴급차량 우선 · {axis}',
+});
 
 const COLOR = { G: '#22c55e', Y: '#fbbf24', R: '#ef4444' };
 const PART = { G: 'green', Y: 'yellow', AR: 'all-red' };
 const AXIS = { EW: 'East–West', NS: 'North–South' };
+const word = (names, key) => (names[key] ? t(names[key]) : key);
 
 function miniIntersection() {
   const ns = 'http://www.w3.org/2000/svg';
@@ -40,7 +55,7 @@ export class JunctionPanel {
       const name = h('div', { class: 'jname' }, j);
       const state = h('div', { class: 'jstate' }, '–');
       const meta = h('div', { class: 'jmeta' }, '');
-      const row = h('div', { class: 'jrow', title: `Fly the camera to ${j}` }, svg, h('div', {}, name, state, meta));
+      const row = h('div', { class: 'jrow', title: t('Fly the camera to {j}', { j }) }, svg, h('div', {}, name, state, meta));
       row.addEventListener('click', () => ctx.camera.fly(j));
       this.root.append(row);
       this.rows.set(j, { row, arms, name, state, meta });
@@ -59,17 +74,18 @@ export class JunctionPanel {
       const color = part === 'G' ? 'G' : part === 'Y' ? 'Y' : 'R';
       r.state.innerHTML = '';
       r.state.append(
-        h('span', { class: `c-${color}` }, `${AXIS[axis] || axis} ${PART[part] || part}`),
+        h('span', { class: `c-${color}` }, `${word(AXIS, axis)} ${word(PART, part)}`),
         ' · ',
         h('b', {}, `${Math.round(s.time_in_state || 0)} s`),
       );
       const q = queues[j] || {};
-      const qText = ['W', 'E', 'N', 'S'].map((a) => `${a} ${q[a] ?? 0}`).join(' · ');
-      const change = s.min_time_to_change > 0 ? `next change in ≥ ${Math.ceil(s.min_time_to_change)} s` : 'can change now';
-      r.meta.textContent = `${change} · queue ${qText}`;
+      const qText = t('queue W {W} · E {E} · N {N} · S {S}', { W: q.W ?? 0, E: q.E ?? 0, N: q.N ?? 0, S: q.S ?? 0 });
+      const change = s.min_time_to_change > 0 ? t('next change in ≥ {s} s', { s: Math.ceil(s.min_time_to_change) }) : t('can change now');
+      r.meta.textContent = `${change} · ${qText}`;
       r.name.innerHTML = '';
       r.name.append(j);
-      if (s.preempted_by) r.name.append(h('span', { class: 'badge red' }, `EV priority · ${s.preempted_by}`));
+      // preempted_by is the axis given priority (EW / NS): spelled out in Korean.
+      if (s.preempted_by) r.name.append(h('span', { class: 'badge red' }, t('EV priority · {axis}', { axis: lang === 'ko' ? word(AXIS, s.preempted_by) : s.preempted_by })));
       r.row.classList.toggle('preempt', !!s.preempted_by);
     }
   }
