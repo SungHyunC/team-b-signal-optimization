@@ -1,4 +1,4 @@
-name: Lesson 1 - SUMO 30-seed validation
+name: Statistical Validation and Reproducibility
 on:
   workflow_dispatch:
     inputs:
@@ -56,7 +56,7 @@ jobs:
         run: |
           python -m teamb.experiments run --name lesson1_smoke --scenarios rush_hour --controllers fixed_time,max_pressure --seeds 1 --workers 1 --strict-validation
       - name: Full 180-run paired-seed matrix
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_full_matrix }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_full_matrix) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-full-validation]')) }}
         run: |
           python -m teamb.experiments run --name lesson1_validation --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1-30 --workers 2 --strict-validation
       - name: Upload results and logs
