@@ -30,7 +30,7 @@ function show() {
     const params=JSON.stringify({demand_scale:v.demand_scale});
     $('command').textContent='python -m teamb.experiments run --name sandbox_trial --scenarios '+v.scenario+
       ' --controllers '+v.controller+' --seeds '+v.seed+' --ev-preemption '+(v.ev_preemption?'on':'off')+
-      ' --scenario-params '+JSON.stringify(params)+(v.duration_s===null?'':' --end '+v.duration_s);
+      ' --scenario-params '+"'"+params+"'"+(v.duration_s===null?'':' --end '+v.duration_s);
     $('status').textContent='Configuration valid · ready to export';$('status').className='ok';
     return v;
   } catch(e) { $('status').textContent=e.message;$('status').className='error';$('preview').textContent='Invalid configuration';$('command').textContent='';return null; }
