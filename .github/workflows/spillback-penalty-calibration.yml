@@ -1,0 +1,90 @@
+name: Spillback Penalty Calibration Pilot
+on:
+  push:
+    branches:
+      - feature/validation-sandbox-explainability
+    paths:
+      - '.github/workflows/spillback-penalty-calibration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  calibration:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-penalty-calibration]')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install simulator and tests
+        run: |
+          python -m pip install -r requirements.txt
+          python - <<'PY'
+          import sumo
+          with open('/tmp/sumo_home','w') as f: f.write(sumo.SUMO_HOME)
+          PY
+          echo "SUMO_HOME=$(cat /tmp/sumo_home)" >> "$GITHUB_ENV"
+          echo "$(cat /tmp/sumo_home)/bin" >> "$GITHUB_PATH"
+      - name: Verify existing experimental controller
+        run: |
+          sumo --version
+          python -m pytest tests/test_spillback_aware.py tests/test_experiment_accuracy.py -q
+      - name: Download previous pilot for phase diagnostics
+        uses: actions/download-artifact@v8
+        with:
+          name: congestion-controller-pilot-41959366607
+          run-id: 41959366607
+          github-token: ${{ github.token }}
+          path: results/experiments
+      - name: Analyze earlier switching and congestion
+        run: |
+          python -m teamb.experiments.switching_diagnosis results/experiments/congestion_pilot_heavy --output results/calibration/prior_pilot_diagnosis.json
+      - name: Mild penalty 1.10 at threshold 8 — heavy closure (6 runs)
+        run: |
+          python -m teamb.experiments run --name mild_110_closure --scenarios road_closure --controllers max_pressure,max_pressure_spillback --seeds 4-6 --workers 2 --scenario-params '{"demand_scale":1.25}' --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.10}}' --strict-validation
+      - name: Moderate penalty 1.25 at threshold 8 — heavy closure (6 runs)
+        run: |
+          python -m teamb.experiments run --name mild_125_closure --scenarios road_closure --controllers max_pressure,max_pressure_spillback --seeds 4-6 --workers 2 --scenario-params '{"demand_scale":1.25}' --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --strict-validation
+      - name: Mild penalty 1.10 — normal rush-hour regression (6 runs)
+        run: |
+          python -m teamb.experiments run --name mild_110_rush --scenarios rush_hour --controllers max_pressure,max_pressure_spillback --seeds 4-6 --workers 2 --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.10}}' --strict-validation
+      - name: Moderate penalty 1.25 — normal rush-hour regression (6 runs)
+        run: |
+          python -m teamb.experiments run --name mild_125_rush --scenarios rush_hour --controllers max_pressure,max_pressure_spillback --seeds 4-6 --workers 2 --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --strict-validation
+      - name: Read measured outcomes and enforce integrity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ('mild_110_closure','mild_125_closure','mild_110_rush','mild_125_rush'):
+              base = Path('results/experiments') / name
+              audit = json.loads((base / 'validation.json').read_text())
+              assert audit['complete'] and audit['valid_runs'] == 6, (name, audit)
+              data = json.loads((base / 'report.json').read_text())
+              print(name)
+              for row in data['rows']:
+                  print('  ', row['controller'], 'delay',row['mean_delay_s']['mean'],
+                        'unfinished', row['unfinished_pct']['mean'],
+                        'completed',row['metrics']['completed']['mean'],
+                        'spillback_s',row['metrics']['spillback_duration_s']['mean'],
+                        'queue_p95',row['metrics']['queue_p95_veh']['mean'])
+          PY
+      - name: Upload calibration and diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: spillback-calibration-${{ github.run_id }}
+          path: |
+            results/calibration/
+            results/experiments/mild_110_closure/
+            results/experiments/mild_125_closure/
+            results/experiments/mild_110_rush/
+            results/experiments/mild_125_rush/
+          if-no-files-found: warn
+          retention-days: 14
