@@ -1,6 +1,6 @@
 # Sandbox Testing & Final Project Handoff
 
-**Status:** Sandbox smoke workflow launched on the development branch; the public GitHub Pages demo is a prerecorded replay, **not** a server-backed custom SUMO run service.
+**Status:** [Development sandbox smoke run #41973343687](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41973343687) passed all steps. [Sandbox-only release PR #6](https://github.com/SungHyunC/team-b-signal-optimization/pull/6) is prepared for integration; the public GitHub Pages demo is a prerecorded replay, **not** a server-backed custom SUMO run service.
 
 ## What is available today
 
@@ -48,9 +48,9 @@ The [Sandbox Readiness Smoke Test](../.github/workflows/sandbox-readiness.yml) c
 - [x] Experimental controller evaluated independently and rejected for general use
 - [x] Review documents and research PR published
 - [x] Sandbox page route/navigation and README markup repaired on development branch
-- [ ] Automated sandbox smoke workflow passes on the development commit
+- [x] Automated sandbox smoke workflow passed on the development commit (run #41973343687)
 - [ ] Manual browser interaction test (export/import, invalid inputs, back navigation)
-- [ ] Confirm main-branch integration of **sandbox-only fixes**, explicitly excluding rejected controller code
+- [ ] Review and merge [sandbox-only PR #6](https://github.com/SungHyunC/team-b-signal-optimization/pull/6) after its release-branch smoke check passes; rejected controller is excluded
 - [ ] If desired, publish/update static GitHub Pages deployment separately after review
 
 The sandbox UI is **phase one**: configuration generation only. Building a true browser-to-SUMO execution service is a distinct backend and security project, not a capability we should imply is complete.
