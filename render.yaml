@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: team-b-live-sumo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /healthz
+    envVars:
+      - key: TWIN_ACCESS_TOKEN
+        generateValue: true
+      - key: PYTHONUNBUFFERED
+        value: "1"
