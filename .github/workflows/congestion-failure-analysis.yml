@@ -1,0 +1,59 @@
+name: Congestion Failure Analysis
+on:
+  push:
+    branches:
+      - feature/validation-sandbox-explainability
+    paths:
+      - '.github/workflows/congestion-failure-analysis.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-congestion-diagnosis]')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Test diagnosis logic
+        run: python -m pytest tests/test_congestion_diagnosis.py -q
+      - name: Download completed 360-run experiment
+        uses: actions/download-artifact@v8
+        with:
+          name: robustness-results-41946810451
+          run-id: 41946810451
+          github-token: ${{ github.token }}
+          path: results/experiments
+      - name: Compare high-demand controller metrics and bottlenecks
+        run: |
+          python -m teamb.experiments.diagnose results/experiments/robustness_high --output results/diagnostics/high_demand.json > /tmp/high_demand.txt
+          python -m teamb.experiments.diagnose results/experiments/robustness_low --output results/diagnostics/light_demand.json > /tmp/light_demand.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ('high_demand', 'light_demand'):
+              result = json.loads((Path('results/diagnostics') / (name + '.json')).read_text())
+              assert result['run_count'] == 180, (name, result['run_count'])
+              for scenario, details in result['scenarios'].items():
+                  assert details['paired_seeds'] == 30, (name, scenario, details['paired_seeds'])
+                  print(name, scenario, 'warnings:', details['warnings'])
+                  for metric in ('mean_delay_s', 'mean_delay_incl_unfinished_s', 'unfinished_pct',
+                                 'completed', 'throughput_veh_h', 'queue_p95_veh',
+                                 'spillback_duration_s', 'ev_mean_travel_time_s'):
+                      m = details['metrics'][metric]
+                      print(' ', metric, 'fixed:', m['baseline_mean'], 'max-pressure:', m['candidate_mean'],
+                            'paired difference:', m['candidate_minus_baseline'])
+                  print('hotspots:', details['spillback_hotspots'])
+          PY
+      - name: Upload concise diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: congestion-diagnosis-${{ github.run_id }}
+          path: results/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
