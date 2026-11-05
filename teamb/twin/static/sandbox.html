@@ -16,7 +16,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#071120;padding:12px;
 details{margin-top:16px}summary{cursor:pointer} .note{padding:10px;background:#24304b;border-radius:8px}
 @media(max-width:760px){main{grid-template-columns:1fr}body{padding:14px}}
 </style></head><body>
-<a href="../index.html">← Back to Signal Twin</a>
+<a href="/">← Back to Signal Twin</a>
 <h1>Scenario Sandbox</h1><p>Phase 1 · Build, validate, export and import reproducible SUMO experiment configurations. This page does not run simulations or calculate performance results.</p>
 <main><section><h2>Configure your experiment</h2>
 <label>Preset scenario<select id="scenario"></select></label>
@@ -36,7 +36,7 @@ details{margin-top:16px}summary{cursor:pointer} .note{padding:10px;background:#2
 <p>Save this JSON together with the project commit SHA, SUMO version, controller parameters and result files. The current experiment runner accepts the scenario, controller, seed, demand scale, preemption setting and optional end time. A future sandbox execution service will run these configurations; this static page only creates them.</p>
 <pre id="command"></pre></details>
 <details><summary>What each setting means</summary><p><b>Scenario:</b> the network demand and timed events. <b>Controller:</b> the traffic-light decision rule. <b>Seed:</b> reproducible random traffic. <b>Demand multiplier:</b> scale the existing vehicle flows. <b>Preemption:</b> emergency-vehicle signal priority. <b>Duration:</b> optional experiment end time.</p></details>
-<p><a href="../index.html">Open recorded digital twin →</a></p>
+<p><a href="/">Open recorded digital twin →</a></p>
 </section></main>
 <script type="module" src="./js/sandbox.js"></script>
 </body></html>
