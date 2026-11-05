@@ -1,0 +1,64 @@
+name: Sandbox Readiness Smoke Test
+on:
+  push:
+    branches:
+      - feature/validation-sandbox-explainability
+    paths:
+      - '.github/workflows/sandbox-readiness.yml'
+      - 'teamb/sandbox.py'
+      - 'teamb/twin/static/sandbox.html'
+      - 'teamb/twin/static/js/sandbox.js'
+      - 'tests/test_sandbox_http.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sandbox-readiness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies and SUMO
+        run: |
+          python -m pip install -r requirements.txt
+          python - <<'PY'
+          import sumo
+          with open('/tmp/sumo_home','w') as f: f.write(sumo.SUMO_HOME)
+          PY
+          echo "SUMO_HOME=$(cat /tmp/sumo_home)" >> "$GITHUB_ENV"
+          echo "$(cat /tmp/sumo_home)/bin" >> "$GITHUB_PATH"
+      - name: Test sandbox configuration and web routes
+        run: |
+          python -m pytest tests/test_sandbox.py tests/test_sandbox_http.py -q
+      - name: Verify JavaScript parses
+        run: |
+          node --check teamb/twin/static/js/sandbox.js
+      - name: Run exported road-closure preset in SUMO
+        run: |
+          python -m teamb.experiments run --name sandbox_smoke --scenarios road_closure --controllers max_pressure --seeds 33 --workers 1 --end 1200 --scenario-params '{"demand_scale":1.25}' --strict-validation
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=Path('results/experiments/sandbox_smoke')
+          audit=json.loads((d/'validation.json').read_text())
+          assert audit['complete'] and audit['valid_runs']==1
+          summary=json.loads(next((d/'runs').glob('*/summary.json')).read_text())
+          assert summary['controller_errors']==0
+          assert summary['fallback_steps']==0
+          assert summary['rejected_actions']==0
+          print('SANDBOX SMOKE PASS: complete and safe', summary['mean_delay_s'])
+          PY
+      - name: Upload sandbox smoke results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sandbox-smoke-${{ github.run_id }}
+          path: results/experiments/sandbox_smoke/
+          if-no-files-found: warn
+          retention-days: 14
