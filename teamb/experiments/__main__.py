@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 from teamb.experiments.analysis import write_report
+from teamb.experiments.accuracy import audit_specs
 from teamb.experiments.runner import EXPERIMENTS_DIR, build_matrix, parse_coverages, parse_seeds, run_matrix, validate_matrix
 
 
@@ -86,6 +87,7 @@ def main(argv=None) -> int:
     run.add_argument("--force", action="store_true", help="re-run runs that already have results")
     run.add_argument("--no-report", action="store_true", help="only run, do not write the report")
     run.add_argument("--dry-run", action="store_true", help="print the run list and exit")
+    run.add_argument("--strict-validation", action="store_true", help="audit every expected run and fail on incomplete or inconsistent results")
 
     rep = sub.add_parser("report", help="(re)write summary.csv, report.json and report.md")
     rep.add_argument("--name", required=True)
@@ -131,6 +133,14 @@ def main(argv=None) -> int:
     command = "python -m teamb.experiments " + " ".join(shlex.quote(a) for a in (argv if argv is not None else sys.argv[1:]))
     record = run_matrix(specs, exp_dir, workers=args.workers, force=args.force, command=command)
     print(f"done in {record['wall_time_s']} s: {record['ok']} ok, {record['skipped']} skipped, {len(record['failed'])} failed")
+    if args.strict_validation:
+        audit = audit_specs(exp_dir, specs)
+        (exp_dir / "validation.json").write_text(json.dumps(audit, indent=2))
+        print(f"validation: {audit['valid_runs']}/{audit['expected_runs']} valid runs")
+        if not audit["complete"]:
+            for issue in audit["problems"][:30]:
+                print(f"  INVALID: {issue}", file=sys.stderr)
+            return 3
     if not args.no_report:
         report = write_report(exp_dir, baseline=args.baseline)
         print(f"report: {exp_dir / 'report.md'} ({len(report['rows'])} rows)")

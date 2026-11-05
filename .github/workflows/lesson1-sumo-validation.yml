@@ -1,0 +1,71 @@
+name: Statistical Validation and Reproducibility
+on:
+  workflow_dispatch:
+    inputs:
+      run_full_matrix:
+        description: 'Run all 180 SUMO experiments (otherwise smoke-test only)'
+        required: true
+        default: false
+        type: boolean
+  push:
+    branches:
+      - feature/validation-sandbox-explainability
+    paths:
+      - 'teamb/experiments/**'
+      - 'tests/test_experiment_accuracy.py'
+      - 'tests/test_validation_audit.py'
+      - '.github/workflows/lesson1-sumo-validation.yml'
+permissions:
+  contents: read
+jobs:
+  validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install SUMO and Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python - <<'PY'
+          import sumo
+          print('SUMO_HOME:', sumo.SUMO_HOME)
+          with open('/tmp/sumo_home','w') as f: f.write(sumo.SUMO_HOME)
+          PY
+          echo "SUMO_HOME=$(cat /tmp/sumo_home)" >> "$GITHUB_ENV"
+          echo "$(cat /tmp/sumo_home)/bin" >> "$GITHUB_PATH"
+      - name: Verify installed simulation engine
+        run: |
+          sumo --version
+          netconvert --version
+          python -c "import traci, sumolib; print('TraCI and sumolib OK')"
+      - name: Execute Python tests
+        run: python -m pytest tests/test_experiment_accuracy.py tests/test_validation_audit.py tests/test_scenarios.py -q
+      - name: Validate matrix construction (180 expected)
+        run: |
+          python -m teamb.experiments run --name lesson1_validation --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1-30 --workers 2 --dry-run > /tmp/matrix.txt
+          tail -1 /tmp/matrix.txt
+          test "$(tail -1 /tmp/matrix.txt)" = "180 runs"
+      - name: SUMO smoke test (two controllers, same seed)
+        run: |
+          python -m teamb.experiments run --name lesson1_smoke --scenarios rush_hour --controllers fixed_time,max_pressure --seeds 1 --workers 1 --strict-validation
+      - name: Full 180-run paired-seed matrix
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_full_matrix) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-full-validation]')) }}
+        run: |
+          python -m teamb.experiments run --name lesson1_validation --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1-30 --workers 2 --strict-validation
+      - name: Upload results and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lesson1-sumo-results-${{ github.run_id }}
+          path: |
+            results/experiments/lesson1_smoke/
+            results/experiments/lesson1_validation/
+          if-no-files-found: warn
+          retention-days: 14
