@@ -9,10 +9,10 @@ on:
 permissions:
   contents: read
 jobs:
-  sensitivity-pilot:
+  sensitivity-validation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-robustness-pilot]')) }}
+    timeout-minutes: 180
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[run-robustness-pilot]') || contains(github.event.head_commit.message, '[run-full-sensitivity]'))) }}
     env:
       PYTHONUNBUFFERED: '1'
     steps:
@@ -50,13 +50,23 @@ jobs:
       - name: Pilot at 125 percent demand (six paired-controller runs)
         run: |
           python -m teamb.experiments run --name robustness_pilot_high --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1 --workers 2 --scenario-params '{"demand_scale":1.25}' --strict-validation
-      - name: Upload pilot results
+      - name: Full paired-seed matrix at 75 percent demand (180 runs)
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[run-full-sensitivity]') }}
+        run: |
+          python -m teamb.experiments run --name robustness_low --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1-30 --workers 2 --scenario-params '{"demand_scale":0.75}' --strict-validation
+      - name: Full paired-seed matrix at 125 percent demand (180 runs)
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[run-full-sensitivity]') }}
+        run: |
+          python -m teamb.experiments run --name robustness_high --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1-30 --workers 2 --scenario-params '{"demand_scale":1.25}' --strict-validation
+      - name: Upload sensitivity results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: robustness-pilot-${{ github.run_id }}
+          name: robustness-results-${{ github.run_id }}
           path: |
             results/experiments/robustness_pilot_low/
             results/experiments/robustness_pilot_high/
+            results/experiments/robustness_low/
+            results/experiments/robustness_high/
           if-no-files-found: warn
           retention-days: 14
