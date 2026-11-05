@@ -30,9 +30,10 @@ import logging
 import re
 import html
 import os
+from urllib.parse import quote
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Form
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -82,25 +83,31 @@ def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | 
         return {"ok": True, "service": "team-b-live-sumo"}
 
     @app.get("/login", include_in_schema=False)
-    def login_page():
+    def login_page(request: Request):
+        next_path = request.query_params.get("next", "/")
+        if not next_path.startswith("/") or next_path.startswith("//") or "\\\\" in next_path:
+            next_path = "/"
         if not access.configured_secret():
             return RedirectResponse("/", status_code=303)
-        return HTMLResponse("""<!doctype html><html lang="en"><head><meta charset="utf-8">
+        page = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Team B · Live SUMO</title>
 <style>body{background:#0c1727;color:#e9f2ff;font:16px system-ui;max-width:420px;margin:12vh auto;padding:24px}
 input,button{font:inherit;padding:12px;border-radius:8px;width:100%;box-sizing:border-box;margin:10px 0}
 button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd5}</style></head><body>
 <h1>Live SUMO Sandbox</h1><p>Access-controlled, shared research simulator</p>
-<form method="post" action="/login"><label>Access password<input name="password" type="password" required autocomplete="current-password"></label>
+<form method="post" action="/login"><input type="hidden" name="next_path" value="__SAFE_NEXT__"><label>Access password<input name="password" type="password" required autocomplete="current-password"></label>
 <button type="submit">Enter live sandbox</button></form><small>This is a shared research instance; only approved testers should enter.</small>
-</body></html>""")
+</body></html>"""
+        return HTMLResponse(page.replace("__SAFE_NEXT__", html.escape(next_path, quote=True)))
 
     @app.post("/login", include_in_schema=False)
-    async def login_submit(password: str = Form(...)):
+    async def login_submit(password: str = Form(...), next_path: str = Form("/")):
         if not access.valid_password(password):
             return HTMLResponse("<h1>Incorrect access password</h1><a href='/login'>Try again</a>", status_code=401)
-        response = RedirectResponse("/", status_code=303)
+        if not next_path.startswith("/") or next_path.startswith("//") or "\\\\" in next_path:
+            next_path = "/"
+        response = RedirectResponse(next_path, status_code=303)
         response.set_cookie(
             access.COOKIE, access.expected_cookie(access.configured_secret()),
             httponly=True, secure=os.getenv("TWIN_COOKIE_INSECURE") != "1",
@@ -114,7 +121,8 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
             return await call_next(request)
         if request.url.path.startswith("/api/"):
             return JSONResponse({"detail": "login required"}, status_code=401)
-        return RedirectResponse("/login", status_code=303)
+        next_path = request.url.path + ("?" + request.url.query if request.url.query else "")
+        return RedirectResponse("/login?next=" + quote(next_path, safe=""), status_code=303)
 
     @app.middleware("http")
     async def no_stale_frontend(request, call_next):
