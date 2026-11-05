@@ -1,0 +1,86 @@
+name: Independent Controller Confirmation
+on:
+  push:
+    branches:
+      - feature/validation-sandbox-explainability
+    paths:
+      - '.github/workflows/independent-controller-confirmation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  confirm:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-independent-confirmation]')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install simulator and test dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python - <<'PY'
+          import sumo
+          with open('/tmp/sumo_home', 'w') as f: f.write(sumo.SUMO_HOME)
+          PY
+          echo "SUMO_HOME=$(cat /tmp/sumo_home)" >> "$GITHUB_ENV"
+          echo "$(cat /tmp/sumo_home)/bin" >> "$GITHUB_PATH"
+      - name: Verify simulator and isolated controller tests
+        run: |
+          sumo --version
+          python -m pytest tests/test_spillback_aware.py tests/test_experiment_accuracy.py -q
+      - name: Freeze proposed controller parameters
+        run: |
+          python - <<'PY'
+          from teamb.controllers import make_controller
+          c = make_controller('max_pressure_spillback',congestion_threshold=8,downstream_penalty=1.25)
+          assert c.congestion_threshold == 8.0 and c.downstream_penalty == 1.25
+          print('candidate: threshold=8, penalty=1.25; matched independent seeds 31–60')
+          PY
+      - name: Heavy road closure 125 percent — primary endpoint (60 runs)
+        run: |
+          python -m teamb.experiments run --name confirm_closure_125 --scenarios road_closure --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --scenario-params '{"demand_scale":1.25}' --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --baseline max_pressure --strict-validation
+      - name: Normal rush hour 100 percent — regression (60 runs)
+        run: |
+          python -m teamb.experiments run --name confirm_rush_100 --scenarios rush_hour --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --baseline max_pressure --strict-validation
+      - name: Heavy rush hour 125 percent — regression (60 runs)
+        run: |
+          python -m teamb.experiments run --name confirm_rush_125 --scenarios rush_hour --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --scenario-params '{"demand_scale":1.25}' --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --baseline max_pressure --strict-validation
+      - name: Emergency 100 percent — vehicle travel time regression (60 runs)
+        run: |
+          python -m teamb.experiments run --name confirm_emergency_100 --scenarios emergency --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --baseline max_pressure --strict-validation
+      - name: Emergency 125 percent — vehicle travel time regression (60 runs)
+        run: |
+          python -m teamb.experiments run --name confirm_emergency_125 --scenarios emergency --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --scenario-params '{"demand_scale":1.25}' --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --baseline max_pressure --strict-validation
+      - name: Low road closure 75 percent — guard against over-restriction (60 runs)
+        run: |
+          python -m teamb.experiments run --name confirm_closure_075 --scenarios road_closure --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --scenario-params '{"demand_scale":0.75}' --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --baseline max_pressure --strict-validation
+      - name: Strict run integrity safety and paired statistical comparison
+        run: |
+          python -m teamb.experiments.confirm_controller --output results/confirmation/summary.json \
+            results/experiments/confirm_closure_125 \
+            results/experiments/confirm_rush_100 \
+            results/experiments/confirm_rush_125 \
+            results/experiments/confirm_emergency_100 \
+            results/experiments/confirm_emergency_125 \
+            results/experiments/confirm_closure_075
+      - name: Upload full confirmation artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: independent-confirmation-${{ github.run_id }}
+          path: |
+            results/confirmation/
+            results/experiments/confirm_closure_125/
+            results/experiments/confirm_rush_100/
+            results/experiments/confirm_rush_125/
+            results/experiments/confirm_emergency_100/
+            results/experiments/confirm_emergency_125/
+            results/experiments/confirm_closure_075/
+          if-no-files-found: warn
+          retention-days: 14
