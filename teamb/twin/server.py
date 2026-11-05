@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import re
 import html
 import os
@@ -168,6 +169,21 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
             cfg = SessionConfig.from_dict(body)
         except (TypeError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from None
+        if access.configured_secret():
+            # Guard expensive hosted simulations against accidental unbounded inputs.
+            if type(cfg.seed) is not int or not 0 <= cfg.seed <= 2_147_483_647:
+                raise HTTPException(400, "seed must be a nonnegative 32-bit integer")
+            if cfg.end_time is not None and (not math.isfinite(cfg.end_time) or not 60 <= cfg.end_time <= 10800):
+                raise HTTPException(400, "end_time must be 60–10800 simulated seconds")
+            if not set(cfg.scenario_params) <= {"demand_scale"}:
+                raise HTTPException(400, "hosted sandbox supports demand_scale scenario override only")
+            scale = cfg.scenario_params.get("demand_scale", 1.0)
+            if type(scale) not in (int, float) or not math.isfinite(scale) or not 0.1 <= scale <= 3:
+                raise HTTPException(400, "demand_scale must be between 0.1 and 3")
+            if cfg.start_at > 10800:
+                raise HTTPException(400, "start_at exceeds hosted run limit")
+            if cfg.controller_params:
+                raise HTTPException(400, "custom controller parameters are not available on the shared hosted sandbox")
         fut = session.restart(cfg)
         if wait:  # scripts and tests: block until SUMO is up
             result = await wait_for(fut, timeout=120)
