@@ -392,6 +392,21 @@ def index_html(repo_url: str | None, pages_url: str | None) -> str:
     return html.replace("</title>", "</title>\n  " + "\n  ".join(tags), 1)
 
 
+def prepare_public_sandbox(out: Path) -> None:
+    """Adapt only static sandbox navigation to a GitHub Pages project subpath.
+
+    The local FastAPI sandbox uses href="/", while Pages must stay relative to
+    /<repository>/static/sandbox.html. The editor remains static: no SUMO server.
+    """
+    page = out / "static" / "sandbox.html"
+    if not page.is_file():
+        raise RuntimeError(f"missing scenario sandbox in published site: {page}")
+    html = page.read_text(encoding="utf-8")
+    if 'href="/"' not in html:
+        raise RuntimeError("expected local sandbox navigation href=\"/\"")
+    page.write_text(html.replace('href="/"', 'href="../index.html"'), encoding="utf-8")
+
+
 def reports() -> list[dict]:
     """Experiment reports for the Results tab: local results/experiments, else the published
     copies in docs/results/reports (the numbers quoted in docs/results/)."""
@@ -452,6 +467,7 @@ def build(out: Path = SITE_DIR, runs: list[DemoRun] | None = None, end_time: flo
             print(f"  {res['id']:45s} {res['frames']:5d} frames  {res['mb']:5.1f} MB  {res['wall_s']:5.0f} s", flush=True)
 
     shutil.copytree(STATIC_DIR, out / "static", ignore=shutil.ignore_patterns("vendor", ".DS_Store"))
+    prepare_public_sandbox(out)
     urls = _remote_urls()
     repo_url, pages_url = urls if urls else (None, None)
     (out / "index.html").write_text(index_html(repo_url, pages_url))

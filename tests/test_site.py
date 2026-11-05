@@ -107,3 +107,22 @@ def test_build_never_wipes_a_foreign_directory(tmp_path):
     with pytest.raises(SystemExit):
         site._clean(tmp_path)
     assert (tmp_path / "notes.txt").exists()
+
+
+def test_public_sandbox_paths_are_project_relative(tmp_path):
+    """No root-absolute links when hosted beneath /owner/repo/."""
+    from pathlib import Path
+    import shutil
+    target = tmp_path / "static"
+    target.mkdir()
+    shutil.copy(site.STATIC_DIR / "sandbox.html", target / "sandbox.html")
+    site.prepare_public_sandbox(tmp_path)
+    html = (target / "sandbox.html").read_text()
+    assert 'href="../index.html"' in html
+    assert 'href="/"' not in html
+    assert 'src="./js/sandbox.js"' in html
+
+
+def test_public_sandbox_requires_asset(tmp_path):
+    with pytest.raises(RuntimeError, match="missing scenario sandbox"):
+        site.prepare_public_sandbox(tmp_path)
