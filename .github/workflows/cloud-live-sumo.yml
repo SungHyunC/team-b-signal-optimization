@@ -36,6 +36,31 @@ jobs:
       - name: Smoke test actual SUMO execution
         run: |
           python -m teamb.experiments run --name cloud_smoke --scenarios road_closure --controllers max_pressure --seeds 33 --end 1200 --scenario-params '{"demand_scale":1.25}' --workers 1 --strict-validation
+      - name: Build production Docker image and launch FastAPI service
+        run: |
+          docker build -t team-b-live-sumo:ci .
+          docker run -d --rm --name live-sumo-ci -p 10000:10000 -e TWIN_ACCESS_TOKEN=ci-secret-value team-b-live-sumo:ci
+          python - <<'PY'
+          import time, urllib.request
+          for i in range(90):
+              try:
+                  with urllib.request.urlopen('http://localhost:10000/healthz',timeout=3) as resp:
+                      assert resp.status == 200
+                      print('Docker healthcheck passed')
+                      break
+              except Exception:
+                  time.sleep(2)
+          else:
+              raise SystemExit('Docker live twin failed to start')
+          try:
+              urllib.request.urlopen('http://localhost:10000/api/state')
+              raise SystemExit('Unauthenticated API should be blocked')
+          except urllib.error.HTTPError as exc:
+              assert exc.code == 401
+          print('Docker access gate passed')
+          PY
+          docker logs live-sumo-ci --tail 40
+          docker stop live-sumo-ci
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v7
