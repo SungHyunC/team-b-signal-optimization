@@ -50,9 +50,13 @@ A tuned experimental spillback controller was independently tested with **360 si
 
 **Limitations:** no calibration against observed real intersections or traffic volumes, synthetic route choices and closures, model-based safety not field deployment authorization. Finished-trip mean delay alone can hide vehicle completion and unfinished-trip tradeoffs. See linked reports for intervals and complete outcomes.
 
-## Final handoff / next research directions
+## Cloud MVP and event status (post-handoff update)
 
-**Scope completed:** a reproducible research and demonstration prototype with a tested phase-one sandbox. A full browser-based custom SUMO execution backend, hosted results streaming, and a publicly tested live sandbox are **not part of this release**.
+A later project phase added a Docker-hosted live SUMO service on Render (operator-reported functional after the shared-library fix). [Cloud guide](cloud-live-sumo-deployment.md) explains login, one-session boundaries and deployment. [Presentation-day runbook](presentation-day-demo-runbook.md) covers the audience QR and prerecorded-demo plan. The static GitHub Pages sandbox remains the appropriate **independent attendee activity**, because concurrent cloud viewers share one SUMO process. An attendee-scale live backend has not been implemented or load tested.
+
+## Original research handoff / next research directions
+
+**Original scope completed:** a reproducible research and demonstration prototype with a tested phase-one sandbox. The subsequent Render cloud MVP added authenticated live SUMO streaming but **not independent concurrent sandbox sessions**; see the cloud/event sections above.
 
 **Optional future work:** pilot a scenario-aware congestion controller; preregister balanced delay, completed trips, unfinished share, spillback, queue, emergency response and safety guardrails; independently test on fresh random seeds; then consider field-data calibration and integration.
 
