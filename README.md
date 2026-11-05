@@ -8,7 +8,9 @@ the AI fake navigation data — then compare the numbers.
 SUMO 기반 4교차로 **디지털 트윈**입니다. 차량과 신호가 3D로 실시간 움직이고, 신호 제어 방식을 바꾸거나
 구급차 출동·도로 침수·가짜 내비 데이터 공격을 걸어 보면서 결과를 비교할 수 있습니다.
 
-**Engineering review:** [Roadmap, evidence, decisions and sign-off checklist](docs/final-engineering-review.md). The experimental spillback-aware controller is **not approved**; its independent validation is still under review.\n\n**▶ Online demo: https://sunghyunc.github.io/team-b-signal-optimization/** — 13 recorded runs
+**Engineering review:** [Roadmap, evidence, decisions and sign-off checklist](docs/final-engineering-review.md). The experimental spillback-aware controller is **not approved**; its 360-run independent validation found high-demand regressions, so it was rejected as a general-purpose replacement.
+
+**▶ Online demo: https://sunghyunc.github.io/team-b-signal-optimization/** — 13 recorded runs
 (rush hour, ambulances, flood, earthquake, fake-data attack, …) replayed in the browser, on phones too.
 설치 없이 브라우저(휴대폰 포함)에서 녹화된 시뮬레이션 13개를 바로 볼 수 있습니다.
 The page switches between **English and 한국어** (top bar, or `?lang=ko`). 상단의 EN | 한국어 버튼으로 언어를 바꿀 수 있어요.
