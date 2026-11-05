@@ -27,15 +27,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import re
+import html
+import os
+from urllib.parse import quote
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Form, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from teamb import config
-from teamb.twin import meta
+from teamb.twin import meta, access
 from teamb.twin.session import CALL_TIMEOUT_S, Client, Hub, SessionConfig, TwinSession, dumps
 
 log = logging.getLogger("teamb.twin")
@@ -74,6 +78,52 @@ def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | 
         except ValueError as exc:  # bad parameters, e.g. an invalid speed
             raise HTTPException(400, str(exc)) from None
         return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    @app.get("/healthz", include_in_schema=False)
+    def healthz():
+        return {"ok": True, "service": "team-b-live-sumo"}
+
+    @app.get("/login", include_in_schema=False)
+    def login_page(request: Request):
+        next_path = request.query_params.get("next", "/")
+        if not next_path.startswith("/") or next_path.startswith("//") or "\\\\" in next_path:
+            next_path = "/"
+        if not access.configured_secret():
+            return RedirectResponse("/", status_code=303)
+        page = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Team B · Live SUMO</title>
+<style>body{background:#0c1727;color:#e9f2ff;font:16px system-ui;max-width:420px;margin:12vh auto;padding:24px}
+input,button{font:inherit;padding:12px;border-radius:8px;width:100%;box-sizing:border-box;margin:10px 0}
+button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd5}</style></head><body>
+<h1>Live SUMO Sandbox</h1><p>Access-controlled, shared research simulator</p>
+<form method="post" action="/login"><input type="hidden" name="next_path" value="__SAFE_NEXT__"><label>Access password<input name="password" type="password" required autocomplete="current-password"></label>
+<button type="submit">Enter live sandbox</button></form><small>This is a shared research instance; only approved testers should enter.</small>
+</body></html>"""
+        return HTMLResponse(page.replace("__SAFE_NEXT__", html.escape(next_path, quote=True)))
+
+    @app.post("/login", include_in_schema=False)
+    async def login_submit(password: str = Form(...), next_path: str = Form("/")):
+        if not access.valid_password(password):
+            return HTMLResponse("<h1>Incorrect access password</h1><a href='/login'>Try again</a>", status_code=401)
+        if not next_path.startswith("/") or next_path.startswith("//") or "\\\\" in next_path:
+            next_path = "/"
+        response = RedirectResponse(next_path, status_code=303)
+        response.set_cookie(
+            access.COOKIE, access.expected_cookie(access.configured_secret()),
+            httponly=True, secure=os.getenv("TWIN_COOKIE_INSECURE") != "1",
+            samesite="strict", max_age=60 * 60 * 12, path="/",
+        )
+        return response
+
+    @app.middleware("http")
+    async def cloud_access_gate(request, call_next):
+        if request.url.path in ("/healthz", "/login") or access.authenticated(request.cookies.get(access.COOKIE)):
+            return await call_next(request)
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"detail": "login required"}, status_code=401)
+        next_path = request.url.path + ("?" + request.url.query if request.url.query else "")
+        return RedirectResponse("/login?next=" + quote(next_path, safe=""), status_code=303)
 
     @app.middleware("http")
     async def no_stale_frontend(request, call_next):
@@ -119,6 +169,21 @@ def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | 
             cfg = SessionConfig.from_dict(body)
         except (TypeError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from None
+        if access.configured_secret():
+            # Guard expensive hosted simulations against accidental unbounded inputs.
+            if type(cfg.seed) is not int or not 0 <= cfg.seed <= 2_147_483_647:
+                raise HTTPException(400, "seed must be a nonnegative 32-bit integer")
+            if cfg.end_time is not None and (not math.isfinite(cfg.end_time) or not 60 <= cfg.end_time <= 10800):
+                raise HTTPException(400, "end_time must be 60–10800 simulated seconds")
+            if not set(cfg.scenario_params) <= {"demand_scale"}:
+                raise HTTPException(400, "hosted sandbox supports demand_scale scenario override only")
+            scale = cfg.scenario_params.get("demand_scale", 1.0)
+            if type(scale) not in (int, float) or not math.isfinite(scale) or not 0.1 <= scale <= 3:
+                raise HTTPException(400, "demand_scale must be between 0.1 and 3")
+            if cfg.start_at > 10800:
+                raise HTTPException(400, "start_at exceeds hosted run limit")
+            if cfg.controller_params:
+                raise HTTPException(400, "custom controller parameters are not available on the shared hosted sandbox")
         fut = session.restart(cfg)
         if wait:  # scripts and tests: block until SUMO is up
             result = await wait_for(fut, timeout=120)
@@ -150,6 +215,9 @@ def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | 
     # --- WebSocket ------------------------------------------------------------------
     @app.websocket("/ws")
     async def websocket(ws: WebSocket):
+        if not access.authenticated(ws.cookies.get(access.COOKIE)):
+            await ws.close(code=1008, reason="login required")
+            return
         await ws.accept()
         client = Client(ws)
         hub.add(client)

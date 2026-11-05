@@ -95,6 +95,8 @@ function urlConfig(params) {
   if (params.get('start')) cfg.start_at = Number(params.get('start'));
   if (params.get('speed')) cfg.speed = params.get('speed') === 'max' ? 'max' : Number(params.get('speed'));
   if (params.get('ev')) cfg.ev_preemption = params.get('ev') !== '0';
+  if (params.has('demand')) cfg.scenario_params = { demand_scale: Number(params.get('demand')) };
+  if (params.has('end')) cfg.end_time = Number(params.get('end'));
   return cfg;
 }
 

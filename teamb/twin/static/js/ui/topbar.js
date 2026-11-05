@@ -77,6 +77,7 @@ export class TopBar {
     this.ctx = ctx;
     this.status = null;
     this.t = 0;
+    this.sandboxOverrides = {};
     const { meta } = ctx;
     this.el = {
       scenario: $('#f-scenario'),
@@ -118,6 +119,7 @@ export class TopBar {
     }
 
     el.scenario.addEventListener('change', () => {
+      this.sandboxOverrides = {};
       this.fillControllerOptions();
       this.fillStartOptions();
       // Each scenario has a design coverage (e.g. 25 % for the fake-data test): start from it.
@@ -192,12 +194,14 @@ export class TopBar {
       start_at: Number(el.start.value) || 0,
       speed: this.status ? this.status.speed : 2,
       autoplay: true,
+      ...this.sandboxOverrides,
     };
   }
 
   /** Apply values (e.g. from URL parameters) to the form. */
   setForm(cfg) {
     const el = this.el;
+    if (cfg.scenario_params || cfg.end_time != null) this.sandboxOverrides = { ...(cfg.scenario_params ? { scenario_params: cfg.scenario_params } : {}), ...(cfg.end_time != null ? { end_time: cfg.end_time } : {}) };
     if (cfg.scenario) {
       el.scenario.value = cfg.scenario;
       this.fillControllerOptions();

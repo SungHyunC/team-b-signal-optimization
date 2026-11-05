@@ -47,3 +47,31 @@ $('export').addEventListener('click',()=>{const v=show();if(!v)return;const blob
 $('copy').addEventListener('click',async()=>{const v=show();if(!v)return;try{await navigator.clipboard.writeText(JSON.stringify(v,null,2));$('status').textContent='Configuration copied';}catch{$('status').textContent='Clipboard unavailable; select the JSON above';}});
 $('import').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>100000)throw Error('File too large');fill(JSON.parse(await file.text()));$('status').textContent='Configuration imported and validated';}catch(err){$('status').textContent='Import rejected: '+err.message;$('status').className='error';}e.target.value='';});
 show();
+
+const liveUrl = $('live_url');
+const isStaticPages = location.hostname.endsWith('.github.io');
+const initialLive = localStorage.getItem('teamb_live_url') || (isStaticPages ? '' : location.origin);
+liveUrl.value = initialLive;
+$('launch_live').addEventListener('click', () => {
+  const cfg = show();
+  if (!cfg) return;
+  try {
+    const target = new URL(liveUrl.value.trim());
+    if (target.protocol !== 'https:' && !(target.protocol === 'http:' && ['localhost','127.0.0.1'].includes(target.hostname))) {
+      throw Error('Use an HTTPS cloud URL or a local http://localhost URL.');
+    }
+    if (target.username || target.password || target.search || target.hash) throw Error('Enter a server origin only, without credentials or query parameters.');
+    if (isStaticPages && target.hostname === location.hostname) throw Error('GitHub Pages cannot run SUMO; enter the separate cloud simulator URL.');
+    localStorage.setItem('teamb_live_url', target.origin);
+    const url = new URL('/', target.origin);
+    for (const [key,value] of Object.entries({
+      scenario:cfg.scenario, controller:cfg.controller, seed:cfg.seed,
+      demand:cfg.demand_scale, end:cfg.duration_s, ev:cfg.ev_preemption?1:0,
+      speed:2
+    })) if (value !== null) url.searchParams.set(key, String(value));
+    window.location.assign(url.href);
+  } catch(err) {
+    $('status').textContent='Live launch: '+err.message;
+    $('status').className='error';
+  }
+});
