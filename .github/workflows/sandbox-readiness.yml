@@ -5,12 +5,15 @@ on:
       - feature/validation-sandbox-explainability
       - release/sandbox-readiness-burtogr
       - main
+      - feature/public-sandbox-pages-burtogr
     paths:
       - '.github/workflows/sandbox-readiness.yml'
       - 'teamb/sandbox.py'
       - 'teamb/twin/static/sandbox.html'
       - 'teamb/twin/static/js/sandbox.js'
       - 'tests/test_sandbox_http.py'
+      - 'teamb/twin/site.py'
+      - 'tests/test_site.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -38,6 +41,8 @@ jobs:
       - name: Test sandbox configuration and web routes
         run: |
           python -m pytest tests/test_sandbox.py tests/test_sandbox_http.py -q
+      - name: Verify published GitHub Pages sandbox navigation
+        run: python -m pytest tests/test_site.py -q -k public_sandbox
       - name: Verify JavaScript parses
         run: |
           node --check teamb/twin/static/js/sandbox.js
