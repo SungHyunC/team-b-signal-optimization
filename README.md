@@ -8,6 +8,10 @@ the AI fake navigation data — then compare the numbers.
 SUMO 기반 4교차로 **디지털 트윈**입니다. 차량과 신호가 3D로 실시간 움직이고, 신호 제어 방식을 바꾸거나
 구급차 출동·도로 침수·가짜 내비 데이터 공격을 걸어 보면서 결과를 비교할 수 있습니다.
 
+**Final project handoff:** [Readiness, reproducibility and Windows sandbox walkthrough](docs/final-project-handoff.md) · [Engineering roadmap and outcomes](docs/final-engineering-review.md) · [Presentation brief](docs/final-presentation-brief.md). Research-only spillback controller was **rejected** after independent validation; original max-pressure remains the baseline.
+
+**Scenario Sandbox (local):** after `python -m teamb twin`, open `http://127.0.0.1:8000/static/sandbox.html`. Export/import JSON there; custom SUMO runs execute separately via the displayed CLI command. The GitHub Pages demo replays recordings and is not a hosted experiment execution service.
+
 **▶ Online demo: https://sunghyunc.github.io/team-b-signal-optimization/** — 13 recorded runs
 (rush hour, ambulances, flood, earthquake, fake-data attack, …) replayed in the browser, on phones too.
 설치 없이 브라우저(휴대폰 포함)에서 녹화된 시뮬레이션 13개를 바로 볼 수 있습니다.
@@ -23,6 +27,8 @@ The page switches between **English and 한국어** (top bar, or `?lang=ko`). �
 > not field-calibrated values.
 
 ## Quick start
+
+For Windows PowerShell with Python 3.11 installed, you can use `py -3.11` in place of `python`. If SUMO executables are not on PATH, see the [Windows handoff](docs/final-project-handoff.md).
 
 Python 3.10+ is needed. `requirements.txt` installs SUMO itself (`eclipse-sumo`), so there is
 nothing else to install.
