@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
+      - name: Install test dependencies
+        run: python -m pip install pytest
       - name: Test diagnosis logic
         run: python -m pytest tests/test_congestion_diagnosis.py -q
       - name: Download completed 360-run experiment
