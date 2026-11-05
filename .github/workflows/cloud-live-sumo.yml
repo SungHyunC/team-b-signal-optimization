@@ -1,7 +1,7 @@
 name: Cloud Live SUMO MVP Verification
 on:
   push:
-    branches: [feature/cloud-live-sumo-mvp-burtogr]
+    branches: [feature/cloud-live-sumo-mvp-burtogr, fix/render-sumo-libxrender-burtogr, main]
     paths:
       - 'teamb/twin/**'
       - 'tests/test_cloud_live.py'
@@ -58,6 +58,19 @@ jobs:
           except urllib.error.HTTPError as exc:
               assert exc.code == 401
           print('Docker access gate passed')
+          PY
+          # Previous CI only verified FastAPI. Render failed later because the
+          # pip-provided SUMO binary could not load libXrender.so.1.
+          # Start and step SUMO inside the actual production Docker image.
+          docker exec -i live-sumo-ci python - <<'PY'
+          from teamb.sim.env import SimEnv
+          sim = SimEnv("rush_hour", "fixed_time", seed=1, end_time=60)
+          try:
+              sim.start()
+              sim.step()
+              print("Docker SUMO + TraCI connection passed", sim.t, flush=True)
+          finally:
+              sim.close()
           PY
           docker logs live-sumo-ci --tail 40
           docker stop live-sumo-ci
