@@ -102,7 +102,7 @@ Per operating system:
   *Install Certificates* command once if `teamb vendor` fails with a certificate error.
 - **Windows:** use the PowerShell venv above (or `py -3.11` instead of `python`). JSON options
   such as `--scenario-params` are easiest from a Scenario Sandbox file:
-  `teamb sandbox run team-b-scenario.json`. See the [Windows walkthrough](docs/final-project-handoff.md#reproduce-on-windows-powershell).
+  `teamb sandbox run sandbox_trial.json`. See the [Windows walkthrough](docs/final-project-handoff.md#reproduce-on-windows-powershell).
 
 `pip install -r requirements.txt` (runtime) or `-r requirements-dev.txt` (with test tools) still
 works without installing the package; then use `python -m teamb ...`. `requirements.lock` pins
@@ -121,6 +121,7 @@ Everything is one command, `teamb` (also `python -m teamb`). `teamb <command> --
 | `teamb run --scenario emergency --controller max_pressure` | One headless run; summary printed, outputs in `results/runs/` |
 | `teamb exp run --name demo ...` | Batch experiment over scenarios × controllers × seeds, then a paired report |
 | `teamb exp report --name demo` / `teamb exp list` | Rewrite the report / list experiments in `results/experiments/` |
+| `teamb exp screen --name demo --baseline max_pressure --candidate C` | Prespecified regression screen: may candidate `C` replace the baseline? (≤ +5 % delay in every condition, no extra unfinished trips, no slower EVs, no safety events) |
 | `teamb impact results/experiments/demo` | Impact and cost-benefit table of an experiment |
 | `teamb diagnose results/experiments/demo` | Read-only controller failure diagnosis of an experiment |
 | `teamb sandbox validate FILE` / `teamb sandbox run FILE` | Check a Scenario Sandbox export and print its command / run it in SUMO with a report |
@@ -175,9 +176,10 @@ in [.github/workflows/](.github/workflows/).
 | `coordinated` | fixed-time with green-wave offsets | baseline |
 | `actuated` | extends green while loop detectors see cars | baseline |
 | `max_pressure` | green to the axis with the biggest queue imbalance | strong baseline |
+| `max_pressure_plus` | max-pressure that switches only when the other axis wins by an extra 25 % (each switch costs 5 s of yellow + all-red); passed the 30-seed regression screen in all 21 conditions | best detector-based controller |
 | `max_pressure_probe` | max-pressure on navigation data only (security test) | security |
 | `ai_recommender` | Optuna searches cycle/splits/offsets on a model built from navigation data → engineer approves → applied (Google Green Light style) | core |
-| `rl` | Q-learning controller trained in SUMO (Busan-style real-time control) | stretch |
+| `rl` | Q-learning controller trained in SUMO (Busan-style real-time control); since Nov 2026 trained on 7 scenarios × varied demand, with a max-pressure fallback in states it has rarely seen | stretch |
 
 **Scenarios** (`teamb/scenarios/`, details in [`docs/scenarios.md`](docs/scenarios.md)):
 
