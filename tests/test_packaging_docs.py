@@ -1,6 +1,7 @@
 """Documentation stays navigable and honest.
 
 - Every relative link in a tracked Markdown file points at a file or folder that exists.
+- Every Markdown file under docs/ is reachable from README.md through relative links.
 - Documented `teamb exp run` / `python -m teamb.experiments run` commands still pass --dry-run
   (put `<!-- docs-check: skip -->` on the line before a fenced block that must not be checked,
   e.g. a command that needs another branch).
@@ -94,6 +95,23 @@ def test_link_checker_catches_broken_links(tmp_path):
     found = [t for _, t in _relative_links(md)]
     assert found == ["ok.md", "missing.md#x", "img/none.png", "other/missing.md"]
     assert [t for t in found if not _resolve(md, t).exists()] == ["missing.md#x", "img/none.png", "other/missing.md"]
+
+
+def test_every_docs_page_is_reachable_from_the_readme():
+    seen, todo = set(), [ROOT / "README.md"]
+    while todo:
+        md = todo.pop().resolve()
+        if md in seen or not md.exists():
+            continue
+        seen.add(md)
+        for _, target in _relative_links(md):
+            dest = _resolve(md, target)
+            if dest.is_dir():
+                dest = dest / "README.md"
+            if dest.suffix == ".md":
+                todo.append(dest)
+    orphans = [str(p.relative_to(ROOT)) for p in MARKDOWN if DOCS in p.parents and p.resolve() not in seen]
+    assert not orphans, "not linked from README.md or the docs hub (docs/README.md):\n" + "\n".join(orphans)
 
 
 def _experiment_commands():
