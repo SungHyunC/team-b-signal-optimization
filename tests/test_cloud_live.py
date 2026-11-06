@@ -135,6 +135,7 @@ def test_ascii_secret_rejects_non_ascii_password(monkeypatch):
     {"action": "jump", "t": []}, {"action": "jump", "t": {"a": 1}}, {"action": "jump", "t": True},
     {"action": "jump", "t": "soon"}, {"action": "jump", "t": "Infinity"}, {"action": "speed", "speed": [1]},
     '{"action": "speed", "speed": 1' + "0" * 400 + '}',  # raw JSON: float() of it raises OverflowError
+    {"action": "bogus", "speed": 20},  # unknown action: refused whole, its speed is not applied
 ])
 def test_malformed_control_is_400(open_client, body):
     if isinstance(body, str):
@@ -160,9 +161,28 @@ def test_parse_control_unit():
     assert parse_control(" Jump ", None, "120") == ("jump", None, 120.0)
     assert parse_control("jump", 5, -3) == ("jump", 5.0, 0.0)
     assert parse_control("play", "max")[1] == float("inf")
-    for bad in ((5,), ("jump", None, []), ("jump", None, float("nan")), ("speed", "warp")):
+    for bad in ((5,), ("jump", None, []), ("jump", None, float("nan")), ("speed", "warp"), ("bogus", 20)):
         with pytest.raises(ValueError):
             parse_control(*bad)
+
+
+def test_unknown_control_action_changes_nothing():
+    """ext-160: an unknown action used to apply its speed first and only then say ok:false."""
+    from teamb.twin.session import Hub, TwinSession
+
+    session = TwinSession(Hub())
+    before = (session.speed, session.state, session.playing)
+    with pytest.raises(ValueError, match="unknown control action 'bogus'"):
+        session._control("bogus", 20)
+    assert (session.speed, session.state, session.playing) == before
+    # The WebSocket path queues the same call on the sim thread and replies ok:false with the error.
+    session.start_thread()
+    try:
+        with pytest.raises(ValueError, match="unknown control action"):
+            session.control("bogus", 20).result(5)
+        assert (session.speed, session.state, session.playing) == before
+    finally:
+        session.shutdown()
 
 
 # --- WebSocket robustness (twin-security-6) ----------------------------------------------

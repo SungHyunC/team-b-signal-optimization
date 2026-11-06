@@ -128,11 +128,14 @@ def parse_control(action, speed=None, t=None) -> tuple[str, float | None, float 
     """Validate a control request before anything changes: (action, speed, t) or ValueError.
 
     Malformed input (a number as action, a list as t, Infinity) used to escape as AttributeError
-    or TypeError, i.e. HTTP 500, sometimes after the speed had already been changed.
+    or TypeError, i.e. HTTP 500, sometimes after the speed had already been changed. An unknown
+    action is refused here too, so its speed is never applied.
     """
     if action is not None and not isinstance(action, str):
         raise ValueError(f"invalid action {action!r} (expected one of {', '.join(CONTROL_ACTIONS)})")
     action = (action or "speed").strip().lower()
+    if action not in CONTROL_ACTIONS:
+        raise ValueError(f"unknown control action {action!r} (expected one of {', '.join(CONTROL_ACTIONS)})")
     new_speed = None if speed is None else parse_speed(speed)
     target = None
     if t is not None:
@@ -679,8 +682,6 @@ class TwinSession:
                 self.playing, self.ff_target, self.state = False, None, "paused"
                 if self._step_once():
                     self._publish_frame()
-        elif action != "speed":
-            return {"ok": False, "error": f"unknown control action '{action}'"}
         self._publish_status()
         return {"ok": True, "state": self.state, "speed": speed_label(self.speed), "t": self.last_t}
 
