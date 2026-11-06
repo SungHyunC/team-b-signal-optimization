@@ -30,6 +30,7 @@ addKo({
   'unknown error': '알 수 없는 오류',
   'New signal plan applied': '새 신호 계획을 적용했어요',
   'New signal plan applied (cycle {cycle} s)': '새 신호 계획을 적용했어요 (주기 {cycle} s)',
+  'AI recommendation approved: the current plan is kept': 'AI 추천 승인: 지금 신호 계획이 이미 최선이라 그대로 유지해요',
   'No events yet. Scenario events and your actions show up here.': '아직 이벤트가 없어요. 시나리오 이벤트와 직접 조작한 내용이 여기에 나타나요.',
   '{n} event': '{n}건',
   '{n} events': '{n}건',
@@ -64,6 +65,7 @@ export const STYLE = {
   recommendation_approved: ['#22c55e', () => t('AI recommendation approved and applied')],
   recommendation_rejected: ['#8b9ab3', () => t('AI recommendation rejected')],
   recommendation_failed: ['#ef4444', (e) => t('AI search failed: {error}', { error: e.error || t('unknown error') })],
+  plan_kept: ['#22c55e', () => t('AI recommendation approved: the current plan is kept')],
   plan_applied: ['#22c55e', (e) => (e.plan && e.plan.cycle ? t('New signal plan applied (cycle {cycle} s)', { cycle: Math.round(e.plan.cycle) }) : t('New signal plan applied'))],
 };
 
