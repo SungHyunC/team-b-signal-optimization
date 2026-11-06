@@ -287,3 +287,34 @@ def test_interrupted_matrix_still_records_the_invocation(tmp_path, fake_env):
     inv = json.loads((tmp_path / "experiment.json").read_text())["invocations"]
     assert len(inv) == 2 and inv[-1]["interrupted"] is True
     assert inv[-1]["skipped"] == 1 and inv[-1]["not_run"] == 2
+
+
+# --- --controller-params (ext-92) -----------------------------------------------------------
+def test_controller_params_forms(capsys):
+    from teamb.experiments.runner import split_controller_params
+
+    with pytest.raises(ValueError, match="mixes per-controller keys"):
+        split_controller_params({"max_pressure": {"margin": 4}, "min_green": 5}, ["max_pressure", "fixed_time"])
+    with pytest.raises(ValueError, match="must be an object"):
+        split_controller_params({"max_pressure": 4}, ["max_pressure"])
+    assert split_controller_params({"offsets": {"J1": 10}}, ["fixed_time"]) == {"fixed_time": {"offsets": {"J1": 10}}}
+    assert split_controller_params({"min_green": 5}, ["fixed_time", "max_pressure"]) == {
+        "fixed_time": {"min_green": 5}, "max_pressure": {"min_green": 5}}
+    # a registered controller that is not selected (added by a later invocation) is ignored
+    per = split_controller_params({"ai_recommender": {"auto_approve": True}}, ["fixed_time"])
+    assert per == {"fixed_time": {}} and "ignored" in capsys.readouterr().err
+    specs = build_matrix(["rush_hour"], ["fixed_time"], [1], [1.0], controller_params={"ai_recommender": {"auto_approve": True}})
+    assert specs[0].name == "rush_hour__fixed_time__s1__c100__uniform"
+
+
+def test_validate_matrix_catches_unknown_controller_parameters():
+    def problems(params, controllers=("max_pressure",)):
+        return validate_matrix(build_matrix(["rush_hour"], list(controllers), [1], [1.0], controller_params=params))
+
+    assert any("max_presure" in p for p in problems({"max_presure": {"margin": 4}}))  # typo'd controller name
+    assert any("'margn'" in p for p in problems({"margn": 4}))
+    assert any("'margn'" in p for p in problems({"max_pressure": {"margn": 4}}))
+    assert not problems({"max_pressure": {"margin": 4}})
+    assert not problems({"min_green": 5}, ("fixed_time", "max_pressure"))  # global key used by one of them
+    assert not problems({"ai_recommender": {"auto_approve": True}}, ("fixed_time", "coordinated", "ai_recommender"))
+    assert not problems({"max_pressure_probe": {"defense": True}}, ("fixed_time", "max_pressure_probe"))

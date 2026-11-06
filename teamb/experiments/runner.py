@@ -127,12 +127,49 @@ def scenario_default_coverage(scenario: str) -> float:
 
 
 def split_controller_params(params: dict | None, controllers: list[str]) -> dict[str, dict]:
-    """--controller-params is either {"param": value} for every controller or
-    {"controller_name": {"param": value}, ...} per controller."""
+    """--controller-params is either {"param": value} for every controller (global form) or
+    {"controller_name": {"param": value}, ...} per controller.
+
+    The form is decided by the keys: if any key names a registered controller, it is the
+    per-controller form, and then every key must name a controller and hold a dict (a mix of
+    both forms raises ValueError instead of silently passing the whole dict to every
+    controller). Registered controllers that are not in `controllers` are ignored with a
+    warning, since later invocations may add them to the same experiment."""
     params = params or {}
-    if params and all(k in controllers and isinstance(v, dict) for k, v in params.items()):
-        return {c: dict(params.get(c, {})) for c in controllers}
-    return {c: dict(params) for c in controllers}
+    from teamb.controllers import REGISTRY
+
+    ctrl_keys = [k for k in params if k in REGISTRY]
+    if not ctrl_keys:
+        return {c: dict(params) for c in controllers}
+    other = [k for k in params if k not in REGISTRY]
+    if other:
+        raise ValueError(
+            f"--controller-params mixes per-controller keys ({', '.join(ctrl_keys)}) with other keys "
+            f"({', '.join(other)}); use one form: {{\"param\": v}} or {{\"controller\": {{\"param\": v}}}}"
+        )
+    not_dict = [k for k in ctrl_keys if not isinstance(params[k], dict)]
+    if not_dict:
+        raise ValueError(f"--controller-params: the value for {', '.join(not_dict)} must be an object of parameters")
+    unused = [k for k in ctrl_keys if k not in controllers]
+    if unused:
+        print(f"note: --controller-params for {', '.join(unused)} ignored (not in --controllers)", file=sys.stderr)
+    return {c: dict(params.get(c, {})) for c in controllers}
+
+
+def accepted_params(cls) -> set[str]:
+    """Named constructor parameters of a controller class and its bases (Controller.__init__
+    takes **params and silently keeps unknown keys, so typos must be caught here)."""
+    import inspect
+
+    names: set[str] = set()
+    for klass in cls.__mro__:
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        for p in inspect.signature(init).parameters.values():
+            if p.name != "self" and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+                names.add(p.name)
+    return names
 
 
 def build_matrix(
@@ -205,6 +242,15 @@ def validate_matrix(specs: list[RunSpec]) -> list[str]:
     for c in sorted({s.coverage for s in specs}):
         if not 0.0 < c <= 1.0:
             problems.append(f"coverage {c} outside (0, 1]")
+    # a parameter no controller that receives it accepts is a typo (it would be silently ignored)
+    receivers: dict[str, set[str]] = {}
+    for s in specs:
+        if s.controller in CONTROLLERS:
+            for key in s.controller_params:
+                receivers.setdefault(key, set()).add(s.controller)
+    for key, ctrls in sorted(receivers.items()):
+        if not any(key in accepted_params(CONTROLLERS[c]) for c in ctrls):
+            problems.append(f"unknown controller parameter '{key}' (not accepted by {', '.join(sorted(ctrls))})")
     problems += name_collisions(specs)
     return problems
 
