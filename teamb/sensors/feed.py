@@ -15,7 +15,9 @@ every step (cheap)
       with a radius that covers the whole network),
     * every E2 lane-area detector: halting number, vehicle number, occupancy, mean speed,
     * every E1 induction loop: seconds since the last detection, vehicles on the loop,
-    * lane 0 of every edge: disallowed vehicle classes (a closed road disallows all),
+    * lane 0 of every edge: disallowed vehicle classes (a closed road disallows all), only
+      when no closure provider is attached (SimEnv passes its ScenarioRuntime's closures,
+      the only place roads are closed, and saves decoding 40 lanes every step),
     * the simulation: time, departed and arrived vehicle ids, number of vehicles that
       started teleporting (``step_values`` gives SimEnv the first three without getters).
 on request, at most once per step (``snapshot_at``)
@@ -31,8 +33,10 @@ would report about itself. It never reaches a controller, except in the explicit
 labeled ``oracle`` benchmark.
 
 The feed is attached to the connection object (``conn._teamb_feed``) so the sensors
-and the metrics share it without any change to ``SimEnv``. The SensorSuite registers
-itself as ``feed.sensors`` so the metrics can read its logs at the end of the run.
+and the metrics share it. SimEnv creates a fresh one with ``attach_feed`` at every start
+(with libsumo the connection is the module itself and outlives a run); other callers get
+one on first use from ``get_feed``. The SensorSuite registers itself as ``feed.sensors``
+so the metrics can read its logs at the end of the run.
 """
 from __future__ import annotations
 
@@ -100,6 +104,19 @@ def get_feed(conn, topology) -> "TrafficFeed":
     return feed
 
 
+def attach_feed(conn, topology, *, closures=None) -> "TrafficFeed":
+    """A fresh feed for this connection, replacing any feed cached on it by an earlier run.
+
+    `closures`: optional callable returning the ids of the closed edges right now. With it the
+    feed takes closures from there instead of subscribing every edge's lane permissions."""
+    feed = TrafficFeed(conn, topology, closures=closures)
+    try:
+        conn._teamb_feed = feed
+    except AttributeError:  # see get_feed
+        pass
+    return feed
+
+
 def _radius_covering(net, x0: float, y0: float) -> float:
     xmin, ymin, xmax, ymax = net.getBoundary()
     corners = [(xmin, ymin), (xmin, ymax), (xmax, ymin), (xmax, ymax)]
@@ -107,9 +124,10 @@ def _radius_covering(net, x0: float, y0: float) -> float:
 
 
 class TrafficFeed:
-    def __init__(self, conn, topology):
+    def __init__(self, conn, topology, closures=None):
         self.conn = conn
         self.topo = topology
+        self._closures = closures  # callable -> closed edge ids; None: watch lane permissions
         self.sensors = None  # the SensorSuite registers itself here
         self.events: list[dict] = []  # road_closed / road_reopened (seen here), attack_* (logged by sensors)
         self.t: float | None = None
@@ -139,8 +157,9 @@ class TrafficFeed:
         for lane in self.detector_lanes:
             c.lanearea.subscribe(f"e2_{lane}", list(E2_VARS))
             c.inductionloop.subscribe(f"e1_{lane}", list(E1_VARS))
-        for lane in self._closure_lanes:
-            c.lane.subscribe(lane, [tc.LANE_DISALLOWED])
+        if self._closures is None:
+            for lane in self._closure_lanes:
+                c.lane.subscribe(lane, [tc.LANE_DISALLOWED])
         c.simulation.subscribe(list(SIM_VARS))
 
     # --- every step -------------------------------------------------------------
@@ -182,12 +201,19 @@ class TrafficFeed:
         sim = c.simulation.getSubscriptionResults() or {}
         n = sim.get(tc.VAR_TELEPORT_STARTING_VEHICLES_NUMBER)
         self.teleports_started = int(n) if n is not None else c.simulation.getStartingTeleportNumber()
-        self._detect_closures(t, c.lane.getAllSubscriptionResults())
+        if self._closures is None:
+            lanes = c.lane.getAllSubscriptionResults()
+            closed_now = {
+                edge for lane, edge in self._closure_lanes.items()
+                if "passenger" in (lanes.get(lane) or {}).get(tc.LANE_DISALLOWED, ())
+            }
+        else:
+            closed_now = set(self._closures())
+        self._detect_closures(t, closed_now)
 
-    def _detect_closures(self, t: float, lanes: dict) -> None:
-        for lane, edge in self._closure_lanes.items():
-            disallowed = (lanes.get(lane) or {}).get(tc.LANE_DISALLOWED, ())
-            closed = "passenger" in disallowed
+    def _detect_closures(self, t: float, closed_now: set[str]) -> None:
+        for edge in self._closure_lanes.values():
+            closed = edge in closed_now
             if closed and edge not in self._closed:
                 self._closed.add(edge)
                 self.events.append({"t": t, "type": "road_closed", "edge": edge})

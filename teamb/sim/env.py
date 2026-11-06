@@ -49,6 +49,7 @@ from teamb.safety.supervisor import SafetySupervisor
 from teamb.scenarios import get_scenario
 from teamb.scenarios.events import EVENT_KINDS, ScenarioRuntime
 from teamb.sensors import SensorSuite
+from teamb.sensors.feed import attach_feed
 from teamb.sim import backend
 from teamb.sim.phases import approach_colors, axis_of, build_state, is_conflict_free
 from teamb.sumo_paths import binary
@@ -168,9 +169,10 @@ class SimEnv:
         self.conn, self._sumo_version = backend.start(cmd, self.label)
         try:  # anything failing from here on (sampling spec, RL model, scenario) must not leak SUMO
             self.supervisor = SafetySupervisor(list(self.topology.tls_ids))
+            # a fresh feed per run (shared by sensors and metrics); closures come from the runtime
+            self._feed = attach_feed(self.conn, self.topology, closures=self._closed_edge_ids)
             self.sensors = SensorSuite(self.conn, self.topology, coverage=self.coverage, sampling=self.sampling, seed=self.seed)
             self.coverage = self.sensors.coverage  # the share the sensors really use
-            self._feed = self.sensors.feed
             self.metrics = MetricsCollector(self.conn, self.topology, warmup=self.scenario.warmup, end_time=self.end_time)
             cfg = self.run_config()
             self.controller.reset(cfg, self.seed, self.topology)
@@ -184,6 +186,11 @@ class SimEnv:
             self.abort()
             raise
         return self
+
+    def _closed_edge_ids(self):
+        """Edges closed right now; ScenarioRuntime makes every closure (scheduled or twin command)."""
+        runtime = getattr(self, "runtime", None)
+        return runtime.closed.keys() if runtime is not None else ()
 
     def run(self, callback=None) -> dict:
         try:
