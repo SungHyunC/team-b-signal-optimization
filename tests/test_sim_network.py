@@ -47,18 +47,31 @@ def test_network_rebuilds_when_build_inputs_change(tmp_path, monkeypatch):
     assert build.build_digest() == (tmp_path / "VERSION").read_text()
 
 
-def test_build_digest_covers_the_detector_writer(monkeypatch):
+def _digest_in_new_process(root: Path) -> str:
+    return subprocess.run([sys.executable, "-c", "from teamb.network import build; print(build.build_digest())"],
+                          cwd=root, capture_output=True, text=True, check=True).stdout
+
+
+def test_build_digest_covers_the_detector_writer(tmp_path):
     """dx-26: editing _write_detectors (e.g. its e2 length formula or freq) must rebuild the
     detectors, like any other build input, without a manual NETWORK_VERSION bump."""
+    root = Path(__file__).resolve().parents[1]
+    shutil.copytree(root / "teamb", tmp_path / "teamb", ignore=shutil.ignore_patterns("__pycache__", "generated"))
+    copy = tmp_path / "teamb" / "network" / "build.py"
+    text = copy.read_text()
+    writer = text.index("def _write_detectors(")
+    edit = text.index('freq="60"', writer)
+    copy.write_text(text[:edit] + 'freq="300"' + text[edit + len('freq="60"'):])
+    assert _digest_in_new_process(tmp_path) != _digest_in_new_process(root)
+    assert build._DETECTOR_CODE == inspect.getsource(build._write_detectors)  # source, where it ships
+
+
+def test_build_digest_describes_the_code_this_process_runs(monkeypatch):
+    """inspect.getsource re-reads build.py from disk, so build_digest calling it each time stamped
+    a file edited or checked out mid-run with the new digest on detectors the old in-memory
+    _write_detectors wrote; processes running the new code then reused those stale detectors."""
     before = build.build_digest()
-    original = build._write_detectors
-
-    def edited(net_path, out):  # same signature, different code
-        return original(net_path, out)
-
-    monkeypatch.setattr(build, "_write_detectors", edited)
-    assert build.build_digest() != before
-    monkeypatch.setattr(build, "_write_detectors", original)
+    monkeypatch.setattr(inspect, "getsource", lambda obj: "def _write_detectors(net_path, out):  # edited on disk\n")
     assert build.build_digest() == before
 
 

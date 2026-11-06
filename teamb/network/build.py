@@ -151,7 +151,7 @@ def build_digest(nod: str | None = None, edg: str | None = None) -> str:
         nod, edg = _plain_xml()
     h = hashlib.sha256()
     for part in (NETWORK_VERSION, nod, edg, json.dumps(NETCONVERT_OPTIONS), repr(E2_LENGTH_M), repr(E1_SETBACK_M),
-                 _detector_code(_write_detectors)):
+                 _DETECTOR_CODE):
         h.update(part.encode())
         h.update(b"\0")
     return f"{NETWORK_VERSION}:{h.hexdigest()[:16]}"
@@ -177,6 +177,12 @@ def _write_detectors(net_path: Path, out: Path) -> None:
                 )
     lines.append("</additional>")
     out.write_text("\n".join(lines) + "\n")
+
+
+# Read once at import, so the digest always describes the _write_detectors this process runs:
+# inspect.getsource re-reads build.py from disk, and a later call after an edit or checkout
+# would stamp the new file's digest on detectors written by the old in-memory code.
+_DETECTOR_CODE = _detector_code(_write_detectors)
 
 
 def ensure_network(force: bool = False) -> NetworkPaths:
