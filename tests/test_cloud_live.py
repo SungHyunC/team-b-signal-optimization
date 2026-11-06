@@ -126,3 +126,36 @@ def test_ascii_secret_rejects_non_ascii_password(monkeypatch):
     monkeypatch.setenv("TWIN_ACCESS_TOKEN", "test-only-long-secret")
     client = TestClient(create_app(), base_url="https://testserver")
     assert client.post("/login", data={"password": "pässword"}, follow_redirects=False).status_code == 401
+
+
+# --- malformed bodies are 400, not 500 (twin-security-5, ext-160) ---------------------------
+# Rejected before anything is queued, so no sim thread (lifespan) is needed here.
+@pytest.mark.parametrize("body", [
+    {"action": 5}, {"action": True}, {"action": ["play"]},
+    {"action": "jump", "t": []}, {"action": "jump", "t": {"a": 1}}, {"action": "jump", "t": True},
+    {"action": "jump", "t": "soon"}, {"action": "jump", "t": "Infinity"}, {"action": "speed", "speed": [1]},
+])
+def test_malformed_control_is_400(open_client, body):
+    r = open_client.post("/api/control", json=body)
+    assert r.status_code == 400, (body, r.status_code, r.text)
+
+
+@pytest.mark.parametrize("raw", [
+    '{"seed": Infinity}', '{"seed": 1e400}', '{"seed": [1]}', '{"end_time": NaN}', '{"end_time": Infinity}',
+    '{"start_at": Infinity}', '{"coverage": "lots"}',
+])
+def test_malformed_session_is_400(open_client, raw):
+    r = open_client.post("/api/session", content=raw, headers={"content-type": "application/json"})
+    assert r.status_code == 400, (raw, r.status_code, r.text)
+
+
+def test_parse_control_unit():
+    from teamb.twin.session import parse_control
+
+    assert parse_control(None) == ("speed", None, None)
+    assert parse_control(" Jump ", None, "120") == ("jump", None, 120.0)
+    assert parse_control("jump", 5, -3) == ("jump", 5.0, 0.0)
+    assert parse_control("play", "max")[1] == float("inf")
+    for bad in ((5,), ("jump", None, []), ("jump", None, float("nan")), ("speed", "warp")):
+        with pytest.raises(ValueError):
+            parse_control(*bad)

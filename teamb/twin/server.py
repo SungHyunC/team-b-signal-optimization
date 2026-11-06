@@ -40,7 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 from teamb import config
 from teamb.twin import meta, access
-from teamb.twin.session import CALL_TIMEOUT_S, Client, Hub, SessionConfig, TwinSession, dumps
+from teamb.twin.session import CALL_TIMEOUT_S, Client, Hub, SessionConfig, TwinSession, dumps, parse_control
 
 log = logging.getLogger("teamb.twin")
 
@@ -209,6 +209,10 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
 
     @app.post("/api/control")
     async def post_control(body: dict = Body(...)):
+        try:
+            parse_control(body.get("action"), body.get("speed"), body.get("t"))  # 400 before queueing
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
         return await wait_for(session.control(body.get("action"), body.get("speed"), body.get("t")), timeout=120)
 
     @app.post("/api/command")

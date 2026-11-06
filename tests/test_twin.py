@@ -218,6 +218,11 @@ def test_live_session_over_websocket(client):
         assert client.post("/api/command", json={"type": "approve", "id": "x"}).json()["ok"] is False
         bad = client.post("/api/control", json={"action": "speed", "speed": "warp"})
         assert bad.status_code == 400
+        # A malformed control is refused as a whole: the valid speed in it is not applied either.
+        ws.send_json({"type": "control", "id": 50, "action": "jump", "t": [1], "speed": 1})
+        refused = recv_until(ws, lambda m: is_reply(m, 50), "malformed jump reply")
+        assert refused["ok"] is False and "invalid time" in refused["error"]
+        assert client.get("/api/state").json()["speed"] == 20
 
         # Jump ahead: fast-forward, then keep going.
         target = t0 + 80

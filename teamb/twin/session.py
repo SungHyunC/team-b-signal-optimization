@@ -75,6 +75,33 @@ def parse_speed(value) -> float:
     return min(speed, 1000.0)
 
 
+CONTROL_ACTIONS = ("play", "pause", "step", "reset", "speed", "jump")
+
+
+def parse_control(action, speed=None, t=None) -> tuple[str, float | None, float | None]:
+    """Validate a control request before anything changes: (action, speed, t) or ValueError.
+
+    Malformed input (a number as action, a list as t, Infinity) used to escape as AttributeError
+    or TypeError, i.e. HTTP 500, sometimes after the speed had already been changed.
+    """
+    if action is not None and not isinstance(action, str):
+        raise ValueError(f"invalid action {action!r} (expected one of {', '.join(CONTROL_ACTIONS)})")
+    action = (action or "speed").strip().lower()
+    new_speed = None if speed is None else parse_speed(speed)
+    target = None
+    if t is not None:
+        if isinstance(t, bool) or not isinstance(t, (int, float, str)):
+            raise ValueError(f"invalid time t={t!r} (expected simulated seconds)")
+        try:
+            target = float(t)
+        except (ValueError, OverflowError):
+            raise ValueError(f"invalid time t={t!r} (expected simulated seconds)") from None
+        if not math.isfinite(target):
+            raise ValueError(f"invalid time t={t!r} (expected simulated seconds)")
+        target = max(0.0, target)
+    return action, new_speed, target
+
+
 def speed_label(speed: float):
     """Inverse of parse_speed for JSON: inf -> "max", 2.0 -> 2."""
     if math.isinf(speed):
@@ -176,8 +203,10 @@ class SessionConfig:
                 cfg.coverage = float(cfg.coverage)
             if cfg.end_time is not None:
                 cfg.end_time = float(cfg.end_time)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:  # OverflowError: int(Infinity), int(1e400)
             raise ValueError(f"invalid session option: {exc}") from None
+        if not math.isfinite(cfg.start_at) or (cfg.end_time is not None and not math.isfinite(cfg.end_time)):
+            raise ValueError("start_at and end_time must be finite numbers of simulated seconds")
         if cfg.coverage is not None and not 0.0 < cfg.coverage <= 1.0:
             raise ValueError("coverage must be a share in (0, 1], e.g. 0.25 for 25 %")
         if cfg.end_time is not None and cfg.end_time <= 0:
@@ -523,9 +552,9 @@ class TwinSession:
         return {"ok": True, "sid": self.sid, "run_id": env.run_id}
 
     def _control(self, action: str | None, speed=None, t=None) -> dict:
-        action = (action or "speed").lower()
-        if speed is not None:
-            self.speed = parse_speed(speed)
+        action, new_speed, t = parse_control(action, speed, t)  # raises before any change
+        if new_speed is not None:
+            self.speed = new_speed
             self._next_step_at = 0.0
             if self.config is not None:
                 self.config.speed = speed_label(self.speed)
@@ -537,7 +566,7 @@ class TwinSession:
         if action == "jump":
             if t is None:
                 return {"ok": False, "error": "jump needs a target time 't'"}
-            target = max(0.0, float(t))
+            target = t
             if env is None or target < env.t:  # SUMO cannot rewind: restart and fast-forward
                 if self.config is None:
                     return {"ok": False, "error": "no session yet"}
