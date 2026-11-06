@@ -7,6 +7,7 @@ Per-step cost: all SUMO values come from the shared subscription feed (feed.py),
 """
 from __future__ import annotations
 
+import math
 import random
 
 import traci.constants as tc
@@ -17,7 +18,8 @@ from teamb.sensors.feed import HALT_SPEED, get_feed
 from teamb.sensors.logs import ESTIMATION_EVERY_S, DetectorIntervals, RollingCount
 from teamb.sensors.sampling import ProbeSelector, parse_sampling
 
-PHANTOM_SPACING_M = 7.5
+PHANTOM_SPACING_M = 7.5  # fake phones claim a queue of stopped cars, one every 7.5 m ...
+PHANTOM_FRONT_M = 4.0  # ... starting 4 m before the stop line
 FLOW_WINDOW_S = 300.0  # flows are counted over the last 5 minutes
 PENETRATION_WINDOW_S = 900.0  # penetration is estimated over the last 15 minutes
 PENETRATION_PRIOR = 10.0  # pseudo-vehicles that pull a thin estimate toward the nominal coverage
@@ -25,6 +27,50 @@ PENETRATION_PRIOR = 10.0  # pseudo-vehicles that pull a thin estimate toward the
 
 def _clamp_coverage(value: float) -> float:
     return max(0.01, min(1.0, float(value)))
+
+
+def _point_back(shape, d: float) -> tuple[float, float]:
+    """The point `d` metres back from the end of a lane polyline (its start if shorter)."""
+    rem = d
+    for i in range(len(shape) - 1, 0, -1):
+        (x0, y0), (x1, y1) = shape[i - 1], shape[i]
+        seg = math.hypot(x1 - x0, y1 - y0)
+        if seg > 0 and rem <= seg:
+            f = rem / seg
+            return x1 - (x1 - x0) * f, y1 - (y1 - y0) * f
+        rem -= seg
+    return tuple(shape[0])
+
+
+def phantom_layout(topology, junction: str, approach: str, n: int) -> dict:
+    """Where `n` fake phones on one approach claim to stand: exactly n phones, spread over the
+    lanes round-robin, PHANTOM_SPACING_M apart from PHANTOM_FRONT_M before the stop line, at
+    most as many per lane as fit on it. Phones that fit nowhere are counted in `hidden`.
+
+    Returns {"lanes": {lane: [distance from the stop line, m]}, "positions": [[x, y]],
+    "shown": int, "hidden": int}. Pure (no TraCI): used for the twin and the cross-check."""
+    lanes = list(topology.approach_lanes[junction][approach])
+    capacity = [max(0, int((topology.lane_length(l) - PHANTOM_FRONT_M) // PHANTOM_SPACING_M) + 1) for l in lanes]
+    counts = [0] * len(lanes)
+    hidden = 0
+    lane = 0
+    for _ in range(max(0, int(n))):
+        for step in range(len(lanes)):  # next lane (round-robin) that still has room
+            k = (lane + step) % len(lanes)
+            if counts[k] < capacity[k]:
+                counts[k] += 1
+                lane = k + 1
+                break
+        else:
+            hidden += 1
+    distances = {l: [PHANTOM_FRONT_M + i * PHANTOM_SPACING_M for i in range(c)] for l, c in zip(lanes, counts)}
+    positions = []
+    for l, ds in distances.items():
+        shape = topology.net.getLane(l).getShape()
+        for d in ds:
+            x, y = _point_back(shape, d)
+            positions.append([round(x, 2), round(y, 2)])
+    return {"lanes": distances, "positions": positions, "shown": len(positions), "hidden": hidden}
 
 
 class SensorSuite:
@@ -39,6 +85,7 @@ class SensorSuite:
         self.selector = ProbeSelector(self.spec, self.rng)
         self.probes: set[str] = set()
         self.fake: dict[tuple[str, str], int] = {}  # (junction, approach) -> phantom reports
+        self._phantom_cache: dict[tuple[str, str], tuple[int, dict]] = {}
         self.attacks: list[dict] = []  # attack log for the evaluation (never shown to controllers)
         self._alerts: list[dict] = []
         self._t = 0.0  # time of the last observation
@@ -285,22 +332,29 @@ class SensorSuite:
                 a["end"] = self._now
         self.feed.events.append({"t": self._now, "type": "attack_stopped", "junction": key[0], "approach": key[1]})
 
+    def _phantoms(self, key) -> dict:
+        n = self.fake.get(key, 0)
+        cached = self._phantom_cache.get(key)
+        if cached is None or cached[0] != n:
+            cached = self._phantom_cache[key] = (n, phantom_layout(self.topo, key[0], key[1], n))
+        return cached[1]
+
     def phantom_positions(self) -> list[list[float]]:
-        """Where the fake 'stopped cars' claim to be — for the twin."""
+        """Where the fake 'stopped cars' claim to be — for the twin. Exactly the injected
+        number of phones, all on the approach lanes; phones that do not fit on the road are
+        not drawn (see phantom_summary)."""
         out = []
-        for (j, side), n in self.fake.items():
-            lanes = self.topo.approach_lanes[j][side]
-            shape = self.topo.net.getLane(lanes[0]).getShape()
-            (x0, y0), (x1, y1) = shape[-2], shape[-1]
-            seg = max(1e-6, ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5)
-            ux, uy = (x1 - x0) / seg, (y1 - y0) / seg
-            per_lane = max(1, n // len(lanes))
-            for lane in lanes:
-                lx, ly = self.topo.net.getLane(lane).getShape()[-1]
-                for i in range(per_lane):
-                    d = 4.0 + i * PHANTOM_SPACING_M
-                    out.append([round(lx - ux * d, 2), round(ly - uy * d, 2)])
+        for key in self.fake:
+            out.extend(self._phantoms(key)["positions"])
         return out
+
+    def phantom_summary(self) -> list[dict]:
+        """Per attacked approach: phones injected, drawn, and not drawn because they do not
+        fit on the road (the twin can label those as '+N more')."""
+        return [
+            {"junction": j, "approach": side, "n": n, "shown": self._phantoms((j, side))["shown"], "hidden": self._phantoms((j, side))["hidden"]}
+            for (j, side), n in self.fake.items()
+        ]
 
     def alerts(self) -> list[dict]:
         return list(self._alerts)
