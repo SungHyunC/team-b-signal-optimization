@@ -89,6 +89,39 @@ def test_resume_continues_seeds_curve_and_counts(tmp_path):
         train(args_for(tmp_path, "--episodes", "1", "--resume", "--features", "v2"), run_round=FakeRunner())
 
 
+def test_resume_keeps_the_scenarios_and_settings_of_earlier_sessions(tmp_path):
+    train(args_for(tmp_path, "--episodes", "3", "--workers", "3", "--scenarios", "rush_hour,road_closure",
+                   "--demand-range", "0.8,1.2", "--end", "400"), run_round=FakeRunner())
+    # Resume without --scenarios: this session trains on the default (rush_hour) only.
+    table = train(args_for(tmp_path, "--episodes", "2", "--workers", "2", "--resume", "--demand-range", "0.9,1.4"),
+                  run_round=FakeRunner())
+    meta = table.meta
+    assert meta["scenarios"] == ["rush_hour", "road_closure"], "the first session's scenarios are not forgotten"
+    assert meta["scenario"] == "rush_hour,road_closure", "RLController.summary() reports this field"
+    assert meta["demand_range"] == [0.8, 1.4], "the envelope of every session's demand range"
+    sessions = meta["sessions"]
+    assert [s["seed_range"] for s in sessions] == meta["seed_ranges"] == [[1000, 1002], [1003, 1004]]
+    assert [s["scenarios"] for s in sessions] == [["rush_hour", "road_closure"], ["rush_hour"]]
+    assert [s["demand_range"] for s in sessions] == [[0.8, 1.2], [0.9, 1.4]]
+    assert [s["episode_s"] for s in sessions] == [400.0, 1800.0] and [s["episodes"] for s in sessions] == [3, 2]
+    assert sessions[0]["hyper"]["workers"] == 3 and sessions[1]["hyper"]["workers"] == 2
+
+    # A resume that trains nothing does not claim its scenario pool.
+    train(args_for(tmp_path, "--episodes", "0", "--resume", "--scenarios", "emergency"), run_round=FakeRunner())
+    meta = QTable.load(tmp_path / "model.json").meta
+    assert meta["scenarios"] == ["rush_hour", "road_closure"] and len(meta["sessions"]) == 2
+
+
+def test_resume_from_a_file_without_sessions_keeps_its_scenario(tmp_path):
+    out = tmp_path / "model.json"
+    QTable(meta={"episodes": 60, "scenario": "road_closure", "demand_range": [0.75, 1.25],
+                 "visit_unit": "transitions"}).save(out)
+    table = train(args_for(tmp_path, "--episodes", "1", "--workers", "1", "--resume"), run_round=FakeRunner())
+    assert table.meta["scenarios"] == ["road_closure", "rush_hour"]
+    first = table.meta["sessions"][0]
+    assert first["episodes"] == 60 and first["scenarios"] == ["road_closure"] and first["demand_range"] == [0.75, 1.25]
+
+
 def test_resume_from_a_legacy_file_does_not_claim_transition_counts(tmp_path):
     out = tmp_path / "model.json"
     legacy = QTable(meta={"episodes": 60, "scenario": "rush_hour"})  # old trainer: no visit_unit
