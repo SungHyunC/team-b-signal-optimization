@@ -222,3 +222,49 @@ def test_a_result_for_another_run_name_is_not_unpacked(fake, tmp_path):
     assert victim.is_dir(), "a result naming another folder must not delete it"
     assert [r["status"] for r in results] == ["failed", "failed"]
     assert all(r["run"] in {s.name for s in _specs()} and "expected" in r["error"] for r in results)
+
+
+class OutageRemote(FakeRemote):
+    """spawn() for `names` keeps failing with a dropped connection after the first `ok_spawns`."""
+
+    def __init__(self, names, ok_spawns=0, **kw):
+        super().__init__(**kw)
+        self.names, self.ok_spawns, self.attempts = set(names), ok_spawns, 0
+
+    def spawn(self, spec, git_revision):
+        if RunSpec(**spec).name in self.names:
+            if self.ok_spawns:
+                self.ok_spawns -= 1
+            else:
+                self.attempts += 1
+                raise ConnectionError("Connection lost")
+        return super().spawn(spec, git_revision)
+
+
+def test_a_run_that_cannot_be_submitted_fails_alone(fake, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
+    stuck = _specs()[1].name
+    remote = fake(OutageRemote({stuck}))
+    results = {r["run"]: r for r in cloud.run_specs(_specs(), tmp_path, workers=2)}
+    assert results[stuck]["status"] == "failed" and "could not submit" in results[stuck]["error"]
+    assert remote.attempts == cloud.CLIENT_WAIT_RETRIES + 1
+    assert results[_specs()[0].name]["status"] == "ok"
+
+
+def test_a_failed_resubmission_does_not_abort_the_other_runs(fake, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
+    lost = _specs()[0].name  # collected first: its failure must not stop the second run's collection
+    fake(OutageRemote({lost}, ok_spawns=1, lose_once={lost}))
+    results = {r["run"]: r for r in cloud.run_specs(_specs(), tmp_path, workers=2)}
+    assert results[lost]["status"] == "failed" and "could not submit" in results[lost]["error"]
+    assert results[_specs()[1].name]["status"] == "ok"
+
+
+def test_a_configuration_error_at_submission_still_stops_the_matrix(fake, tmp_path):
+    class Unauthorized(FakeRemote):
+        def spawn(self, spec, git_revision):
+            raise RuntimeError("token rejected")  # not a connection problem
+
+    fake(Unauthorized())
+    with pytest.raises(RuntimeError, match="token rejected"):
+        list(cloud.run_specs(_specs(), tmp_path, workers=2))
