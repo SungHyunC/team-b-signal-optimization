@@ -32,10 +32,16 @@ exit off (all three roads into N2). SUMO quits on such a trip, so `routing.closu
 checks every origin-destination pair of the scenario's flows (and of waiting emergency
 vehicles) against the closures before anything is closed. Scenario.validate runs the same
 check over the scheduled events.
+
+TraCI economy: every getter is a round trip to SUMO. The runtime reuses the step's
+departed/arrived lists and the teleport count the env and the sensor feed already have,
+follows EVs with one vehicle subscription, reads live travel times from edge subscriptions
+while closures last and only re-sends routing weights that changed. Results are identical.
 """
 from __future__ import annotations
 
 import traci
+import traci.constants as tc
 
 from teamb import config
 from teamb.scenarios import routing
@@ -50,6 +56,10 @@ TT_SMOOTHING = 0.3  # weight of the newest travel-time sample (exponential smoot
 TT_CAP_FACTOR = 6.0  # a congested edge counts at most 6 × its free-flow time + 60 s
 EV_WARNING_DISTANCE_M = 300.0  # the signal-data API warns drivers this far ahead of an EV
 MAX_FAKE_REPORTS = 500
+# EVs are followed with one vehicle subscription instead of five getters per step. It includes
+# the variables the twin draws with (env.VEHICLE_VARS: position, angle, speed, type), because a
+# new subscription of the same vehicle replaces the env's one in frames mode.
+EV_VARS = (tc.VAR_ROAD_ID, tc.VAR_POSITION, tc.VAR_SPEED, tc.VAR_ANGLE, tc.VAR_NEXT_TLS, tc.VAR_TYPE)
 
 
 class ScenarioRuntime:
@@ -73,6 +83,10 @@ class ScenarioRuntime:
         self._live_tt: dict[str, float] = {}
         self._next_tt_sample = 0.0
         self._next_reroute = 0.0
+        self._free_flow: dict[str, float] = {}  # edge -> free-flow travel time (static)
+        self._weights: dict[str, float] = {}  # edge -> routing weight last set with adaptTraveltime
+        self._tt_subscribed = False  # edges subscribed to their current travel time
+        self._touched: set[str] = set()  # vehicles re-routed since the last SUMO step
 
     # --- plumbing --------------------------------------------------------------
     @property
@@ -86,10 +100,13 @@ class ScenarioRuntime:
     def _t(self) -> float:
         return float(getattr(self.env, "t", 0.0))
 
-    def on_step(self, t: float) -> None:
-        """Called by the env after every SUMO step."""
+    def on_step(self, t: float, departed=None, arrived=None) -> None:
+        """Called by the env after every SUMO step. `departed` / `arrived` are this step's
+        vehicle lists if the caller has them; otherwise they are taken from the sensors (which
+        got them from the env this step) and only fetched from SUMO as a last resort."""
+        self._touched.clear()
         self._dispatch_pending(t)
-        self._after_events(t)
+        self._after_events(t, departed, arrived)
 
     def _dispatch_pending(self, t: float) -> None:
         """Run the scheduled events that are due; a failing one is logged, never raised."""
@@ -108,11 +125,32 @@ class ScenarioRuntime:
                 self.failed.append({"t": self._t(), "scheduled_at": event.time, "kind": str(event.kind), "params": params, "error": error})
                 self.env.log_event("event_failed", kind=str(event.kind), params=params, error=error)
 
-    def _after_events(self, t: float) -> None:
+    def _step_lists(self, t: float, departed, arrived) -> tuple:
+        """This step's (departed, arrived) vehicle ids without extra TraCI round trips when
+        the env or the sensors already fetched them."""
+        if departed is None or arrived is None:
+            sensors = getattr(self.env, "sensors", None)
+            if sensors is not None and getattr(sensors, "step_t", None) == t:
+                departed = sensors.step_departed if departed is None else departed
+                arrived = sensors.step_arrived if arrived is None else arrived
         sim = self.conn.simulation
-        self.teleports += sim.getStartingTeleportNumber()
+        return (sim.getDepartedIDList() if departed is None else departed), (sim.getArrivedIDList() if arrived is None else arrived)
+
+    def _teleports_started(self, t: float) -> int:
+        """Vehicles that started teleporting in the last step: from the shared sensor feed
+        (a subscription) when it is up to date, else one getter."""
+        feed = getattr(getattr(self.env, "sensors", None), "feed", None)
+        if feed is not None and getattr(feed, "t", None) == t:
+            return int(feed.teleports_started)
+        return self.conn.simulation.getStartingTeleportNumber()
+
+    def _after_events(self, t: float, departed=None, arrived=None) -> None:
+        self.teleports += self._teleports_started(t)
+        tracking = any(ev["status"] in ("dispatched", "en_route") for ev in self.evs.values())
+        if self.closed or tracking:
+            departed, arrived = self._step_lists(t, departed, arrived)
         if self.closed:
-            self._check_departures(sim.getDepartedIDList())
+            self._check_departures(departed)
             if self._retry:
                 self._retry_reroutes()
             if t >= self._next_tt_sample:
@@ -121,8 +159,8 @@ class ScenarioRuntime:
             if t >= self._next_reroute:
                 self._navigation_reroute()
                 self._next_reroute = t + REROUTE_PERIOD_S
-        if any(ev["status"] in ("dispatched", "en_route") for ev in self.evs.values()):
-            self._track_evs(t, sim)
+        if tracking:
+            self._track_evs(t, departed, arrived)
 
     # --- emergency vehicles ------------------------------------------------------
     def dispatch_ev(self, origin: str = "W0_J1", destination: str = "J4_E5", kind: str = "ambulance") -> str:
@@ -177,15 +215,18 @@ class ScenarioRuntime:
             raise ValueError(f"no open route from {origin} to {destination}")
         return edges
 
-    def _track_evs(self, t: float, sim) -> None:
-        departed = set(sim.getDepartedIDList())
-        arrived = set(sim.getArrivedIDList())
+    def _track_evs(self, t: float, departed, arrived) -> None:
+        departed, arrived = set(departed), set(arrived)
         v = self.conn.vehicle
         for vid, ev in self.evs.items():
             if ev["status"] in ("arrived", "lost"):
                 continue
             if vid in departed:
                 ev["status"], ev["departed_at"] = "en_route", t
+                try:
+                    v.subscribe(vid, EV_VARS)
+                except traci.TraCIException:
+                    pass  # gone already: handled as 'lost' below
             if vid in arrived:
                 ev.update(status="arrived", arrived_at=t, live=None)
                 ev["travel_time_s"] = round(t - (ev["departed_at"] if ev["departed_at"] is not None else ev["dispatched_at"]), 1)
@@ -193,37 +234,53 @@ class ScenarioRuntime:
                 continue
             if ev["status"] != "en_route":
                 continue
-            try:
-                road = v.getRoadID(vid)
-                if not road:  # teleporting right now: no position to publish
-                    ev["live"] = None
-                    continue
-                x, y = v.getPosition(vid)
-                speed = v.getSpeed(vid)
-                upcoming = v.getNextTLS(vid)
-                live = {
-                    "edge": road,
-                    "position": [round(x, 2), round(y, 2)],
-                    "speed_mps": round(speed, 2),
-                    "heading_deg": round(v.getAngle(vid), 1),
-                    "next_junction": None,
-                    "approach": None,
-                    "distance_to_junction_m": None,
-                    "eta_s": None,
-                }
-                if upcoming:
-                    tls, link_index, dist, _state = upcoming[0]
-                    links = self.topology.links.get(tls, [])
-                    approach = next((l.approach for l in links if l.index == link_index), None)
-                    live.update(
-                        next_junction=tls,
-                        approach=approach,
-                        distance_to_junction_m=round(dist, 1),
-                        eta_s=round(dist / speed, 1) if speed > 0.5 else None,
-                    )
-                ev["live"] = live
-            except traci.TraCIException:  # removed by SUMO (e.g. teleported away)
+            r = v.getSubscriptionResults(vid)
+            if not r:  # removed by SUMO (e.g. teleported away)
                 ev.update(status="lost", live=None)
+                continue
+            road = r[tc.VAR_ROAD_ID]
+            if not road:  # teleporting right now: no position to publish
+                ev["live"] = None
+                continue
+            x, y = r[tc.VAR_POSITION]
+            speed = r[tc.VAR_SPEED]
+            try:
+                upcoming = self.next_tls(vid, r)
+            except traci.TraCIException:
+                ev.update(status="lost", live=None)
+                continue
+            live = {
+                "edge": road,
+                "position": [round(x, 2), round(y, 2)],
+                "speed_mps": round(speed, 2),
+                "heading_deg": round(r[tc.VAR_ANGLE], 1),
+                "next_junction": None,
+                "approach": None,
+                "distance_to_junction_m": None,
+                "eta_s": None,
+            }
+            if upcoming:
+                tls, link_index, dist, _state = upcoming[0]
+                links = self.topology.links.get(tls, [])
+                approach = next((l.approach for l in links if l.index == link_index), None)
+                live.update(
+                    next_junction=tls,
+                    approach=approach,
+                    distance_to_junction_m=round(dist, 1),
+                    eta_s=round(dist / speed, 1) if speed > 0.5 else None,
+                )
+            ev["live"] = live
+
+    def next_tls(self, vid: str, results: dict | None = None):
+        """vehicle.getNextTLS(vid) for a tracked EV, from its subscription when that is still
+        exact: not after a re-route since the last SUMO step (the link index depends on the
+        route), and not under libsumo, whose subscription returns an opaque object here. The
+        env's preemption check can use this too instead of its own getter."""
+        r = self.conn.vehicle.getSubscriptionResults(vid) if results is None else results
+        upcoming = (r or {}).get(tc.VAR_NEXT_TLS)
+        if vid in self._touched or not isinstance(upcoming, (tuple, list)):
+            return self.conn.vehicle.getNextTLS(vid)
+        return upcoming
 
     def active_evs(self) -> list[dict]:
         """EVs dispatched or driving right now (copies, safe to serialize)."""
@@ -268,8 +325,9 @@ class ScenarioRuntime:
         for lane in lanes:
             self._permissions[lane] = list(self.conn.lane.getAllowed(lane))
             self.conn.lane.setDisallowed(lane, ["all"])
-        self.conn.edge.adaptTraveltime(edge, CLOSED_WEIGHT_S)
+        self._set_weight(edge, CLOSED_WEIGHT_S)
         self.closed[edge] = {"edge": edge, "cause": str(cause), "since": self._t()}
+        self._subscribe_travel_times()
         self._refresh_detours()
         rerouted, unavoidable = self._reroute_around({edge})
         info = routing.describe_edge(self.topology, edge)
@@ -308,6 +366,7 @@ class ScenarioRuntime:
         rerouted = self._reroute_all()
         if not self.closed:
             self._retry.clear()
+            self._unsubscribe_travel_times()
         now = self._t()
         self.history.append({**closure, "type": "closure", "until": now, "duration_s": round(now - closure["since"], 1)})
         self.env.log_event("road_reopened", edge=edge, rerouted=rerouted)
@@ -327,11 +386,18 @@ class ScenarioRuntime:
         route = v.getRoute(vid) if route is None else route
         return any(e in self.closed for e in route[max(0, v.getRouteIndex(vid)) + 1 :])
 
-    def _reroute(self, vid: str) -> bool:
-        """Re-route one vehicle on the current routing weights; True if it now avoids closures."""
+    def _blocked_route(self, vid: str):
+        """The vehicle's route if a closed edge lies ahead on it, else None."""
+        route = self.conn.vehicle.getRoute(vid)
+        return route if self._route_blocked(vid, route) else None
+
+    def _reroute(self, vid: str, before=None) -> bool:
+        """Re-route one vehicle on the current routing weights; True if it now avoids closures.
+        `before`: its route, if the caller just fetched it."""
         v = self.conn.vehicle
         try:
-            before = v.getRoute(vid)
+            before = v.getRoute(vid) if before is None else before
+            self._touched.add(vid)
             v.rerouteTraveltime(vid, False)
             after = v.getRoute(vid)
             ok = not self._route_blocked(vid, after)
@@ -360,7 +426,7 @@ class ScenarioRuntime:
                 continue
             if not any(e in edges for e in ahead):
                 continue
-            if self._reroute(vid):
+            if self._reroute(vid, route):
                 rerouted += 1
             else:
                 # Inside the junction in front of the closure (it will drive onto the closed edge
@@ -373,7 +439,8 @@ class ScenarioRuntime:
     def _retry_reroutes(self) -> None:
         for vid in list(self._retry):
             try:
-                if not self._route_blocked(vid) or self._reroute(vid):
+                route = self._blocked_route(vid)
+                if route is None or self._reroute(vid, route):
                     self._retry.discard(vid)
             except traci.TraCIException:  # left the network
                 self._retry.discard(vid)
@@ -385,6 +452,7 @@ class ScenarioRuntime:
         for vid in v.getIDList():
             try:
                 before = v.getRoute(vid)
+                self._touched.add(vid)
                 v.rerouteTraveltime(vid, False)
                 n += v.getRoute(vid) != before
             except traci.TraCIException:
@@ -395,19 +463,58 @@ class ScenarioRuntime:
         """Safety net: a vehicle that departs with a closed edge ahead is re-routed at once."""
         for vid in departed:
             try:
-                if self._route_blocked(vid) and not self._reroute(vid):
+                route = self._blocked_route(vid)
+                if route is not None and not self._reroute(vid, route):
                     self._retry.add(vid)
             except traci.TraCIException:
                 continue
 
     # --- navigation-app re-routing while closures last ------------------------------
-    def _sample_travel_times(self) -> None:
+    def _subscribe_travel_times(self) -> None:
+        """While closures last, every normal edge pushes its current travel time with each
+        SUMO step (one subscription instead of ~40 getters every TT_SAMPLE_PERIOD_S)."""
+        if self._tt_subscribed:
+            return
         edge = self.conn.edge
+        for eid in self._normal_edges():
+            edge.subscribe(eid, [tc.VAR_CURRENT_TRAVELTIME])
+        self._tt_subscribed = True
+
+    def _unsubscribe_travel_times(self) -> None:
+        if not self._tt_subscribed:
+            return
+        edge = self.conn.edge
+        for eid in self._normal_edges():
+            try:
+                edge.unsubscribe(eid)
+            except traci.TraCIException:
+                pass
+        self._tt_subscribed = False
+
+    def _current_travel_times(self) -> dict[str, float]:
+        """{edge: current travel time} for the normal edges, from the subscription; an edge
+        without a value (e.g. re-subscribed by other code) falls back to one getter."""
+        edge = self.conn.edge
+        results = edge.getAllSubscriptionResults() if self._tt_subscribed else {}
+        out = {}
+        for eid in self._normal_edges():
+            value = (results.get(eid) or {}).get(tc.VAR_CURRENT_TRAVELTIME)
+            out[eid] = edge.getTraveltime(eid) if value is None else value
+        return out
+
+    def _free_flow_time(self, eid: str) -> float:
+        ff = self._free_flow.get(eid)
+        if ff is None:
+            ff = self._free_flow[eid] = routing.free_flow_time(self.topology, eid)
+        return ff
+
+    def _sample_travel_times(self) -> None:
+        current = self._current_travel_times()
         for eid in self._normal_edges():
             if eid in self.closed:
                 continue
-            ff = routing.free_flow_time(self.topology, eid)
-            sample = min(max(edge.getTraveltime(eid), ff), TT_CAP_FACTOR * ff + 60.0)
+            ff = self._free_flow_time(eid)
+            sample = min(max(current[eid], ff), TT_CAP_FACTOR * ff + 60.0)
             old = self._live_tt.get(eid, ff)
             self._live_tt[eid] = old + TT_SMOOTHING * (sample - old)
 
@@ -428,20 +535,25 @@ class ScenarioRuntime:
             except traci.TraCIException:
                 continue
             if any(e in self._detour_edges for e in ahead):
-                users.append(vid)
+                users.append((vid, route))
         if not users:
             return
-        edge = self.conn.edge
         for eid, tt in self._live_tt.items():
-            edge.adaptTraveltime(eid, tt)
-        for vid in users:
-            self._reroute(vid)
+            self._set_weight(eid, tt)
+        for vid, route in users:
+            self._reroute(vid, route)
         self._set_static_weights()
 
+    def _set_weight(self, eid: str, value: float) -> None:
+        """edge.adaptTraveltime, skipped when the edge already has exactly this weight (the
+        call would leave SUMO's weight storage unchanged)."""
+        if self._weights.get(eid) != value:
+            self.conn.edge.adaptTraveltime(eid, value)
+            self._weights[eid] = value
+
     def _set_static_weights(self) -> None:
-        edge = self.conn.edge
         for eid in self._normal_edges():
-            edge.adaptTraveltime(eid, CLOSED_WEIGHT_S if eid in self.closed else routing.free_flow_time(self.topology, eid))
+            self._set_weight(eid, CLOSED_WEIGHT_S if eid in self.closed else self._free_flow_time(eid))
         if not self.closed:
             self._live_tt.clear()
 

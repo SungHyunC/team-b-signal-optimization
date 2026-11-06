@@ -45,6 +45,9 @@ class SensorSuite:
         self._now = 0.0  # latest simulation time we heard of
         self._last_obs: dict | None = None
         self._last_key = None
+        self.step_t: float | None = None  # time of the last on_step and its vehicle lists
+        self.step_departed: tuple = ()
+        self.step_arrived: tuple = ()
 
         self.feed = get_feed(conn, topology)
         self.feed.sensors = self
@@ -81,6 +84,8 @@ class SensorSuite:
 
     def on_step(self, t: float, departed, arrived) -> None:
         self._now = t
+        # kept for the scenario runtime, which runs right after us in the same step
+        self.step_t, self.step_departed, self.step_arrived = t, departed, arrived
         self.feed.update(t)
         for vid in departed:
             if self.selector.select(self.feed.origin_group(vid), self.coverage):

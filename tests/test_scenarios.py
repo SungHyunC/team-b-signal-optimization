@@ -528,3 +528,48 @@ def test_failed_scheduled_events_are_reported_with_details(topo):
     assert first["kind"] == "close_road" and first["params"] == {"edge": "J2-J3"} and "unknown edge" in first["error"]
     assert second["kind"] == "no_such_kind" and second["scheduled_at"] == 20
     assert [e["type"] for e in env.events] == ["event_failed", "event_failed"]
+
+
+def test_runtime_reuses_step_data_instead_of_traci_round_trips(tmp_path, monkeypatch):
+    """EV tracking, departures, teleports and live travel times come from data the env, the
+    sensor feed and subscriptions already have (runtime-perf-3, ext-119/120/122)."""
+    import sys
+    from collections import Counter
+
+    import traci.connection
+
+    calls: Counter = Counter()
+    original = traci.connection.Connection._sendCmd
+
+    def counting(self, *args, **kwargs):
+        frame, getter = sys._getframe(1), None
+        while frame is not None:
+            name = frame.f_code.co_filename
+            if "traci" in name and getter is None and frame.f_code.co_name.startswith("get"):
+                getter = frame.f_code.co_name
+            if name.endswith("scenarios/events.py"):
+                calls[getter] += 1
+                break
+            frame = frame.f_back
+        return original(self, *args, **kwargs)
+
+    events = [
+        {"time": 5, "kind": "dispatch_ev", "params": {"origin": "W0_J1", "destination": "J4_E5", "kind": "ambulance"}},
+        {"time": 10, "kind": "close_road", "params": {"edge": "J2_J3"}},
+    ]
+    env = SimEnv("emergency", "fixed_time", seed=1, end_time=120, output_dir=tmp_path,
+                 scenario_params={"warmup": 0, "events": events, "demand_scale": 0.5})
+    env.start()
+    monkeypatch.setattr(traci.connection.Connection, "_sendCmd", counting)
+    lives = []
+    while env.t < 120:
+        env.step()
+        lives += [ev["live"] for ev in env.runtime.active_evs() if ev["live"]]
+    monkeypatch.undo()
+    summary = env.close()
+    for getter in ("getDepartedIDList", "getArrivedIDList", "getStartingTeleportNumber", "getRoadID", "getPosition",
+                   "getSpeed", "getAngle", "getTraveltime"):
+        assert calls[getter] == 0, (getter, calls)
+    assert calls["getNextTLS"] <= 2, calls  # only right after the EV was re-routed around the closure
+    assert lives and any(live["next_junction"] for live in lives)
+    assert env.runtime.teleports == summary.get("teleports", env.runtime.teleports)
