@@ -172,3 +172,24 @@ def test_libsumo_gives_identical_results(tmp_path):
     assert res["nested"] == ["libsumo", True, "traci", True]
     assert res["start_error"] == "FileNotFoundError" and res["after"] == ["libsumo", True]  # failures free libsumo
     assert res["crashed_summary"] is False
+
+
+def test_auto_falls_back_to_traci_when_libsumo_cannot_load(tmp_path, monkeypatch):
+    import builtins
+
+    from teamb.sim import backend
+    from teamb.sim.env import SimEnv
+
+    real_import = builtins.__import__
+
+    def no_libsumo(name, *args, **kwargs):
+        if name == "libsumo":
+            raise ImportError("broken libsumo build")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(backend, "libsumo_available", lambda: True)
+    monkeypatch.setattr(builtins, "__import__", no_libsumo)
+    env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=2, output_dir=tmp_path / "auto", traci_backend="auto")
+    assert env.run()["complete"] and env.traci_backend == "traci"
+    with pytest.raises(ImportError, match="needs the libsumo package"):
+        SimEnv("rush_hour", "fixed_time", seed=1, end_time=2, output_dir=tmp_path / "ls", traci_backend="libsumo").run()

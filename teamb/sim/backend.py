@@ -53,14 +53,23 @@ def libsumo_available() -> bool:
 
 def start(cmd: list[str], label: str, backend: str = "traci"):
     """Launch SUMO; returns (connection, SUMO version string, backend used: 'traci' or 'libsumo')."""
-    backend = requested(backend)
-    if backend == "auto":
-        backend = "libsumo" if libsumo_available() else "traci"
-    if backend == "libsumo":
-        started = _start_libsumo(cmd)
+    choice = requested(backend)
+    if choice == "auto" and not libsumo_available():
+        choice = "traci"
+    if choice in ("libsumo", "auto"):
+        try:
+            started = _start_libsumo(cmd)
+        except ImportError:
+            if choice == "libsumo":
+                raise ImportError("traci_backend='libsumo' needs the libsumo package (pip install libsumo, "
+                                  "same version as eclipse-sumo)") from None
+            log.warning("libsumo is installed but cannot be imported; using traci", exc_info=True)
+            started = None
+        else:
+            if started is None:
+                log.warning("libsumo already runs a simulation in this process; this one uses traci")
         if started is not None:
             return (*started, "libsumo")
-        log.warning("libsumo already runs a simulation in this process; this one uses traci")
     return (*_start_traci(cmd, label), "traci")
 
 
