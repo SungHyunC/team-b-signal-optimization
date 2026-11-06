@@ -37,7 +37,8 @@ from pathlib import Path
 
 from teamb.evaluation.stats import paired
 from teamb.experiments.analysis import _group_key, _one_run_per_seed, load_runs
-from teamb.fsutil import atomic_write_json, atomic_write_text
+from teamb.experiments.runner import SPEC_KEYS, RunSpec, scenario_end
+from teamb.fsutil import atomic_write_json, atomic_write_text, read_json
 
 # metric -> (label, lower is better)
 METRICS = {
@@ -91,12 +92,47 @@ def _emergency_guard(stats: dict, base_runs: list[dict], cand_runs: list[dict]) 
     }
 
 
+def _run_json(r: dict, name: str) -> dict:
+    data = read_json(Path(r["run_dir"]) / name, {})
+    return data if isinstance(data, dict) else {}
+
+
+def _intended_end(r: dict, spec: dict, sibling_ends: set) -> float | None:
+    """The end a run without --end was meant to reach: its own manifest's, else the one end its
+    finished siblings recorded, else the scenario's duration (runner.scenario_end)."""
+    config = _run_json(r, "manifest.json").get("config")
+    end = config.get("end_time") if isinstance(config, dict) else None
+    if isinstance(end, (int, float)) and not isinstance(end, bool):
+        return float(end)
+    if len(sibling_ends) == 1:
+        return next(iter(sibling_ends))
+    try:
+        end = scenario_end(RunSpec(**{k: spec[k] for k in SPEC_KEYS if k in spec}))
+    except (TypeError, ValueError):  # a spec without its identity fields
+        end = None
+    return r["end_time"] if end is None else end
+
+
 def _broken_runs(all_runs: list[dict]) -> dict[tuple, list[dict]]:
-    """Failed and incomplete runs by group key (runs whose identity cannot be read are left out)."""
+    """Failed and incomplete runs by group key (runs whose identity cannot be read are left out).
+
+    A run without --end (spec end_time None, the usual case) is keyed by the end it was meant to
+    reach, as its finished siblings are. load_runs reads that end from manifest.json, which a
+    crashed run does not have (SimEnv.abort() writes none and run_one deletes the summary), and
+    then falls back to None or to where the run stopped: the run would match no condition, and a
+    condition where every candidate run crashed would silently drop out of the verdict."""
+    specs = {id(r): _run_json(r, "run_spec.json") for r in all_runs}
+    sibling_ends: dict[str, set] = {}  # scenario_variant -> ends of finished runs without --end
+    for r in all_runs:
+        if r["status"] == "ok" and r["end_time"] is not None and specs[id(r)].get("end_time") is None:
+            sibling_ends.setdefault(r["scenario_variant"], set()).add(r["end_time"])
     broken: dict[tuple, list[dict]] = {}
     for r in all_runs:
         if r["status"] not in BROKEN:
             continue
+        spec = specs[id(r)]
+        if spec.get("end_time") is None:
+            r = {**r, "end_time": _intended_end(r, spec, sibling_ends.get(r["scenario_variant"], set()))}
         try:
             key = _group_key(r)
         except (KeyError, TypeError, ValueError):
