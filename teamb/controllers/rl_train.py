@@ -21,7 +21,9 @@ Batch Q-learning with experience replay (works the same with 1 or many workers):
 
 Held-out seeds: episode i of `--seed k` uses SUMO seed 1000 + 1 000 000·k + i, always ≥ 1000.
 Evaluate on seeds below 1000 (the experiments use 1–99), so evaluation never sees training
-traffic. --resume continues the episode index, so no seed is trained on twice.
+traffic. --resume continues the episode index, so no seed is trained on twice, and keeps what
+earlier invocations trained on: meta.scenarios is the union of every session's scenarios and
+meta.sessions holds each invocation's seed range, scenarios, demand range, episode length and hyper.
 Episodes run in TrainEnv (sensors read on decision ticks only, see fast_env.py).
 
 Tunable: --episodes, --workers, --round-size, --backend, --end (s, or "full" = each
@@ -189,6 +191,25 @@ def _parse_demand_range(args) -> tuple[float, float]:
     return lo, hi
 
 
+def _meta_scenarios(meta: dict) -> list[str]:
+    """The scenario pool a model file records (`scenarios`, or the comma-joined `scenario` of older files)."""
+    if meta.get("scenarios"):
+        return [str(s) for s in meta["scenarios"]]
+    return [s for s in str(meta.get("scenario") or "").split(",") if s]
+
+
+def _prior_sessions(prior: dict) -> list[dict]:
+    """Per-invocation records of a resumed file. A file from before `sessions` gets one record built
+    from its top-level fields, so a resume does not lose what those earlier episodes were trained on."""
+    if "sessions" in prior:
+        return [dict(s) for s in prior["sessions"]]
+    if not int(prior.get("episodes", 0)):
+        return []
+    legacy = {"episodes": int(prior["episodes"]), "scenarios": _meta_scenarios(prior)}
+    legacy |= {k: prior[k] for k in ("demand_range", "episode_s", "backend", "hyper", "seed_ranges") if k in prior}
+    return [legacy | {"note": "earlier sessions, recorded before per-session meta"}]
+
+
 def train(args, run_round=None) -> QTable:
     """Train and save `args.out`. `run_round(jobs) -> (results, errors)` overrides the backend (tests)."""
     scenarios = _parse_scenarios(args)
@@ -227,26 +248,44 @@ def train(args, run_round=None) -> QTable:
     def finish_meta() -> None:
         last = training_seed(args.seed, start_index + done - 1) if done else None
         seed_ranges = list(prior.get("seed_ranges", []))
+        session = {
+            "seed_range": None,
+            "episodes": trained,
+            "scenarios": scenarios,
+            "demand_range": [round(lo, 3), round(hi, 3)],
+            "episode_s": args.end if args.end else "full",
+            "backend": args.backend,
+            "hyper": {k: getattr(args, k) for k in ("alpha", "gamma", "eps_start", "eps_end", "sweeps", "buffer",
+                                                     "jitter", "switch_penalty", "coverage", "workers", "seed")}
+            | {"round_size": round_size},
+        }
+        # On --resume the model describes every session, not just this invocation: the scenario pool
+        # is the union (RLController.summary() reports it), the demand range the envelope, and the
+        # per-invocation settings stay in `sessions`. A session that trained nothing is not recorded.
+        sessions = _prior_sessions(prior)
         if last is not None:
             seed_ranges.append([training_seed(args.seed, start_index), last])
+            sessions.append(session | {"seed_range": seed_ranges[-1]})
+        pool = list(dict.fromkeys([*_meta_scenarios(prior), *(scenarios if last is not None else [])])) or scenarios
+        ranges = [s["demand_range"] for s in sessions if s.get("demand_range")] or [session["demand_range"]]
+        latest = sessions[-1] if sessions else session
         table.meta = {
             "trained_unix": round(time.time()),
             "episodes": prior_episodes + trained,
             "next_episode_index": start_index + done,
             "failed_episodes": failed,
             "wall_minutes": round(float(prior.get("wall_minutes", 0.0)) + (time.time() - wall0) / 60, 1),
-            "scenario": ",".join(scenarios),
-            "scenarios": scenarios,
-            "demand_range": [round(lo, 3), round(hi, 3)],
-            "episode_s": args.end if args.end else "full",
+            "scenario": ",".join(pool),
+            "scenarios": pool,
+            "demand_range": [min(r[0] for r in ranges), max(r[1] for r in ranges)],
+            "episode_s": latest.get("episode_s", session["episode_s"]),
             "features": table.version,
             "visit_unit": "mixed" if mixed_visits else "transitions",
-            "backend": args.backend,
+            "backend": latest.get("backend", session["backend"]),
             "seed_ranges": seed_ranges,
+            "sessions": sessions,
             "held_out": f"training seeds >= {TRAIN_SEED_BASE}; evaluate on seeds below {TRAIN_SEED_BASE}",
-            "hyper": {k: getattr(args, k) for k in ("alpha", "gamma", "eps_start", "eps_end", "sweeps", "buffer",
-                                                     "jitter", "switch_penalty", "coverage", "workers", "seed")}
-            | {"round_size": round_size},
+            "hyper": latest.get("hyper", session["hyper"]),
             "curve_unit": "round",
             "curve": curve,
             "episode_log": log,

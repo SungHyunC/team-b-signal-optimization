@@ -21,11 +21,14 @@ Recommendation (pending_recommendation(), also shown as frame["recommendation"])
      "current_plan": {...},
      "expected": {"mean_delay_s", "baseline_mean_delay_s", "improvement_pct", ...} | null,
      "based_on": {"coverage", "window_s", "trials", "estimated_flows": {J: {side: veh/h}}, ...},
-     "progress": {"done", "total"}, "note", "error", "decided_by", "decided_t"}
+     "progress": {"done", "total"}, "note", "error", "decided_by", "decided_t",
+     "plan_changed": bool once approved (False when the approved plan is the one already running)}
 A failed search is reported as status "rejected" with decided_by "system" and an "error".
 A background search still running when the run ends is reported as "cancelled" (decided_by
 "system"). Headless runs (`teamb run`, experiments) have nobody to approve: pass
 auto_approve=true there, otherwise the run stays on the starting plan (`plan_applied` false).
+Approving a recommendation that keeps the current plan ("no candidate beat the current plan")
+changes nothing: it emits "plan_kept" instead of "plan_applied" and leaves `plan_applied` false.
 
 Commands (handle_command): {"type": "approve", "id"}, {"type": "reject", "id"}, {"type": "optimize"}.
 With `approval_token` set, approve/reject must carry the same "token" (a stand-in for the
@@ -49,6 +52,16 @@ from teamb.controllers import optimizer
 
 CANCELLED_NOTE = "run ended before the search finished"
 HEADLESS_HINT = "nobody can approve in a headless run: pass auto_approve=true (it also searches synchronously)"
+
+
+def same_timing(a: TimingPlan, b: TimingPlan) -> bool:
+    """Whether two plans drive the signals the same (a missing split is 0.5, a missing offset 0 s)."""
+    junctions = set(a.splits) | set(b.splits) | set(a.offsets) | set(b.offsets)
+    return float(a.cycle) == float(b.cycle) and all(
+        float(a.splits.get(j, 0.5)) == float(b.splits.get(j, 0.5))
+        and float(a.offsets.get(j, 0.0)) == float(b.offsets.get(j, 0.0))
+        for j in junctions
+    )
 
 
 @register
@@ -110,6 +123,7 @@ class AIRecommenderController(Controller):
         self._due = self.search_at  # sim time of the next automatic search
         self._optimize_requested = False
         self._seq = 0
+        self._plan_changed = False  # an approved plan differed from the one running
 
     def close(self) -> None:
         """Stop a background search that is still running; its recommendation becomes "cancelled"."""
@@ -192,16 +206,18 @@ class AIRecommenderController(Controller):
         SimEnv asks for the summary before close(), so a search that is still running here
         is reported as "cancelled" already (the run ends before it can finish).
         `plan_applied` is False when the run never left its starting plan, e.g. a headless run
-        without auto_approve, where nobody can approve.
+        without auto_approve, where nobody can approve, or one whose approved recommendation
+        kept the current plan.
         """
-        keep = ("id", "status", "created_t", "plan", "expected", "note", "error", "decided_by", "decided_t")
+        keep = ("id", "status", "created_t", "plan", "expected", "note", "error", "decided_by", "decided_t",
+                "plan_changed")
         recs = []
         for r in self.history:
             row = {k: r.get(k) for k in keep}
             if r is self.recommendation and self._job is not None and r.get("status") == "searching":
                 row.update(self._cancelled())
             recs.append(row)
-        return {"recommendations": recs, "plan_applied": any(r["status"] == "approved" for r in recs),
+        return {"recommendations": recs, "plan_applied": self._plan_changed,
                 "ignored_untrusted": self.demand.ignored, "audit": list(self.audit)}
 
     def drain_events(self) -> list[dict]:
@@ -309,9 +325,16 @@ class AIRecommenderController(Controller):
             self._apply(rec, "auto_approve")
 
     def _apply(self, rec: dict, who: str) -> None:
-        self.plan = optimizer.plan_from_dict(rec["plan"])
-        rec.update(status="approved", decided_by=who, decided_t=self.t)
-        self.events.append({"t": self.t, "type": "plan_applied", "id": rec["id"], "plan": rec["plan"]})
+        new = optimizer.plan_from_dict(rec["plan"])
+        changed = not same_timing(new, self.plan)
+        self.plan = new
+        rec.update(status="approved", decided_by=who, decided_t=self.t, plan_changed=changed)
+        if changed:
+            self._plan_changed = True
+            self.events.append({"t": self.t, "type": "plan_applied", "id": rec["id"], "plan": rec["plan"]})
+        else:  # e.g. "no candidate beat the current plan; keep it": the timing did not change
+            self.events.append({"t": self.t, "type": "plan_kept", "id": rec["id"],
+                                "note": "the approved plan is the one already running"})
 
     def _audit(self, kind: str, command: dict, ok: bool) -> None:
         self.audit.append({"t": self.t, "type": kind, "id": command.get("id"), "by": command.get("by"), "ok": ok})
