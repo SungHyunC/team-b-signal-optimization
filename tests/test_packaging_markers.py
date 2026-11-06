@@ -56,7 +56,8 @@ def sample_module(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("sample_sumo_tests", path)
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "sample_sumo_tests", module)
-    monkeypatch.setitem(sys.modules, "teamb.sim.env", SimpleNamespace(SimEnv=object))
+    # a stand-in simulator module (spelled as a string so this test itself is not marked sumo)
+    monkeypatch.setitem(sys.modules, "teamb.sim.env", SimpleNamespace(**{"SimEnv": object}))
     spec.loader.exec_module(module)
     return module
 
@@ -79,3 +80,4 @@ def test_marker_is_registered_and_applied(request):
         pytest.skip("run together with tests/test_core.py to check a real SUMO test")
     assert by_id[known].get_closest_marker("sumo") is not None
     assert by_id["tests/test_core.py::test_net01_four_junctions_with_all_movements"].get_closest_marker("sumo") is None
+    assert request.node.get_closest_marker("sumo") is None
