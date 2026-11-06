@@ -573,3 +573,33 @@ def test_runtime_reuses_step_data_instead_of_traci_round_trips(tmp_path, monkeyp
     assert calls["getNextTLS"] <= 2, calls  # only right after the EV was re-routed around the closure
     assert lives and any(live["next_junction"] for live in lives)
     assert env.runtime.teleports == summary.get("teleports", env.runtime.teleports)
+
+
+def _departures_after_reopening(tmp_path) -> list:
+    """Trips that departed within 300 s after a reopening on a route slower (free flow) than
+    the fastest open one. The closure makes the detour (J3 -> N3 -> N4 -> J4) jam."""
+    events = [
+        {"time": 300, "kind": "close_road", "params": {"edge": "J3_J4", "cause": "earthquake", "both_directions": True}},
+        {"time": 1000, "kind": "reopen_road", "params": {"edge": "J3_J4", "both_directions": True}},
+    ]
+    env = SimEnv("earthquake", "fixed_time", seed=1, end_time=1300, output_dir=tmp_path,
+                 scenario_params={"warmup": 0, "events": events, "demand_scale": 1.6})
+    env.start()
+    worse, topo, v = [], env.topology, env.conn.vehicle
+    while env.t < 1300:
+        env.step()
+        if env.t > 1000:
+            for vid in env.sensors.step_departed:
+                route = v.getRoute(vid)
+                best = routing.fastest_route(topo, route[0], route[-1], avoid=env.runtime.closed)
+                cost = sum(routing.free_flow_time(topo, e) for e in route)
+                if cost > sum(routing.free_flow_time(topo, e) for e in best) + 1.0:
+                    worse.append((env.t, vid, route))
+    env.close()
+    return worse
+
+
+def test_trips_departing_after_a_reopening_take_free_flow_routes(tmp_path):
+    """SUMO's insertion routing still remembers the jammed detour after a reopening; the
+    runtime routes those departures on the static weights (scenarios-sensors-5)."""
+    assert _departures_after_reopening(tmp_path) == []

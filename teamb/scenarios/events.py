@@ -17,13 +17,21 @@ Road closures (flood, sinkhole, earthquake damage)
    permissions, so trips inserted later are routed around the closure when they depart.
    Vehicles already on the edge, or inside the junction in front of it, drive off normally.
 2. Every vehicle whose remaining route uses the edge is re-routed at once, and every newly
-   departed vehicle is checked again (should SUMO ever insert one through it).
+   departed vehicle is checked again (should SUMO ever insert one through it). Trips are
+   routed by SUMO when they are inserted, with its routing device's smoothed live speeds
+   (a ~3 min moving average), so drivers starting a trip during a closure avoid a detour
+   that is jammed.
 3. While a closure lasts, navigation-app users (the probe vehicles, see `coverage`) that are
    on a detour re-route every REROUTE_PERIOD_S on smoothed live travel times, so detour
    traffic spreads over the back street instead of piling onto one turn. Everyone else keeps
    the signed (free-flow fastest) detour.
 4. Reopening restores the original lane permissions and free-flow routing weights and
-   re-routes the vehicles still in the network, so traffic returns to the arterial.
+   re-routes the vehicles still in the network, so traffic returns to the arterial. For
+   REOPEN_SETTLE_S afterwards every departing trip is also routed on those weights: the
+   routing device's smoothed speeds still remember the jammed detour for minutes and sent
+   trips on long loops (after the earthquake bridge reopened, S3_J3 -> N3_NN3 trips got a
+   93 s loop through J4, with an unprotected left turn off the arterial, instead of the
+   38 s direct route).
 A closure is refused (ValueError, so a scheduled one becomes `event_failed` and a twin
 command gets ok: false) unless every edge is an inner edge (between J* and N* nodes) AND
 every trip the scenario can still insert keeps a route: an inner edge can be a flow's origin
@@ -56,6 +64,7 @@ TT_SMOOTHING = 0.3  # weight of the newest travel-time sample (exponential smoot
 TT_CAP_FACTOR = 6.0  # a congested edge counts at most 6 × its free-flow time + 60 s
 EV_WARNING_DISTANCE_M = 300.0  # the signal-data API warns drivers this far ahead of an EV
 MAX_FAKE_REPORTS = 500
+REOPEN_SETTLE_S = 300.0  # departures follow the static weights this long after a reopening
 # EVs are followed with one vehicle subscription instead of five getters per step. It includes
 # the variables the twin draws with (env.VEHICLE_VARS: position, angle, speed, type), because a
 # new subscription of the same vehicle replaces the env's one in frames mode.
@@ -87,6 +96,7 @@ class ScenarioRuntime:
         self._weights: dict[str, float] = {}  # edge -> routing weight last set with adaptTraveltime
         self._tt_subscribed = False  # edges subscribed to their current travel time
         self._touched: set[str] = set()  # vehicles re-routed since the last SUMO step
+        self._settle_until = -1.0  # departures are routed on static weights until then
 
     # --- plumbing --------------------------------------------------------------
     @property
@@ -147,10 +157,14 @@ class ScenarioRuntime:
     def _after_events(self, t: float, departed=None, arrived=None) -> None:
         self.teleports += self._teleports_started(t)
         tracking = any(ev["status"] in ("dispatched", "en_route") for ev in self.evs.values())
-        if self.closed or tracking:
+        settling = t < self._settle_until
+        if self.closed or settling or tracking:
             departed, arrived = self._step_lists(t, departed, arrived)
-        if self.closed:
+        if settling:
+            self._route_departures(departed)
+        elif self.closed:
             self._check_departures(departed)
+        if self.closed:
             if self._retry:
                 self._retry_reroutes()
             if t >= self._next_tt_sample:
@@ -361,6 +375,7 @@ class ScenarioRuntime:
         for lane in self.topology.edge_lanes(edge):
             self.conn.lane.setAllowed(lane, self._permissions.pop(lane, []))
         closure = self.closed.pop(edge)
+        self._settle_until = self._t() + REOPEN_SETTLE_S
         self._refresh_detours()
         self._set_static_weights()
         rerouted = self._reroute_all()
@@ -468,6 +483,21 @@ class ScenarioRuntime:
                     self._retry.add(vid)
             except traci.TraCIException:
                 continue
+
+    def _route_departures(self, departed) -> None:
+        """After a reopening: route every newly departed trip on the static weights (module
+        docstring, item 4). EVs keep the route they were dispatched with. A trip that still
+        has a closed edge ahead afterwards is retried every step."""
+        v = self.conn.vehicle
+        for vid in departed:
+            if vid in self.evs:
+                continue
+            try:
+                route = v.getRoute(vid)
+            except traci.TraCIException:
+                continue
+            if not self._reroute(vid, route) and self.closed:
+                self._retry.add(vid)
 
     # --- navigation-app re-routing while closures last ------------------------------
     def _subscribe_travel_times(self) -> None:
