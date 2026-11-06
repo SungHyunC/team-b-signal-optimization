@@ -31,7 +31,31 @@ The page switches between **English and 한국어** (top bar, or `?lang=ko`). �
 
 ## Results
 
-**Validated (30 paired seeds per cell, 540 strict-valid runs).** Mean delay reduction of
+**New in November 2026 — a controller that beats max-pressure without regressions.**
+`max_pressure_plus` (max-pressure that switches only when the other axis wins by an extra 25 %,
+because every switch costs 5 s of yellow + all-red) was tested against `max_pressure` on 30 fresh
+paired seeds × 7 scenarios × demand 75 / 100 / 125 % (3,780 runs, one clean commit, strict audit)
+and **passed the prespecified regression screen in all 21 conditions**: mean delay never rose by
+more than 0.3 %, and it fell by up to 13.4 % (earthquake, 75 %), 9.4 % (sinkhole, 100 %) and
+9.5 % (stadium surge, 125 %), with fewer unfinished trips in the heavy earthquake, flood and stadium
+cases. The retrained RL controller no longer breaks in the flood (169 → 87 s/veh at 100 % demand,
+max-pressure 88) but still loses in the earthquake. Details:
+[controller confirmation](docs/results/studies/controller-confirmation-2026-11/README.md) ·
+[RL retraining](docs/results/studies/rl-retraining-2026-11/README.md) ·
+[what changed](docs/whats-new-2026-11.md).
+
+| Mean delay, s/veh (30 seeds) | fixed_time | max_pressure | **max_pressure_plus** | rl (retrained) | rl (first model) |
+|---|---:|---:|---:|---:|---:|
+| Rush hour, 100 % demand | 81.8 | 29.3 | **29.1** | 29.3 | 30.6 |
+| Emergency, 125 % demand | 107.6 | 45.5 | **41.2** | 43.9 | 54.4 |
+| Stadium surge, 125 % demand | 93.2 | 81.3 | **73.6** | 60.6 | 65.0 |
+| Flood closure, 100 % demand | 119.3 | 88.4 | **85.8** | 87.2 | 169.1 |
+| Flood closure, 125 % demand | 126.7 | 115.7 | **115.1** | 136.1 | 206.0 |
+| Earthquake, 100 % demand | 229.1 | 227.5 | **209.8** | 281.8 | 340.2 |
+
+**Earlier validated results** (on the code before this release; closure-scenario numbers moved slightly
+with the reopening-routing fix, see [what changed](docs/whats-new-2026-11.md)).
+30 paired seeds per cell, 540 strict-valid runs. Mean delay reduction of
 `max_pressure` versus `fixed_time` (reduction of group means; synthetic demand, SUMO 1.28.0):
 
 | Demand | Rush hour | Emergency | Road closure |
@@ -67,8 +91,9 @@ See the [confirmation decision](docs/independent-controller-confirmation-review.
 | max_pressure_probe (navigation data only) | | | | 175.6 → 48.2 with the detector cross-check |
 
 Two lessons for Report 3: the RL controller, trained only on rush hour, breaks down when a road
-floods; and a controller that trusts navigation data alone can be steered by fake reports unless
-it cross-checks the loop detectors. Emergency vehicles cross the corridor in ≈ 90 s instead of 110 s.
+floods (retraining it on mixed scenarios in November 2026 fixed that, see above); and a controller
+that trusts navigation data alone can be steered by fake reports unless it cross-checks the loop
+detectors. Emergency vehicles cross the corridor in ≈ 90 s instead of 110 s.
 
 ## Install
 

@@ -1,5 +1,9 @@
 # Final Engineering Review — Team B Traffic Signal Optimization
 
+> **Update, November 2026:** a later 3,780-run confirmation promoted `max_pressure_plus` (passes the same
+> 5 % regression rule in all 21 conditions) and retrained the RL controller. See
+> [what changed](whats-new-2026-11.md) and the [controller confirmation](results/studies/controller-confirmation-2026-11/README.md).
+
 **Review state:** The independent 360-run confirmation completed successfully as a simulation audit, but the experimental controller **failed two prespecified high-demand regression screens** and is **not approved**. See [final confirmation review](independent-controller-confirmation-review.md).
 
 ## Executive summary

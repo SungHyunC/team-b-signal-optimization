@@ -1,5 +1,9 @@
 # Final Project Handoff — Team B Traffic Signal Optimization
 
+> **Update, November 2026:** a later 3,780-run confirmation promoted `max_pressure_plus` (passes the same
+> 5 % regression rule in all 21 conditions) and retrained the RL controller. See
+> [what changed](whats-new-2026-11.md) and the [controller confirmation](results/studies/controller-confirmation-2026-11/README.md).
+
 **Status:** Research prototype and local sandbox **implemented and tested**. [Sandbox integration PR #6](https://github.com/SungHyunC/team-b-signal-optimization/pull/6) is merged into `main`. Experimental general-purpose spillback-aware controller **rejected** and retained only in [draft research PR #5](https://github.com/SungHyunC/team-b-signal-optimization/pull/5).
 
 ## Deliverables and readiness

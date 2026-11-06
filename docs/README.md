@@ -1,6 +1,7 @@
 # Team B documentation
 
-Start with the [project README](../README.md) (install, commands, results). This page lists every
+Start with the [project README](../README.md) (install, commands, results) and
+[what changed in November 2026](whats-new-2026-11.md). This page lists every
 document in `docs/` by what you want to do. Files keep their old paths, so existing links still work.
 
 ## Use and extend the prototype
@@ -31,6 +32,8 @@ Headline numbers come from the 30-seed studies, whose aggregate data is committe
 
 | Document | What it covers |
 |---|---|
+| [Controller confirmation, Nov 2026](results/studies/controller-confirmation-2026-11/README.md) | 3,780-run fresh-seed test: `max_pressure_plus` passes all 21 conditions; closure-aware variant and retrained RL do not |
+| [RL retraining, Nov 2026](results/studies/rl-retraining-2026-11/README.md) | 13,600 training episodes on Modal, model selection on held-out seeds |
 | [Study data archive](results/studies/README.md) | Reports, per-run summary tables and audits of the 30-seed studies (Actions artifacts expire) |
 | [Final engineering review](final-engineering-review.md) | Roadmap, validated results, why the experimental controller was rejected |
 | [Robustness and sensitivity review](robustness-and-sensitivity-review.md) | 75 / 100 / 125 % demand, 540 strict-valid runs |
