@@ -2,6 +2,10 @@
 
 The builder exports this JSON; SUMO execution is deliberately separate.
 Only approved scenario overrides are passed to the existing experiment runner.
+
+The allowed scenarios and controllers come from the scenario and controller registries, and
+GET /api/sandbox/schema (``schema()``) publishes them with the numeric limits, so the web
+builder never has to keep its own copy in sync.
 """
 from __future__ import annotations
 
@@ -9,11 +13,28 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
+from teamb.controllers import REGISTRY as _CONTROLLER_REGISTRY
+from teamb.scenarios import REGISTRY as _SCENARIO_REGISTRY, get_scenario
+
 SCHEMA_VERSION = 1
-SCENARIOS = frozenset(("rush_hour", "off_peak", "special_event", "emergency",
-                       "road_closure", "sinkhole_cross", "earthquake", "fake_data_attack"))
-CONTROLLERS = frozenset(("fixed_time", "coordinated", "actuated",
-                         "max_pressure", "max_pressure_probe", "ai_recommender", "rl"))
+SCENARIO_NAMES = tuple(_SCENARIO_REGISTRY)  # catalog order, for menus
+CONTROLLER_NAMES = tuple(_CONTROLLER_REGISTRY)
+SCENARIOS = frozenset(SCENARIO_NAMES)
+CONTROLLERS = frozenset(CONTROLLER_NAMES)
+SEED_RANGE = (0, 2_147_483_647)
+DEMAND_SCALE_RANGE = (0.1, 3.0)
+MIN_MEASURED_S = 300  # a run must measure at least this long after the warm-up
+# 900 s warm-up + 300 s measured, up to the longest run the hosted twin accepts.
+DURATION_RANGE = (1200, 10800)
+
+
+def _json_number(value):
+    """1.0 -> 1, as JavaScript's JSON.stringify writes it; other numbers unchanged.
+
+    The run name hashes scenario_params as JSON, so {"demand_scale": 1.0} and {"demand_scale": 1}
+    would name the same run differently. The web builder can only write 1.
+    """
+    return int(value) if isinstance(value, float) and value.is_integer() else value
 
 
 @dataclass(frozen=True)
@@ -30,15 +51,21 @@ class SandboxConfig:
         return json.dumps(asdict(self), indent=2, sort_keys=True)
 
     def experiment_kwargs(self) -> dict:
-        """Arguments understood by the existing experiment matrix builder."""
+        """Arguments understood by the existing experiment matrix builder.
+
+        Exactly the runs `experiment_command()` gives: coverage None is the scenario's own
+        default (what the CLI's --coverages default means; fake_data_attack runs at 25 %), and
+        end_time is a float like the CLI's --end; a whole-number demand_scale is written like the
+        web builder writes it (1, not 1.0), so both give the same run name.
+        """
         return {
             "scenarios": [self.scenario],
             "controllers": [self.controller],
             "seeds": [self.seed],
-            "coverages": [1.0],
+            "coverages": [None],
             "preemption": [self.ev_preemption],
-            "end_time": self.duration_s,
-            "scenario_params": {"demand_scale": self.demand_scale},
+            "end_time": None if self.duration_s is None else float(self.duration_s),
+            "scenario_params": {"demand_scale": _json_number(self.demand_scale)},
         }
 
 
@@ -59,25 +86,52 @@ def parse_sandbox_config(value: dict | str) -> SandboxConfig:
         raise ValueError(f"unknown scenario: {cfg.scenario}")
     if cfg.controller not in CONTROLLERS:
         raise ValueError(f"unknown controller: {cfg.controller}")
-    if type(cfg.seed) is not int or not 0 <= cfg.seed <= 2_147_483_647:
+    lo, hi = SEED_RANGE
+    if type(cfg.seed) is not int or not lo <= cfg.seed <= hi:
         raise ValueError("seed must be a nonnegative 32-bit integer")
-    if type(cfg.demand_scale) not in (float, int) or not math.isfinite(cfg.demand_scale) or not 0.1 <= cfg.demand_scale <= 3.0:
-        raise ValueError("demand_scale must be between 0.1 and 3.0")
+    lo, hi = DEMAND_SCALE_RANGE
+    if type(cfg.demand_scale) not in (float, int) or not math.isfinite(cfg.demand_scale) or not lo <= cfg.demand_scale <= hi:
+        raise ValueError(f"demand_scale must be between {lo} and {hi}")
     if type(cfg.ev_preemption) is not bool:
         raise ValueError("ev_preemption must be a boolean")
-    if cfg.duration_s is not None and (type(cfg.duration_s) is not int or not 60 <= cfg.duration_s <= 10800):
-        raise ValueError("duration_s must be 60–10800 seconds")
+    if cfg.duration_s is not None:
+        lo, hi = DURATION_RANGE
+        if type(cfg.duration_s) is not int or not lo <= cfg.duration_s <= hi:
+            raise ValueError(f"duration_s must be null or {lo}–{hi} seconds (the {lo - MIN_MEASURED_S:.0f} s warm-up "
+                             f"plus at least {MIN_MEASURED_S} s measured)")
+        warmup = get_scenario(cfg.scenario).warmup
+        if cfg.duration_s < warmup + MIN_MEASURED_S:  # a scenario with a longer warm-up than usual
+            raise ValueError(f"duration_s must be at least {warmup + MIN_MEASURED_S:.0f} s for {cfg.scenario} "
+                             f"({warmup:.0f} s warm-up plus {MIN_MEASURED_S} s measured)")
     return cfg
 
 
+def schema() -> dict:
+    """What GET /api/sandbox/schema returns: the allowed values the web builder validates against."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "scenarios": list(SCENARIO_NAMES),
+        "controllers": list(CONTROLLER_NAMES),
+        "limits": {
+            "seed": list(SEED_RANGE),
+            "demand_scale": list(DEMAND_SCALE_RANGE),
+            "duration_s": list(DURATION_RANGE),
+        },
+    }
+
+
 def experiment_command(cfg: SandboxConfig, name: str = "sandbox_trial") -> str:
-    """The equivalent `teamb exp run` command line (what the sandbox page shows)."""
+    """The equivalent `teamb exp run` command line (what the sandbox page shows).
+
+    It builds exactly the specs of ``build_matrix(**cfg.experiment_kwargs())``: no --coverages
+    (the CLI default is the scenario's own coverage), and --end only when duration_s is set.
+    """
     import shlex
 
     parts = [
         "teamb", "exp", "run", "--name", name, "--scenarios", cfg.scenario, "--controllers", cfg.controller,
         "--seeds", str(cfg.seed), "--ev-preemption", "on" if cfg.ev_preemption else "off",
-        "--scenario-params", json.dumps({"demand_scale": cfg.demand_scale}),
+        "--scenario-params", json.dumps({"demand_scale": _json_number(cfg.demand_scale)}),
     ]
     if cfg.duration_s is not None:
         parts += ["--end", str(cfg.duration_s)]

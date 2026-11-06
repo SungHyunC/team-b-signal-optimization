@@ -273,6 +273,24 @@ def _approve_when_due(env, delay: float, since: float | None) -> float | None:
     return since
 
 
+def _abandon(env) -> None:
+    """A recording failed: stop its SUMO and controller without writing (possibly partial) outputs.
+
+    env.close() would run the metrics on an incomplete tripinfo and may raise itself; closing the
+    TraCI connection is what lets the SUMO process exit instead of idling until the pool ends.
+    """
+    conn = getattr(env, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    try:
+        env.controller.close()
+    except Exception:
+        pass
+
+
 def record_run(run: dict, runs_dir: str, end_time: float | None = None) -> dict:
     """Simulate one demo run and write data/runs/<id>/. Runs in a worker process."""
     from teamb.sim.env import SimEnv
@@ -284,38 +302,42 @@ def record_run(run: dict, runs_dir: str, end_time: float | None = None) -> dict:
     with tempfile.TemporaryDirectory(prefix="teamb-site-") as tmp:
         env = SimEnv(run.scenario, run.controller, seed=SEED, controller_params=run.params or None, end_time=end_time, frames=True)
         env.output_dir = Path(tmp) / env.run_id  # the usual run files are not part of the site
-        env.start()
-        status = {
-            "config": {
-                "scenario": run.scenario,
-                "controller": run.ui_controller,
-                "seed": SEED,
-                "coverage": env.sensors.coverage,
-                "ev_preemption": env.ev_preemption,
-                "sampling": env.sampling,
+        try:
+            env.start()
+            status = {
+                "config": {
+                    "scenario": run.scenario,
+                    "controller": run.ui_controller,
+                    "seed": SEED,
+                    "coverage": env.sensors.coverage,
+                    "ev_preemption": env.ev_preemption,
+                    "sampling": env.sampling,
+                    "end_time": env.end_time,
+                    "controller_params": run.params,
+                    "scenario_params": {},
+                    "speed": DEFAULT_VIEW["speed"],
+                    "autoplay": True,
+                    "start_at": 0,
+                },
+                "run_id": env.run_id,
                 "end_time": env.end_time,
-                "controller_params": run.params,
-                "scenario_params": {},
-                "speed": DEFAULT_VIEW["speed"],
-                "autoplay": True,
-                "start_at": 0,
-            },
-            "run_id": env.run_id,
-            "end_time": env.end_time,
-            "warmup": env.scenario.warmup,
-            "step_length": env.step_length,
-            "scenario": jsonable(env.scenario.describe()),
-            "controller": jsonable(env.controller.describe()),
-        }
-        frame_controller = env.controller.name
-        rec = Recording(folder)
-        rec.add(env.frame())
-        pending_since = None
-        while not env.finished:
-            env.step()
-            if run.approve_after is not None:
-                pending_since = _approve_when_due(env, run.approve_after, pending_since)
+                "warmup": env.scenario.warmup,
+                "step_length": env.step_length,
+                "scenario": jsonable(env.scenario.describe()),
+                "controller": jsonable(env.controller.describe()),
+            }
+            frame_controller = env.controller.name
+            rec = Recording(folder)
             rec.add(env.frame())
+            pending_since = None
+            while not env.finished:
+                env.step()
+                if run.approve_after is not None:
+                    pending_since = _approve_when_due(env, run.approve_after, pending_since)
+                rec.add(env.frame())
+        except BaseException:
+            _abandon(env)
+            raise
         status["summary"] = jsonable(env.close())
     rec.close()
     info = {

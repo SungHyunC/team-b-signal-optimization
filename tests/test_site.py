@@ -126,3 +126,42 @@ def test_public_sandbox_paths_are_project_relative(tmp_path):
 def test_public_sandbox_requires_asset(tmp_path):
     with pytest.raises(RuntimeError, match="missing scenario sandbox"):
         site.prepare_public_sandbox(tmp_path)
+
+
+@pytest.mark.parametrize("fail_in", ["start", "step"])
+def test_record_run_closes_sumo_when_the_run_fails(tmp_path, monkeypatch, fail_in):
+    """ext-164: a failing recording must not leave its SUMO/TraCI connection open."""
+    from types import SimpleNamespace
+
+    import teamb.sim.env
+
+    closed = []
+
+    class FakeEnv:
+        def __init__(self, *args, **kwargs):
+            self.run_id, self.output_dir, self.conn = "fake__run", None, None
+            self.controller = SimpleNamespace(name="fixed_time", describe=lambda: {}, close=lambda: closed.append("controller"))
+            self.scenario = SimpleNamespace(warmup=0.0, describe=lambda: {})
+            self.sensors = SimpleNamespace(coverage=1.0)
+            self.ev_preemption, self.sampling, self.end_time, self.step_length, self.t = True, "uniform", 60.0, 1.0, 0.0
+            self.finished = False
+
+        def start(self):
+            self.conn = SimpleNamespace(close=lambda: closed.append("conn"))
+            if fail_in == "start":
+                raise RuntimeError("SUMO died during start")
+
+        def frame(self):
+            return {"t": self.t, "vehicles": [], "events": [], "kpi": {}}
+
+        def step(self):
+            raise RuntimeError("SUMO died during a step")
+
+        def close(self):
+            raise AssertionError("a failed recording must not run the full close()")
+
+    monkeypatch.setattr(teamb.sim.env, "SimEnv", FakeEnv)
+    run = asdict(site.DemoRun("rush_hour", "fixed_time", "test"))
+    with pytest.raises(RuntimeError, match="SUMO died"):
+        site.record_run(run, str(tmp_path))
+    assert closed == ["conn", "controller"]
