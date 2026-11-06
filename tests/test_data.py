@@ -276,6 +276,22 @@ def test_recovery_vs_reference_without_matched_samples_is_unknown():
     assert res["excess_veh_h"] is None and res["censored"]
 
 
+def test_a_censored_window_with_one_sample_has_unknown_excess():
+    # the event starts within one sample interval of the last sample: no interval to integrate
+    from teamb.evaluation.recovery import recovery_vs_reference
+
+    times = [float(t) for t in range(1, 1500, 5)]  # ... 1491, 1496
+    res = recovery_vs_reference(times, [30.0] * len(times), times, [10.0] * len(times), start=1493.0, end=1600.0)
+    assert res["censored"] and res["excess_veh_h"] is None
+    pre = recovery_time(times, [10.0] * (len(times) - 1) + [30.0], start=1493.0, end=1600.0)
+    assert pre["censored"] and pre["excess_veh_h"] is None
+    # one sample in a window that recovered right there is a real zero
+    short = recovery_time(times, [10.0] * len(times), start=1001.0, end=1001.0)
+    assert not short["censored"] and short["recovered_at"] == 1001.0 and short["excess_veh_h"] == 0.0
+    two = recovery_vs_reference(times, [30.0] * len(times), times, [10.0] * len(times), start=1488.0, end=1600.0)
+    assert two["censored"] and two["excess_veh_h"] == round(20.0 * 5 / 3600, 3)  # 1491 -> 1496
+
+
 def test_depart_delay_metrics_leave_the_primary_endpoint_unchanged(tmp_path):
     # evaluation-5: timeLoss excludes departDelay; the total is reported next to mean_delay_s
     from types import SimpleNamespace
