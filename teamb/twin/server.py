@@ -249,7 +249,14 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         tasks: set[asyncio.Task] = set()
         try:
             while True:
-                text = await ws.receive_text()
+                message = await ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                text = message.get("text")
+                if text is None:  # a binary frame: answer it instead of crashing the handler (KeyError)
+                    client.offer(dumps({"type": "reply", "id": None, "ok": False,
+                                        "error": "binary frames are not supported; send JSON text"}), droppable=False)
+                    continue
                 task = asyncio.create_task(_handle(client, text))
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)

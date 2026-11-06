@@ -159,3 +159,15 @@ def test_parse_control_unit():
     for bad in ((5,), ("jump", None, []), ("jump", None, float("nan")), ("speed", "warp")):
         with pytest.raises(ValueError):
             parse_control(*bad)
+
+
+# --- WebSocket robustness (twin-security-6) ----------------------------------------------
+def test_binary_websocket_frame_gets_an_error_reply(open_client):
+    with open_client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        ws.send_bytes(b"\x00binary")
+        reply = ws.receive_json()
+        assert reply["type"] == "reply" and reply["ok"] is False and "binary" in reply["error"]
+        ws.send_text('{"type": "ping", "id": 7}')  # the connection is still usable
+        pong = ws.receive_json()
+        assert pong["type"] == "reply" and pong["id"] == 7 and pong["ok"] is True
