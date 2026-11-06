@@ -92,11 +92,29 @@ def test_in_flight_trips_are_charged_their_accrued_delay_not_300_s():
     accrued = (75.18 - 31.37) * 3353 / 3600
     assert saved == pytest.approx(accrued, abs=0.01)  # about 40.8, not + (118 - 79) * 300 / 3600 = 3.25 more
     assert abs(saved - 40.8) < 1.0
-    # stranded trips (never inserted or teleported) still pay the flat penalty
+    # never-inserted trips still pay the flat penalty (teleported trips finish: their timeLoss counts)
     stranded = dict(cand, never_inserted=40, teleports=10)
     q = impact.run_quantities(impact._normalize(stranded), p)
     q0 = impact.run_quantities(impact._normalize(cand), p)
-    assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(50 * 300 / 3600)
+    assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(40 * 300 / 3600)
+
+
+def test_teleports_are_not_charged_on_top_of_their_accrued_delay():
+    # a teleported window trip's timeLoss already holds the >= 300 s it waited before SUMO moved it,
+    # and the summary counts teleport events (also of vehicles that entered before the warm-up)
+    base, cand = _seed1_pair()
+    p = impact.ImpactParams()
+
+    def saved(b, c):
+        return impact.pair_effect(impact.run_quantities(impact._normalize(b), p),
+                                  impact.run_quantities(impact._normalize(c), p), p)["delay_saved_veh_h_per_h"]
+
+    assert saved(dict(base, teleports=20), dict(cand, teleports=5)) == pytest.approx(saved(base, cand))
+    row = impact.analyze([dict(base, teleports=0), dict(cand, teleports=12)])["rows"][0]
+    assert row["stats"]["delta_teleports_per_h"]["mean"] == pytest.approx(12.0)
+    assert any("+12.0 teleports/h vs fixed_time" in f for f in row["flags"]) and row["claimed"]
+    row = impact.analyze([dict(base, teleports=12), dict(cand, teleports=0)])["rows"][0]
+    assert not any("teleports" in f for f in row["flags"])
 
 
 def test_stranding_a_blocked_entry_is_never_cheaper_than_inserting_late():

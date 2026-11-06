@@ -15,7 +15,6 @@ Method (paired by seed, so every controller sees the identical demand)
     window_h        = (sim_time_s − warmup) / 3600                (measurement window, hours)
     delay_s         = (mean_delay_incl_unfinished_s + mean_depart_delay_s) × inserted_in_window
                       + max(never_inserted × unfinished_trip_delay_s, never_inserted_wait_s)
-                      + teleports × unfinished_trip_delay_s
                       i.e. the timeLoss every inserted window trip accrued in the run (trips still
                       driving at the end are charged what they accrued, not a flat penalty, since
                       the run has no drain period), plus the time spent waiting to enter
@@ -24,8 +23,11 @@ Method (paired by seed, so every controller sees the identical demand)
                       penalty each: an inserted trip's departDelay is at most that wait, so leaving
                       a blocked entry's trips out is never cheaper than inserting them late
                       (PERF-01). Summaries without never_inserted_wait_s (older runs) charge the
-                      flat penalty only. In-flight trips' delay is slightly understated (accrued,
-                      not final). Summaries without the PERF-01 fields (older runs, hand-made CSVs)
+                      flat penalty only. Teleports are not charged on top: a teleported trip
+                      finishes, and its timeLoss already holds the wait before SUMO teleported it
+                      (and the count is of events, including vehicles that entered before the
+                      warm-up); a candidate that teleports more than the baseline is flagged
+                      instead. In-flight trips' delay is slightly understated (accrued, not final). Summaries without the PERF-01 fields (older runs, hand-made CSVs)
                       fall back to mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
     delay_veh_h/h   = delay_s / 3600 / window_h
     stops/h         = stops_per_veh × completed / window_h
@@ -205,8 +207,7 @@ def run_quantities(run: dict, p: ImpactParams) -> dict | None:
         never_s = float(never) * p.unfinished_trip_delay_s
         if run.get("never_inserted_wait_s") is not None:  # the wait they accrued, at least the flat penalty
             never_s = max(never_s, float(run["never_inserted_wait_s"]))
-        teleports_s = float(run.get("teleports") or 0) * p.unfinished_trip_delay_s
-        delay_s = per_trip * float(inserted) + never_s + teleports_s
+        delay_s = per_trip * float(inserted) + never_s  # teleported trips: their timeLoss holds the wait
         method = "accrued"
     else:
         delay_s = (float(mean_delay) * completed if mean_delay is not None else 0.0) + unfinished * p.unfinished_trip_delay_s
@@ -222,6 +223,7 @@ def run_quantities(run: dict, p: ImpactParams) -> dict | None:
         "unfinished_pct": run.get("unfinished_pct"),
         "throughput_veh_h": run.get("throughput_veh_h"),
         "ev": run.get("ev_mean_travel_time_s"),
+        "teleports_per_h": None if run.get("teleports") is None else float(run["teleports"]) / window_h,
     }
 
 
@@ -241,6 +243,7 @@ def pair_effect(base: dict, cand: dict, p: ImpactParams) -> dict:
     d_delay = None if base["mean_delay_s"] is None or cand["mean_delay_s"] is None else cand["mean_delay_s"] - base["mean_delay_s"]
     d_unf = None if base["unfinished_pct"] is None or cand["unfinished_pct"] is None else cand["unfinished_pct"] - base["unfinished_pct"]
     ev_saved = None if base["ev"] is None or cand["ev"] is None else base["ev"] - cand["ev"]
+    tb, tc = base.get("teleports_per_h"), cand.get("teleports_per_h")
     return {
         "delta_mean_delay_s": d_delay,
         "delay_saved_veh_h_per_h": saved,
@@ -253,6 +256,7 @@ def pair_effect(base: dict, cand: dict, p: ImpactParams) -> dict:
         "total_value_usd_per_h": time_usd + fuel_usd + co2_usd,
         "ev_time_saved_s": ev_saved,
         "delta_unfinished_pp": d_unf,
+        "delta_teleports_per_h": None if tb is None or tc is None else tc - tb,
     }
 
 
@@ -361,6 +365,10 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
         flags = []
         if d_unf is not None and d_unf > p.unfinished_tolerance_pp:
             flags.append(f"PERF-01: +{d_unf:.1f} pp unfinished trips — benefit not claimed")
+        d_tele = stats["delta_teleports_per_h"]["mean"]
+        if d_tele is not None and d_tele > 0:
+            flags.append(f"{d_tele:+.1f} teleports/h vs {baseline}: teleported vehicles skip part of their delay, "
+                         "which is not charged")
         if any(e["fallback"] for e in effects):
             flags.append(f"baseline paired across coverage (the {baseline} baseline does not use probe data)")
         if len(effects) == 1:
