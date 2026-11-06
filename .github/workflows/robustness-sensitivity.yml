@@ -1,18 +1,22 @@
 name: Robustness and Sensitivity Testing
+# Research study (manual only): fixed_time vs max_pressure at 75 % and 125 % demand on rush_hour,
+# emergency and road_closure. Pilots always run; the two 180-run matrices (seeds 1-30) only with
+# run_full_matrix. The original 360-run study (41946810451) is archived in
+# docs/results/studies/robustness-360/.
 on:
-  push:
-    branches:
-      - feature/validation-sandbox-explainability
-    paths:
-      - '.github/workflows/robustness-sensitivity.yml'
   workflow_dispatch:
+    inputs:
+      run_full_matrix:
+        description: 'Also run both 180-run paired-seed matrices (360 SUMO runs, several hours)'
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
   sensitivity-validation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[run-robustness-pilot]') || contains(github.event.head_commit.message, '[run-full-sensitivity]'))) }}
+    timeout-minutes: 360
     env:
       PYTHONUNBUFFERED: '1'
     steps:
@@ -21,19 +25,14 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
-      - name: Install SUMO and dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python - <<'PY'
-          import sumo
-          with open('/tmp/sumo_home', 'w') as f: f.write(sumo.SUMO_HOME)
-          PY
-          echo "SUMO_HOME=$(cat /tmp/sumo_home)" >> "$GITHUB_ENV"
-          echo "$(cat /tmp/sumo_home)/bin" >> "$GITHUB_PATH"
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.lock
+      - name: Install teamb and SUMO (exact versions from requirements.lock)
+        run: python -m pip install -e . -c requirements.lock
       - name: Check simulator and demand-scale overrides
         run: |
-          sumo --version
+          teamb doctor --skip-sim
           python - <<'PY'
           from teamb.scenarios import get_scenario
           for scenario in ('rush_hour', 'emergency', 'road_closure'):
@@ -51,11 +50,11 @@ jobs:
         run: |
           python -m teamb.experiments run --name robustness_pilot_high --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1 --workers 2 --scenario-params '{"demand_scale":1.25}' --strict-validation
       - name: Full paired-seed matrix at 75 percent demand (180 runs)
-        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[run-full-sensitivity]') }}
+        if: ${{ inputs.run_full_matrix }}
         run: |
           python -m teamb.experiments run --name robustness_low --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1-30 --workers 2 --scenario-params '{"demand_scale":0.75}' --strict-validation
       - name: Full paired-seed matrix at 125 percent demand (180 runs)
-        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[run-full-sensitivity]') }}
+        if: ${{ inputs.run_full_matrix }}
         run: |
           python -m teamb.experiments run --name robustness_high --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1-30 --workers 2 --scenario-params '{"demand_scale":1.25}' --strict-validation
       - name: Upload sensitivity results
@@ -69,4 +68,4 @@ jobs:
             results/experiments/robustness_low/
             results/experiments/robustness_high/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 90
