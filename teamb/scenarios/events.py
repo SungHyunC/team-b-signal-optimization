@@ -486,11 +486,16 @@ class ScenarioRuntime:
 
     def _route_departures(self, departed) -> None:
         """After a reopening: route every newly departed trip on the static weights (module
-        docstring, item 4). EVs keep the route they were dispatched with. A trip that still
-        has a closed edge ahead afterwards is retried every step."""
+        docstring, item 4). A trip that still has a closed edge ahead afterwards is retried
+        every step. EVs keep the route they were dispatched with unless a closure lies ahead
+        on it: a road closed after dispatch_ev but before SUMO inserted the EV is on its fixed
+        route (_reroute_around only sees vehicles already in the network), so the departure
+        safety net (_check_departures) still applies to them."""
         v = self.conn.vehicle
         for vid in departed:
             if vid in self.evs:
+                if self.closed:
+                    self._check_departures((vid,))
                 continue
             try:
                 route = v.getRoute(vid)

@@ -514,6 +514,37 @@ def test_rerouted_counts_vehicles_whose_route_changed_not_calls(topo):
     assert runtime.report()["rerouted"] == 1  # one vehicle, however often it is asked
 
 
+def _settling_runtime(topo, routes, closed=()):
+    """A runtime inside the settle window after a reopening, with `closed` edges still closed."""
+    from types import SimpleNamespace
+
+    from teamb.scenarios.events import ScenarioRuntime
+
+    env = _FakeEnv(topo, routes)
+    env.conn.simulation = SimpleNamespace(getStartingTeleportNumber=lambda: 0)
+    runtime = ScenarioRuntime(env, get_scenario("road_closure"))
+    runtime.closed = {e: {"edge": e, "cause": "flood", "since": 1500.0} for e in closed}
+    runtime._settle_until = env.t + 100.0
+    runtime._track_evs = lambda *args: None  # no SUMO subscription in the fake
+    runtime._next_tt_sample = runtime._next_reroute = float("inf")  # no travel-time sampling either
+    return env, runtime
+
+
+def test_an_ev_departing_in_the_settle_window_is_checked_for_closures(topo):
+    """A closure made after dispatch_ev but before SUMO inserted the EV lies on its fixed route; the
+    departure safety net must catch it during the REOPEN_SETTLE_S window too (dx-32)."""
+    ev_route = ["W0_J1", "J1_J2", "J2_J3", "J3_J4", "J4_E5"]
+    env, runtime = _settling_runtime(topo, {"ambulance_1": ev_route}, closed=["J2_J3"])
+    runtime.evs["ambulance_1"] = {"vehicle": "ambulance_1", "status": "dispatched"}
+    runtime._after_events(env.t, departed=("ambulance_1",), arrived=())
+    assert env.conn.vehicle.calls >= 1  # asked to re-route around J2_J3
+    assert "ambulance_1" in runtime._retry  # the fake re-route kept J2_J3: retried every step
+    open_env, open_runtime = _settling_runtime(topo, {"ambulance_2": ev_route})
+    open_runtime.evs["ambulance_2"] = {"vehicle": "ambulance_2", "status": "dispatched"}
+    open_runtime._after_events(open_env.t, departed=("ambulance_2",), arrived=())
+    assert open_env.conn.vehicle.calls == 0  # nothing closed: the EV keeps its dispatched route
+
+
 def test_failed_scheduled_events_are_reported_with_details(topo):
     from teamb.scenarios.events import ScenarioRuntime
 
@@ -603,6 +634,38 @@ def test_trips_departing_after_a_reopening_take_free_flow_routes(tmp_path):
     """SUMO's insertion routing still remembers the jammed detour after a reopening; the
     runtime routes those departures on the static weights (scenarios-sensors-5)."""
     assert _departures_after_reopening(tmp_path) == []
+
+
+def test_ev_dispatched_in_the_settle_window_avoids_a_closure_made_before_it_departs(tmp_path):
+    """dx-32 / scenarios-sensors: within REOPEN_SETTLE_S of a reopening, dispatch an ambulance and close
+    a road on its route in the same step. SUMO inserts the EV a step later on its dispatched route,
+    so the departure check must re-route it; it used to wait at the closure until it teleported."""
+    events = [
+        {"time": 30, "kind": "close_road", "params": {"edge": "J1_N1"}},  # still closed during the window
+        {"time": 30, "kind": "close_road", "params": {"edge": "J3_N3"}},
+        {"time": 60, "kind": "reopen_road", "params": {"edge": "J3_N3"}},  # settle window until t=360
+        {"time": 70, "kind": "dispatch_ev", "params": {"origin": "W0_J1", "destination": "J4_E5", "kind": "ambulance"}},
+        {"time": 70, "kind": "close_road", "params": {"edge": "J2_J3"}},
+    ]
+    env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=400, output_dir=tmp_path,
+                 scenario_params={"warmup": 0, "events": events})
+    env.start()
+    blocked_at = []
+    try:
+        v = env.conn.vehicle
+        while env.t < 400:
+            env.step()
+            ev = env.runtime.evs.get("ambulance_1")
+            if ev and ev["status"] == "en_route" and "ambulance_1" not in env.runtime._retry:
+                route = v.getRoute("ambulance_1")
+                if "J2_J3" in route[v.getRouteIndex("ambulance_1") + 1 :]:
+                    blocked_at.append(env.t)
+        assert env.runtime._settle_until == 360.0 and "J2_J3" in env.runtime.closed
+        ev = env.runtime.evs["ambulance_1"]
+    finally:
+        env.close()
+    assert blocked_at == []  # re-routed the step it departed
+    assert ev["status"] == "arrived" and ev["travel_time_s"] < 300  # was 469 s, stuck until teleported
 
 
 def test_corridor_demand_for_a_subset_of_junctions_uses_their_own_edges(topo):
