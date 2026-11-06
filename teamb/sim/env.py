@@ -147,6 +147,8 @@ class SimEnv:
 
     # --- lifecycle --------------------------------------------------------
     def start(self) -> "SimEnv":
+        if self._closed:  # a new SUMO would delete this run's outputs and never be released
+            raise RuntimeError("this SimEnv was already closed; create a new one to run again")
         self._net_paths = ensure_network()
         self.topology = load_topology()
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -196,7 +198,13 @@ class SimEnv:
         runtime = getattr(self, "runtime", None)
         return runtime.closed.keys() if runtime is not None else ()
 
-    def run(self, callback=None) -> dict:
+    def run(self, callback=None) -> dict | None:
+        """Start (if needed), step to the end time and close; returns the summary.
+
+        On an env that was already closed or aborted this is a no-op that returns the same
+        result close() did (the summary, or None after a failure)."""
+        if self._closed:
+            return self.summary
         try:
             if self.conn is None:
                 self.start()

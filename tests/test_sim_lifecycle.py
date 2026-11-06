@@ -178,3 +178,26 @@ def test_disabling_preemption_clears_the_preempting_junctions(tmp_path):
         assert len(env.preemptions) > n  # re-enabled: the approaching EV is preempted (and logged) again
     finally:
         env.close()
+
+
+def test_run_on_a_finished_env_returns_its_summary_without_restarting_sumo(tmp_path, started):
+    """run() again after close() must not start a second SUMO, delete summary.json or leak it."""
+    out = tmp_path / "run"
+    env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=5, output_dir=out)
+    summary = env.run()
+    assert env.run() == summary  # a no-op that returns the same summary
+    assert json.loads((out / "summary.json").read_text()) == summary
+    assert env.conn is None and len(started) == 1 and _released(started[0])
+    assert not [label for label in traci.connection._connections if label.startswith("teamb")]
+    with pytest.raises(RuntimeError, match="already"):
+        env.start()  # also through `with env:`
+    assert len(started) == 1
+
+
+def test_run_after_abort_does_not_restart_sumo(tmp_path, started):
+    env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=5, output_dir=tmp_path / "a").start()
+    env.step()
+    env.abort()
+    assert env.run() is None  # aborted: nothing to return and nothing new is simulated
+    assert env.conn is None and len(started) == 1 and _released(started[0])
+    assert not (tmp_path / "a" / "summary.json").exists()
