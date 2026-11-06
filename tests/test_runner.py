@@ -82,6 +82,21 @@ def test_cli_rejects_bad_matrices_before_running(capsys):
     assert capsys.readouterr().out.strip().endswith("1 runs")
 
 
+def test_cli_refuses_a_traci_backend_that_modal_would_ignore(capsys, monkeypatch):
+    from teamb.experiments.__main__ import main
+
+    monkeypatch.delenv("TEAMB_TRACI_BACKEND", raising=False)
+    base = ["run", "--name", "t", "--seeds", "1", "--backend", "modal", "--dry-run"]
+    assert main(base + ["--traci-backend", "traci"]) == 2
+    assert "Modal containers always use libsumo" in capsys.readouterr().err
+    assert main(base + ["--traci-backend", "libsumo"]) == 0 and main(base) == 0  # what the containers do anyway
+    capsys.readouterr()
+    monkeypatch.setenv("TEAMB_TRACI_BACKEND", "traci")
+    assert main(base) == 0 and "does not reach Modal containers" in capsys.readouterr().err
+    assert main(["run", "--name", "t", "--seeds", "1", "--dry-run"]) == 0  # local runs honour it
+    assert "Modal" not in capsys.readouterr().err
+
+
 # --- run completeness and resume (evaluation-1, ext-94, contract 2) ---------------------------
 import json  # noqa: E402
 from dataclasses import asdict  # noqa: E402

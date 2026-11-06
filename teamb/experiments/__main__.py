@@ -98,8 +98,9 @@ def main(argv=None) -> int:
     run.add_argument("--backend", choices=("local", "modal"), default="local",
                      help="where runs execute: this machine, or Modal cloud containers (pip install modal; modal setup)")
     run.add_argument("--traci-backend", choices=("traci", "libsumo", "auto"), default=None,
-                     help="how each run talks to SUMO (default: $TEAMB_TRACI_BACKEND, else auto = libsumo when installed; "
-                          "outputs are identical, libsumo is about 2x faster)")
+                     help="how each local run talks to SUMO (default: $TEAMB_TRACI_BACKEND, else auto = libsumo when installed; "
+                          "outputs are identical, libsumo is about 2x faster). Modal containers always use libsumo, "
+                          "so traci is refused with --backend modal")
     run.add_argument("--baseline", default="fixed_time", help="controller the others are compared with")
     run.add_argument("--force", action="store_true", help="re-run runs that already have results")
     run.add_argument("--no-report", action="store_true", help="only run, do not write the report")
@@ -135,6 +136,16 @@ def main(argv=None) -> int:
             print(f"copied to {args.copy_to}")
         return 0
 
+    if args.backend == "modal":
+        # the containers set TEAMB_TRACI_BACKEND=auto themselves (libsumo is in the image) and
+        # never see this process's environment: a request for traci would be silently ignored
+        if args.traci_backend == "traci":
+            print("cannot run:\n  --traci-backend traci applies to local runs only: Modal containers always use "
+                  "libsumo (the outputs are identical); drop the flag or use --backend local", file=sys.stderr)
+            return 2
+        if not args.traci_backend and os.environ.get("TEAMB_TRACI_BACKEND", "auto") not in ("auto", "libsumo"):
+            print(f"note: TEAMB_TRACI_BACKEND={os.environ['TEAMB_TRACI_BACKEND']} does not reach Modal containers; "
+                  "they use libsumo", file=sys.stderr)
     try:
         specs = build_matrix(
             _csv(args.scenarios), _csv(args.controllers), parse_seeds(args.seeds), parse_coverages(args.coverages),
