@@ -14,11 +14,28 @@ from importlib import metadata
 from pathlib import Path
 
 OK, FAIL, WARN = "ok", "FAIL", "warn"
+MARKS = {OK: "✓", FAIL: "✗", WARN: "!"}
+ASCII_MARKS = {OK: "ok", FAIL: "FAIL", WARN: "warn"}  # e.g. Windows with stdout redirected (cp1252)
+
+
+def _encodable(text: str, encoding: str) -> bool:
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
 
 
 def _line(status: str, name: str, detail: str) -> None:
-    mark = {OK: "✓", FAIL: "✗", WARN: "!"}[status]
-    print(f"  {mark} {name:<22s} {detail}")
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+    if not _encodable("", encoding):  # a codec name Python does not know
+        encoding = "ascii"
+    if _encodable("".join(MARKS.values()), encoding):
+        text = f"  {MARKS[status]} {name:<22s} {detail}"
+    else:
+        text = f"  {ASCII_MARKS[status]:<4s} {name:<22s} {detail}"
+    # anything else stdout cannot encode (e.g. a non-ASCII user name in a path) prints as '?'
+    print(text.encode(encoding, "replace").decode(encoding))
 
 
 def _version(dist: str) -> str | None:
