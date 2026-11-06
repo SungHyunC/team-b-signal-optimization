@@ -6,6 +6,11 @@ import os
 import tempfile
 from pathlib import Path
 
+# mkstemp creates 0600 files; give results the mode a plain open() would (0666 minus the umask).
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+_FILE_MODE = 0o666 & ~_UMASK
+
 
 def atomic_write_text(path: str | Path, text: str, encoding: str = "utf-8") -> Path:
     """Write ``text`` so readers never see a half-written file: temp file in the same folder, then rename.
@@ -21,6 +26,7 @@ def atomic_write_text(path: str | Path, text: str, encoding: str = "utf-8") -> P
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
+        os.chmod(tmp, _FILE_MODE)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
