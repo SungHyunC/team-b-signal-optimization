@@ -303,6 +303,17 @@ def test_search_job_poll_never_loses_a_result_put_just_before_exit():
     assert [m[0] for m in lost] == ["error"] and "without a result" in lost[0][1]
 
 
+def test_run_search_with_zero_trials_keeps_the_current_plan(monkeypatch):
+    from teamb.controllers import optimizer
+
+    monkeypatch.setattr(optimizer, "evaluate_plan", lambda plan, spec: {
+        "objective": 50.0, "mean_delay_s": 50.0, "p95_travel_time_s": 90.0, "completed": 100, "unfinished": 0})
+    spec = SearchSpec(flows=[], current=TimingPlan(splits={"J1": 0.5}).to_dict(), trials=0)
+    result = optimizer.run_search(spec)
+    assert result["plan"] == spec.current and result["expected"]["improvement_pct"] == 0.0
+    assert result["trials"] == 0 and "no search trials" in result["note"]
+
+
 def test_ai_recommender_commands(topo):
     ctl = ready("ai_recommender", topo, approval_token="s3cret")
     assert ctl.pending_recommendation() is None

@@ -198,12 +198,16 @@ def run_search(spec: SearchSpec, progress=None) -> dict:
             progress(trial.number + 2, total, min(study.best_value, baseline["objective"]))
 
     study.optimize(objective, n_trials=spec.trials, callbacks=[report])
-    best = study.best_trial
-    better = best.value < baseline["objective"]
+    ranked = sorted((t for t in study.trials if t.value is not None), key=lambda t: t.value)
+    best = study.best_trial if ranked else None  # trials=0: nothing to compare, keep the current plan
+    better = best is not None and best.value < baseline["objective"]
     chosen = best.user_attrs["result"] if better else baseline
     base_delay, new_delay = baseline["mean_delay_s"], chosen["mean_delay_s"]
     improvement = 100.0 * (base_delay - new_delay) / base_delay if base_delay and new_delay is not None else 0.0
-    ranked = sorted((t for t in study.trials if t.value is not None), key=lambda t: t.value)
+    if best is None:
+        note = "no search trials were run; keep the current plan"
+    else:
+        note = "" if better else "no candidate beat the current plan; keep it"
     return {
         "plan": best.user_attrs["plan"] if better else current.to_dict(),
         "expected": {
@@ -214,7 +218,7 @@ def run_search(spec: SearchSpec, progress=None) -> dict:
             "baseline_objective": baseline["objective"],
             "unfinished": chosen["unfinished"],
         },
-        "note": "" if better else "no candidate beat the current plan; keep it",
+        "note": note,
         "top_trials": [{"number": t.number, "objective": round(t.value, 2), **t.user_attrs["plan"]} for t in ranked[:5]],
         "trials": len(study.trials),
         "wall_s": round(time.time() - wall0, 1),
