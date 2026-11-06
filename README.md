@@ -154,9 +154,9 @@ programs as the `teamb` subcommands.
 ## Tests and CI
 
 ```bash
-pytest                     # whole suite, a few minutes (bare pytest works without installing)
-pytest -m "not sumo"       # quick tier: skips tests that start a SUMO simulation
-node --test tests/js/      # browser-side unit tests (plain Node 20, no npm install)
+pytest                            # whole suite, a few minutes (bare pytest works without installing)
+pytest -m "not sumo"              # quick tier: skips tests that start a SUMO simulation
+node --test tests/js/*.test.mjs   # browser-side unit tests (Node 20.6+, no npm install)
 ```
 
 [CI](.github/workflows/ci.yml) runs on every pull request and push to `main`: install from the lock,

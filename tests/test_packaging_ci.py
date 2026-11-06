@@ -100,9 +100,19 @@ def test_ci_installs_doctors_and_runs_the_whole_suite():
     assert "teamb doctor --skip-sim" in runs
     assert any(r.strip() in ("pytest", "python -m pytest") for r in runs), "run the full suite, not a selection"
     assert any("git ls-files" in r and "node --check" in r for r in runs)
-    node_tests = [s for s in _steps(ALL["ci.yml"]) if s.get("run", "").strip() == "node --test tests/js/"]
-    assert node_tests and "hashFiles('tests/js/**')" in node_tests[0]["if"]
+    # Named files, not the bare directory: Node 21+ reads each argument as a glob, so
+    # `node --test tests/js/` runs the directory as one failing "test".
+    node_tests = [s for s in _steps(ALL["ci.yml"]) if s.get("run", "").strip() == "node --test tests/js/*.test.mjs"]
+    assert node_tests and "hashFiles('tests/js/*.test.mjs')" in node_tests[0]["if"]
     assert any("--strict-validation" in r and "teamb exp run" in r for r in runs)
+
+
+def test_ci_uses_a_supported_node_lts():
+    """Node 20 reached end of life in April 2026; the JS suite needs 20.6+ and runs on 22 and 24."""
+    nodes = [s for s in _steps(ALL["ci.yml"]) if str(s.get("uses", "")).startswith("actions/setup-node")]
+    assert len(nodes) == 1
+    major = int(str(nodes[0]["with"]["node-version"]).split(".")[0])
+    assert major >= 22 and major % 2 == 0, f"use an LTS release (22, 24, ...), not {major}"
 
 
 def test_ci_builds_and_probes_the_docker_image():

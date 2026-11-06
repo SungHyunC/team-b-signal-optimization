@@ -167,6 +167,36 @@ def test_documented_experiment_command_dry_runs(where, cmd):
     assert code in (0, None), f"{where}\n{out.getvalue()[-2000:]}"
 
 
+NODE_TEST = re.compile(r"\bnode --test\b((?:[ \t]+[^\s#`'\"|;&)]+)*)")
+
+
+def _undirected_node_tests(text: str) -> list[str]:
+    """`node --test` commands that do not name test files: no argument, or a directory.
+
+    Node 21+ reads each argument as a glob, so `node --test tests/js/` runs the directory itself as
+    one failing "test"; `node --test tests/js/*.test.mjs` works on Node 20 and 21+."""
+    bad = []
+    for m in NODE_TEST.finditer(text):
+        files = [a for a in m.group(1).split() if not a.startswith("-")]
+        if not files or any(a.endswith("/") or (ROOT / a).is_dir() for a in files):
+            bad.append(m.group(0).strip())
+    return bad
+
+
+def test_node_test_checker_catches_directory_arguments():
+    sample = ("node --test tests/js/   # x\n`node --test tests`\nnode --test\n"
+              "node --test tests/js/*.test.mjs   # ok\nrun: node --test --test-reporter=spec tests/js/a.test.mjs\n")
+    assert _undirected_node_tests(sample) == ["node --test tests/js/", "node --test tests", "node --test"]
+
+
+def test_documented_node_test_commands_name_files():
+    sources = MARKDOWN + sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    bad = [f"{p.relative_to(ROOT)}: {cmd}" for p in sources for cmd in _undirected_node_tests(p.read_text(encoding="utf-8"))]
+    assert not bad, "name the test files, e.g. `node --test tests/js/*.test.mjs`:\n" + "\n".join(bad)
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "node --test tests/js/*.test.mjs" in readme
+
+
 def test_twin_environment_switches_are_documented():
     guide = (DOCS / "cloud-live-sumo-deployment.md").read_text(encoding="utf-8")
     names = set()
