@@ -5,18 +5,24 @@
 This is the decision rule the team applied by hand in docs/independent-controller-confirmation-review.md,
 as code. For every condition (scenario variant x coverage x sampling x preemption x run end) where both
 controllers ran on the same seeds, it computes paired differences (candidate - baseline) with 95 %
-t-intervals and checks four guards:
+t-intervals and checks these guards:
 
   delay       relative change of the mean completed-trip delay <= +max_delay_regression % (default 5)
   throughput  mean increase of the unfinished share <= max_unfinished_pp percentage points (default 0.5),
               and no significant increase above 0.1 pp (lower 95 % bound <= 0.1 pp)
   emergency   emergency-vehicle travel time not significantly higher by more than 1 s
               (lower 95 % bound of the increase <= 1 s; scenarios with EVs only)
-  safety      no controller errors, fallback steps or rejected actions in any candidate run
+  safety      no controller errors, fallback steps or rejected actions in any candidate run, and
+              every candidate run finished: no failed or incomplete run (error.json, truncated
+              summary) and no seed the baseline finished but the candidate has no run for (a run
+              lost on the cloud backend or by a dead worker leaves no folder)
 
-The verdict is PASS only if every guard passes in every condition. Benefits are reported next to the
-guards (significant improvements in delay, delay incl. entry waits, spillback, queue p95) but never
-override a failed guard. Intervals are not adjusted for the number of conditions.
+A condition where both controllers ran is listed even when the candidate has fewer than min_seeds
+(default 2) finished seeds paired with the baseline: it then fails the "seeds" guard instead of
+silently dropping out of the verdict. The verdict is PASS only if every guard passes in every
+condition. Benefits are reported next to the guards (significant improvements in delay, delay incl.
+entry waits, spillback, queue p95) but never override a failed guard. Intervals are not adjusted for
+the number of conditions.
 
 Writes screen.json and screen.md into the experiment folder.
 """
@@ -42,6 +48,7 @@ METRICS = {
 }
 BENEFITS = ("mean_delay_s", "mean_delay_incl_depart_s", "spillback_duration_s", "queue_p95_veh")
 SAFETY = ("controller_errors", "fallback_steps", "rejected_actions")
+BROKEN = ("failed", "incomplete")  # runner.run_status of a run that did not finish
 PRACTICAL_UNFINISHED_PP = 0.1  # a significant but smaller increase is negligible
 PRACTICAL_EV_S = 1.0
 
@@ -53,46 +60,69 @@ def _ci(stat: dict) -> tuple[float | None, float | None]:
     return (m - h, m + h) if h is not None else (m, m)
 
 
+def _broken_runs(all_runs: list[dict]) -> dict[tuple, list[dict]]:
+    """Failed and incomplete runs by group key (runs whose identity cannot be read are left out)."""
+    broken: dict[tuple, list[dict]] = {}
+    for r in all_runs:
+        if r["status"] not in BROKEN:
+            continue
+        try:
+            key = _group_key(r)
+        except (KeyError, TypeError, ValueError):
+            continue
+        broken.setdefault(key, []).append(r)
+    return broken
+
+
 def screen(exp_dir: Path, baseline: str, candidate: str, *, max_delay_regression: float = 5.0,
            max_unfinished_pp: float = 0.5, min_seeds: int = 2) -> dict:
-    runs, _ = _one_run_per_seed([r for r in load_runs(exp_dir) if r["status"] == "ok"])
+    all_runs = load_runs(exp_dir)
+    runs, _ = _one_run_per_seed([r for r in all_runs if r["status"] == "ok"])
     groups: dict[tuple, list[dict]] = {}
     for r in runs:
         groups.setdefault(_group_key(r), []).append(r)
+    broken = _broken_runs(all_runs)
     conditions = []
-    for key, cand_runs in sorted(groups.items(), key=lambda kv: tuple(str(x) for x in kv[0])):
-        if key[1] != candidate:
-            continue
+    cand_keys = {k for k in (*groups, *broken) if k[1] == candidate}
+    for key in sorted(cand_keys, key=lambda k: tuple(str(x) for x in k)):
         base_key = (key[0], baseline, *key[2:])
-        base_runs = groups.get(base_key)
-        if not base_runs:
-            continue
+        if base_key not in groups and base_key not in broken:
+            continue  # the baseline never ran this condition: nothing to compare with
+        base_runs, cand_runs = groups.get(base_key, []), groups.get(key, [])
         stats = {}
         for metric in METRICS:
             b = {r["seed"]: r.get(metric) for r in base_runs}
             c = {r["seed"]: r.get(metric) for r in cand_runs}
             stats[metric] = paired(b, c)
-        n = stats["mean_delay_s"]["n"]
-        if n < min_seeds:
-            continue
-        guards = {}
         d = stats["mean_delay_s"]
-        rel = None
-        if d["baseline_mean"]:
-            rel = 100.0 * (d["candidate_mean"] - d["baseline_mean"]) / d["baseline_mean"]
-        guards["delay"] = {"pass": rel is not None and rel <= max_delay_regression, "change_pct": rel}
-        u = stats["unfinished_pct"]
-        lo, _ = _ci(u)
-        guards["throughput"] = {
-            "pass": u["n"] > 0 and (lo is None or lo <= PRACTICAL_UNFINISHED_PP) and (u["diff"]["mean"] or 0.0) <= max_unfinished_pp,
-            "increase_pp": u["diff"]["mean"], "ci95": _ci(u),
-        }
-        ev = stats["ev_mean_travel_time_s"]
-        if ev["n"]:
-            lo, _ = _ci(ev)
-            guards["emergency"] = {"pass": lo is None or lo <= PRACTICAL_EV_S, "increase_s": ev["diff"]["mean"], "ci95": _ci(ev)}
+        n = d["n"]
+        guards = {}
+        if n < min_seeds:
+            guards["seeds"] = {"pass": False, "n": n, "min": min_seeds}
+        else:
+            rel = None
+            if d["baseline_mean"]:
+                rel = 100.0 * (d["candidate_mean"] - d["baseline_mean"]) / d["baseline_mean"]
+            guards["delay"] = {"pass": rel is not None and rel <= max_delay_regression, "change_pct": rel}
+            u = stats["unfinished_pct"]
+            lo, _ = _ci(u)
+            guards["throughput"] = {
+                "pass": u["n"] > 0 and (lo is None or lo <= PRACTICAL_UNFINISHED_PP) and (u["diff"]["mean"] or 0.0) <= max_unfinished_pp,
+                "increase_pp": u["diff"]["mean"], "ci95": _ci(u),
+            }
+            ev = stats["ev_mean_travel_time_s"]
+            if ev["n"]:
+                lo, _ = _ci(ev)
+                guards["emergency"] = {"pass": lo is None or lo <= PRACTICAL_EV_S, "increase_s": ev["diff"]["mean"], "ci95": _ci(ev)}
         bad = [r["name"] for r in cand_runs if any((r.get(k) or 0) != 0 for k in SAFETY)]
-        guards["safety"] = {"pass": not bad, "runs_with_issues": bad}
+        ok_seeds = {r["seed"] for r in cand_runs}
+        # a failed folder next to a finished run of the same seed (e.g. under an older name) is history
+        failed = sorted(({"name": r["name"], "seed": r["seed"], "status": r["status"], "error": r["error"]}
+                         for r in broken.get(key, []) if r["seed"] not in ok_seeds),
+                        key=lambda r: (str(r["seed"]), r["name"]))
+        missing = sorted({r["seed"] for r in base_runs} - ok_seeds - {r["seed"] for r in failed}, key=str)
+        guards["safety"] = {"pass": not bad and not failed and not missing, "runs_with_issues": bad,
+                            "failed_runs": failed, "missing_seeds": missing}
         benefits = []
         for metric in BENEFITS:
             _, hi = _ci(stats[metric])
@@ -126,24 +156,39 @@ def render_markdown(result: dict) -> str:
         f"Experiment `{result['experiment']}` · verdict **{result['verdict']}** · rules: delay regression ≤ "
         f"+{result['rules']['max_delay_regression_pct']} %, unfinished share ≤ +{result['rules']['max_unfinished_pp']} pp "
         f"and not significantly above +{PRACTICAL_UNFINISHED_PP} pp, EV travel time not significantly above +{PRACTICAL_EV_S:g} s, "
-        "no safety events. "
+        "no safety events, every candidate run finished, "
+        f"at least {result['rules']['min_seeds']} paired seeds per condition. "
         "Paired 95 % t-intervals, not adjusted for the number of conditions.",
         "",
-        "| Scenario | Demand / params | Seeds | Baseline delay | Candidate delay | Change | Unfinished Δ pp [95 % CI] | EV Δ s | Benefits | Result |",
+        "| Scenario | Demand / params | Seeds | Baseline delay | Candidate delay | Change | Unfinished Δ pp [95 % CI] "
+        "| EV Δ s | Benefits | Result |",
         "|---|---|---:|---:|---:|---:|---|---:|---|---|",
     ]
     for c in result["conditions"]:
-        d = c["metrics"]["mean_delay_s"]
+        d = c["metrics"].get("mean_delay_s", {})
         g = c["guards"]
-        u = g["throughput"]
+        u = g.get("throughput")
         ev = g.get("emergency")
-        ci = u["ci95"]
+        unfinished = f"{_num(u['increase_pp'])} [{_num(u['ci95'][0])}, {_num(u['ci95'][1])}]" if u else "–"
+        change = f"{_num(g['delay']['change_pct'], 1)} %" if "delay" in g else "–"
+        result_text = "PASS" if c["pass"] else "FAIL: " + ", ".join(k for k, v in g.items() if not v["pass"])
         lines.append(
-            f"| {c['scenario']} | cov {c['coverage']:g}, end {_num(c['end_time'], 0)} | {c['n_seeds']} | {_num(d['baseline'])} | "
-            f"{_num(d['candidate'])} | {_num(g['delay']['change_pct'], 1)} % | {_num(u['increase_pp'])} "
-            f"[{_num(ci[0])}, {_num(ci[1])}] | {_num(ev['increase_s']) if ev else '–'} | "
-            f"{', '.join(c['significant_benefits']) or '–'} | {'PASS' if c['pass'] else 'FAIL: ' + ', '.join(k for k, v in g.items() if not v['pass'])} |"
+            f"| {c['scenario']} | cov {c['coverage']:g}, end {_num(c['end_time'], 0)} | {c['n_seeds']} | "
+            f"{_num(d.get('baseline'))} | {_num(d.get('candidate'))} | {change} | {unfinished} | "
+            f"{_num(ev['increase_s']) if ev else '–'} | "
+            f"{', '.join(c['significant_benefits']) or '–'} | {result_text} |"
         )
+    problems = []
+    for c in result["conditions"]:
+        safety = c["guards"]["safety"]
+        where = f"{c['scenario']} (cov {c['coverage']:g}, end {_num(c['end_time'], 0)})"
+        problems += [f"- {where}: `{r['name']}` {r['status']}: {r['error'] or 'no reason recorded'}" for r in safety["failed_runs"]]
+        if safety["missing_seeds"]:
+            problems.append(f"- {where}: no candidate run for seed(s) {', '.join(str(x) for x in safety['missing_seeds'])} "
+                            "that the baseline finished")
+    if problems:
+        lines += ["", "## Failed / incomplete candidate runs", "",
+                  "These fail the safety guard: re-run them (`teamb exp run` resumes only the missing runs).", "", *problems]
     lines += ["", "Scenario names with a `-<hash>` suffix carry scenario parameters (e.g. demand_scale); see experiment.json."]
     return "\n".join(lines) + "\n"
 

@@ -10,13 +10,18 @@ from teamb.experiments.screen import render_markdown, screen
 END = 2400.0
 
 
-def _write(exp, controller, seed, params=None, **metrics):
-    spec = RunSpec("rush_hour", controller, seed, 1.0, end_time=END, controller_params=params or {})
-    d = exp / "runs" / spec.name
+def _write(exp, controller, seed, params=None, *, scenario="rush_hour", status="ok", folder=None, **metrics):
+    """One run folder. status "failed" writes error.json (no summary), "incomplete" a summary
+    marked complete: false; `folder` overrides the directory name (e.g. a legacy name)."""
+    spec = RunSpec(scenario, controller, seed, 1.0, end_time=END, controller_params=params or {})
+    d = exp / "runs" / (folder or spec.name)
     d.mkdir(parents=True)
     (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": spec.name, "variant": spec.variant}))
-    summary = {"complete": True, "end_time": END, "sim_time_s": END, "controller_errors": 0, "fallback_steps": 0,
-               "rejected_actions": 0, "unfinished_pct": 2.0, "completed": 1000, **metrics}
+    if status == "failed":
+        (d / "error.json").write_text(json.dumps({"error": "RuntimeError: controller crashed"}))
+        return spec.variant
+    summary = {"complete": status != "incomplete", "end_time": END, "sim_time_s": END, "controller_errors": 0,
+               "fallback_steps": 0, "rejected_actions": 0, "unfinished_pct": 2.0, "completed": 1000, **metrics}
     (d / "summary.json").write_text(json.dumps(summary))
     return spec.variant
 
@@ -68,3 +73,82 @@ def test_no_paired_data_is_reported_as_such(tmp_path):
 def test_a_significant_but_negligible_unfinished_increase_passes(tmp_path):
     exp, cand = _experiment(tmp_path, lambda s: -1.0, cand_unfinished=2.0)  # +0.01..0.05 pp, every seed
     assert screen(exp, "max_pressure", cand)["conditions"][0]["guards"]["throughput"]["pass"] is True
+
+
+BASE = (30.0, 32.0, 31.0, 29.0, 33.0)
+
+
+def _pair(exp, seed, scenario="rush_hour", cand_status="ok", base_metrics=None, cand_metrics=None):
+    """Baseline max_pressure and candidate max_pressure(rho=0.25) on one seed; returns the candidate variant."""
+    base = BASE[(seed - 1) % len(BASE)]
+    _write(exp, "max_pressure", seed, scenario=scenario, mean_delay_s=base, **(base_metrics or {}))
+    return _write(exp, "max_pressure", seed, {"rho": 0.25}, scenario=scenario, status=cand_status,
+                  mean_delay_s=base - 1.0 - 0.1 * seed, **(cand_metrics or {}))
+
+
+def test_candidate_runs_that_crashed_fail_the_screen(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed, cand_status="ok" if seed <= 2 else "failed")
+    result = screen(exp, "max_pressure", cand)
+    assert result["verdict"] == "FAIL"
+    (cond,) = result["conditions"]
+    safety = cond["guards"]["safety"]
+    assert safety["pass"] is False
+    assert sorted(r["seed"] for r in safety["failed_runs"]) == [3, 4, 5]
+    assert all(r["status"] == "failed" and "crashed" in r["error"] for r in safety["failed_runs"])
+    md = render_markdown(result)
+    assert "Failed / incomplete candidate runs" in md and "controller crashed" in md
+
+
+def test_an_incomplete_candidate_run_fails_the_screen(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed, cand_status="incomplete" if seed == 5 else "ok")
+    result = screen(exp, "max_pressure", cand)
+    assert result["verdict"] == "FAIL"
+    assert [r["seed"] for r in result["conditions"][0]["guards"]["safety"]["failed_runs"]] == [5]
+
+
+def test_a_condition_where_every_candidate_run_failed_is_not_skipped(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed)
+        _pair(exp, seed, scenario="emergency", cand_status="failed")
+    result = screen(exp, "max_pressure", cand)
+    assert result["verdict"] == "FAIL"
+    by_scenario = {c["scenario"]: c for c in result["conditions"]}
+    assert by_scenario["rush_hour"]["pass"] is True
+    assert by_scenario["emergency"]["pass"] is False and by_scenario["emergency"]["n_seeds"] == 0
+    assert "emergency" in render_markdown(result)
+
+
+def test_seeds_the_candidate_never_ran_fail_the_screen(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 4):
+        cand = _pair(exp, seed)
+    for seed in (4, 5):  # the candidate's runs were lost (cloud backend, dead worker): no folder at all
+        _write(exp, "max_pressure", seed, mean_delay_s=BASE[seed - 1])
+    result = screen(exp, "max_pressure", cand)
+    assert result["verdict"] == "FAIL"
+    assert result["conditions"][0]["guards"]["safety"]["missing_seeds"] == [4, 5]
+
+
+def test_a_failed_folder_with_a_finished_rerun_of_the_seed_does_not_count(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed)
+    _write(exp, "max_pressure", 3, {"rho": 0.25}, status="failed", folder="old_name_of_seed_3")
+    assert screen(exp, "max_pressure", cand)["verdict"] == "PASS"
+
+
+def test_a_condition_with_too_few_paired_seeds_fails_instead_of_disappearing(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed)
+    _pair(exp, 1, scenario="emergency")
+    result = screen(exp, "max_pressure", cand)
+    assert result["verdict"] == "FAIL"
+    emergency = next(c for c in result["conditions"] if c["scenario"] == "emergency")
+    assert emergency["pass"] is False and emergency["guards"]["seeds"] == {"pass": False, "n": 1, "min": 2}
+    render_markdown(result)
