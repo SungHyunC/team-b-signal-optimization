@@ -284,3 +284,42 @@ def test_healthz_reports_a_dead_sim_thread(open_client):
     open_client.app.state.session._thread = dead
     r = open_client.get("/healthz")
     assert r.status_code == 503 and r.json()["ok"] is False
+
+
+# --- hosted-mode guards and the logged-in WebSocket (twin-security-13) -----------------------
+@pytest.fixture
+def hosted_client(monkeypatch):
+    """Hosted mode, logged in. No lifespan: a request that passes the guards is only queued."""
+    monkeypatch.setenv("TWIN_ACCESS_TOKEN", "test-only-long-secret")
+    client = TestClient(create_app(), base_url="https://testserver")
+    assert client.post("/login", data={"password": "test-only-long-secret"}, follow_redirects=False).status_code == 303
+    return client
+
+
+@pytest.mark.parametrize("bad", [
+    {"seed": -1}, {"seed": 2**31}, {"end_time": 59}, {"end_time": 10801}, {"end_time": "nan"},
+    {"scenario_params": {"warmup": 1}}, {"scenario_params": {"demand_scale": 0.05}},
+    {"scenario_params": {"demand_scale": 3.5}}, {"scenario_params": {"demand_scale": True}},
+    {"start_at": 10801}, {"controller_params": {"x": 1}},
+])
+def test_hosted_session_guards(hosted_client, bad):
+    session = hosted_client.app.state.session
+    r = hosted_client.post("/api/session", json=bad)
+    assert r.status_code == 400, (bad, r.text)
+    assert session._requests.qsize() == 0  # a rejected request never reaches session.restart
+
+
+def test_hosted_session_accepts_a_valid_request(hosted_client):
+    r = hosted_client.post("/api/session", json={"end_time": 600, "scenario_params": {"demand_scale": 1.25}})
+    assert r.status_code == 200 and r.json()["state"] == "loading"
+    assert hosted_client.post("/api/control", json={"action": 5}).status_code == 400
+
+
+def test_hosted_websocket_accepts_a_logged_in_browser(hosted_client):
+    # TestClient talks ws://, so the Secure cookie is not attached automatically: send it as a header.
+    cookie = f"{access.COOKIE}={hosted_client.cookies.get(access.COOKIE)}"
+    with hosted_client.websocket_connect("/ws", headers={"cookie": cookie, "origin": "https://testserver"}) as ws:
+        assert ws.receive_json()["type"] == "hello"
+    with pytest.raises(WebSocketDisconnect):  # right cookie, foreign page
+        with hosted_client.websocket_connect("/ws", headers={"cookie": cookie, "origin": "https://evil.example"}):
+            pass
