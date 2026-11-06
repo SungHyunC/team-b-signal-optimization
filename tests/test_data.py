@@ -198,6 +198,111 @@ def test_event_windows_pairs_and_merges():
     assert w[0]["what"] == "J2_N2+N2_J2"
 
 
+def test_event_windows_merges_overlapping_disruptions():
+    # the earthquake: two closures at 1200 s, reopened at 3000 s and 3600 s (evaluation-3)
+    events = [{"t": 1200.0, "type": "road_closed", "edge": e} for e in ("J3_J4", "J4_J3", "J1_N1", "N1_J1")]
+    events += [{"t": 3000.0, "type": "road_reopened", "edge": e} for e in ("J3_J4", "J4_J3")]
+    events += [{"t": 3600.0, "type": "road_reopened", "edge": e} for e in ("J1_N1", "N1_J1")]
+    w = event_windows(events, run_end=4500.0)
+    assert [(x["kind"], x["start"], x["end"]) for x in w] == [("closure", 1200.0, 3600.0)]
+    assert set(w[0]["what"].split("+")) == {"J3_J4", "J4_J3", "J1_N1", "N1_J1"} and len(w[0]["parts"]) == 4
+    # touching windows merge, separate ones stay apart, an open window stays open
+    events = [
+        {"t": 100.0, "type": "road_closed", "edge": "A"}, {"t": 300.0, "type": "road_reopened", "edge": "A"},
+        {"t": 300.0, "type": "attack_started", "junction": "J2", "approach": "N"},
+        {"t": 400.0, "type": "attack_stopped"},
+        {"t": 900.0, "type": "road_closed", "edge": "B"},
+        {"t": 950.0, "type": "road_closed", "edge": "C"}, {"t": 990.0, "type": "road_reopened", "edge": "C"},
+    ]
+    w = event_windows(events, run_end=1200.0)
+    assert [(x["kind"], x["start"], x["end"]) for x in w] == [("mixed", 100.0, 400.0), ("closure", 900.0, None)]
+
+
+def _metrics_stub(times, rates, end_time):
+    from teamb.evaluation.metrics import MetricsCollector
+
+    m = object.__new__(MetricsCollector)  # _recovery only needs the timeseries and the end time
+    m.timeseries = [(t, 1, 0, 0, 0.0, r) for t, r in zip(times, rates)]
+    m.end_time = end_time
+    return m
+
+
+def test_recovery_excess_is_not_double_counted_for_overlapping_windows():
+    times = [float(t) for t in range(0, 4500, 5)]
+    rates = [30.0 if 1200 <= t < 3600 else 10.0 for t in times]
+    events = [
+        {"t": 1200.0, "type": "road_closed", "edge": "J3_J4"}, {"t": 1200.0, "type": "road_closed", "edge": "J1_N1"},
+        {"t": 3000.0, "type": "road_reopened", "edge": "J3_J4"}, {"t": 3600.0, "type": "road_reopened", "edge": "J1_N1"},
+    ]
+    rec = _metrics_stub(times, rates, 4500.0)._recovery(events)
+    single = recovery_time(times, rates, start=1200.0, end=3600.0)
+    assert rec["headline"]["disruptions"] == 1
+    assert rec["headline"]["excess_delay_veh_h"] == pytest.approx(single["excess_veh_h"])
+    assert single["excess_veh_h"] == pytest.approx(20 * 2400 / 3600, rel=0.01)
+    assert rec["detail"][0]["recovered_at"] >= 3600.0  # measured after the last closure ended
+
+
+def test_recovery_excess_of_separate_disruptions_counts_each_second_once():
+    from teamb.evaluation.recovery import union_excess
+
+    # the first disruption has not recovered when the second starts (rate 30 from 1000 to 2600)
+    times = [float(t) for t in range(0, 4500, 5)]
+    rates = [30.0 if 1000 <= t < 2600 else 10.0 for t in times]
+    events = [
+        {"t": 1000.0, "type": "road_closed", "edge": "A"}, {"t": 1200.0, "type": "road_reopened", "edge": "A"},
+        {"t": 1250.0, "type": "attack_started", "junction": "J2", "approach": "N"},
+        {"t": 1500.0, "type": "attack_stopped"},
+    ]
+    rec = _metrics_stub(times, rates, 4500.0)._recovery(events)
+    first, second = rec["detail"]
+    assert rec["headline"]["disruptions"] == 2 and first["recovered_at"] >= 2600 and second["recovered_at"] >= 2550
+    assert second["excess_veh_h"] > 1.0  # its seconds are also in the first window: a plain sum double-counts
+    assert rec["headline"]["excess_delay_veh_h"] == pytest.approx(first["excess_veh_h"], abs=0.01)
+    assert first["excess_veh_h"] == pytest.approx(20 * 1600 / 3600, rel=0.01)
+    # with one window the union is that window's excess; a reference series works the same way
+    one = recovery_time(times, rates, start=1000.0, end=1200.0)
+    assert union_excess(times, rates, [(1000.0, one["recovered_at"], one["pre_level"])]) == one["excess_veh_h"]
+    ref = {t: 10.0 for t in times}
+    assert union_excess(times, rates, [(1000.0, 3000.0, ref), (1500.0, 2000.0, ref)]) == pytest.approx(20 * 1600 / 3600, rel=0.01)
+    assert union_excess(times, rates, []) is None
+
+
+def test_recovery_vs_reference_without_matched_samples_is_unknown():
+    from teamb.evaluation.recovery import recovery_vs_reference
+
+    times = [float(t) for t in range(1, 1500, 5)]
+    vals = [10.0] * len(times)
+    res = recovery_vs_reference(times, vals, times, vals, start=2000.0, end=2500.0)  # event after the last sample
+    assert res["excess_veh_h"] is None and res["censored"]
+
+
+def test_depart_delay_metrics_leave_the_primary_endpoint_unchanged(tmp_path):
+    # evaluation-5: timeLoss excludes departDelay; the total is reported next to mean_delay_s
+    from types import SimpleNamespace
+
+    from teamb.evaluation.metrics import MetricsCollector
+
+    (tmp_path / "tripinfo.xml").write_text(
+        '<tripinfos>'
+        '<tripinfo id="a" depart="1000" arrival="1400" duration="400" timeLoss="100" departDelay="400" waitingCount="2"/>'
+        '<tripinfo id="b" depart="1100" arrival="1300" duration="200" timeLoss="50" departDelay="0" waitingCount="1"/>'
+        '<tripinfo id="c" depart="1500" arrival="-1" duration="100" timeLoss="20" departDelay="30"/>'
+        '</tripinfos>'
+    )
+    m = object.__new__(MetricsCollector)
+    m.warmup, m.end_time, m._t_last = 900.0, 1600.0, 1600.0
+    m.queue_samples, m.spillback_steps, m.queue_warning_seconds, m.teleports = [], 0, 0.0, 0
+    m._approaches, m.timeseries = [], []
+    m.feed = SimpleNamespace(sensors=None, events=[])
+    m.spill = SimpleNamespace(summary=lambda: {})
+    s = m.finalize(tmp_path / "tripinfo.xml", planned_in_window=4, events=[])
+    assert s["mean_delay_s"] == 75.0  # unchanged definition: timeLoss of finished trips
+    assert s["mean_delay_incl_depart_s"] == 275.0  # (100 + 400 + 50 + 0) / 2
+    assert s["mean_depart_delay_s"] == pytest.approx(430 / 3, abs=0.01)  # all inserted window trips
+    assert s["mean_delay_incl_unfinished_s"] == pytest.approx(170 / 3, abs=0.01)  # accrued: a lower bound
+    assert s["completed"] == 2 and s["in_network_at_end"] == 1 and s["never_inserted"] == 1
+
+
 def test_spillback_needs_upstream_blocking_evidence():
     from teamb.network.topology import load_topology
 
@@ -280,6 +385,7 @@ def test_metrics_summary_perf01_and_new_fields(attack_run):
         "planned_in_window", "inserted_in_window", "in_network_at_end", "never_inserted", "arterial_mean_delay_s",
         "cross_mean_delay_s", "queue_p95_veh", "spillback_duration_s", "spillback_events", "recovery_time_s",
         "excess_delay_veh_h", "est_queue_mae", "est_queue_bias", "est_flow_mae", "det_queue_mae", "probe_share",
+        "mean_depart_delay_s", "mean_delay_incl_depart_s", "mean_delay_incl_unfinished_s",
     }
     assert baseline_keys | new_keys <= set(s)
     assert s["completed"] > 0 and s["unfinished"] >= 0

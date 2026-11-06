@@ -6,7 +6,7 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
-from teamb.experiments.runner import RunSpec
+from teamb.experiments.runner import RunSpec, run_status, scenario_end
 
 
 def audit_specs(exp_dir: str | Path, specs: list[RunSpec], *, metric: str = "mean_delay_s") -> dict:
@@ -34,12 +34,15 @@ def audit_specs(exp_dir: str | Path, specs: list[RunSpec], *, metric: str = "mea
                         "end_time", "controller_params", "scenario_params"):
                 if saved.get(key) != getattr(spec, key):
                     raise ValueError(f"run specification mismatch: {key}")
+            if (folder / "error.json").exists():
+                raise ValueError("error.json present; run may have failed")
             summary = json.loads((folder / "summary.json").read_text())
+            status, _, reason = run_status(folder, expected_end=spec.end_time, default_end=scenario_end(spec))
+            if status != "ok":  # truncated or marked incomplete: never a valid observation
+                raise ValueError(f"run did not finish: {reason}")
             value = summary.get(metric)
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"invalid {metric}")
-            if (folder / "error.json").exists():
-                raise ValueError("error.json present; run may have failed")
             manifest = json.loads((folder / "manifest.json").read_text())
             for key, target in (("code_revision", revisions), ("sumo_version", versions),
                                 ("network_hash", networks)):

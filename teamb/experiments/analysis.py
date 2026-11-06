@@ -2,11 +2,18 @@
 
 Pairing rule (matched demand seeds)
 -----------------------------------
-A candidate group (scenario, controller variant, coverage, sampling, preemption) is
-compared with the baseline controller's runs of the same scenario and preemption setting,
-preferably with the same coverage and sampling ("exact"); if the baseline was only run at
+A candidate group (scenario, controller variant, coverage, sampling, preemption, run end) is
+compared with the baseline controller's runs of the same scenario, preemption setting and run
+end, preferably with the same coverage and sampling ("exact"); if the baseline was only run at
 another coverage/sampling (fine for fixed-time, which ignores sensor data) that run is used
-("scenario"). Only seeds present in both are paired.
+("scenario"). A baseline with another preemption setting or run end is never used: those
+change every controller's result. Only seeds present in both are paired. The run end is the
+effective one (the spec's end_time, else the scenario duration from the manifest).
+
+Each run counts once: when two finished folders hold the same group and seed (a folder named
+under an older naming rule next to its re-run, or a default run next to an --end of the same
+length), the folder whose name is today's RunSpec name is kept, then the first folder name;
+the others are listed under "duplicate_runs" with a warning.
 
 report.json schema (read by the twin; extra keys may be added, never removed)
 -----------------------------------------------------------------------------
@@ -22,11 +29,14 @@ report.json schema (read by the twin; extra keys may be added, never removed)
 from __future__ import annotations
 
 import csv
+import io
 import json
 import time
 from pathlib import Path
 
 from teamb.evaluation.stats import holm, mean_ci, paired
+from teamb.experiments.runner import canonical_run_name, run_status
+from teamb.fsutil import atomic_write_json, atomic_write_text, read_json
 
 ROW_METRICS = ("mean_delay_s", "p95_travel_time_s", "stops_per_veh", "unfinished_pct", "ev_mean_travel_time_s")
 EXTRA_METRICS = (
@@ -34,7 +44,7 @@ EXTRA_METRICS = (
     "spillback_duration_s", "queue_warning_s", "others_mean_delay_s", "ev_mean_delay_s", "ev_extra_delay_others_s",
     "recovery_time_s", "excess_delay_veh_h", "est_queue_mae", "est_queue_bias", "est_flow_mae", "alert_s",
     "false_alarm_s", "detection_delay_s", "completed", "unfinished", "never_inserted", "teleports",
-    "mean_delay_incl_unfinished_s", "wall_time_s",
+    "mean_delay_incl_unfinished_s", "mean_depart_delay_s", "mean_delay_incl_depart_s", "wall_time_s",
 )
 IDENTITY = ("name", "scenario", "scenario_variant", "controller", "variant", "seed", "coverage", "sampling", "ev_preemption", "end_time", "status")
 DEFINITIONS = {
@@ -47,7 +57,15 @@ DEFINITIONS = {
     "p_holm": "p_value after Holm–Bonferroni correction over the candidates of the same scenario.",
     "unfinished_pct": "100 × (trips still in the network at the end + trips never inserted) / (completed + unfinished) (PERF-01).",
     "ev_mean_travel_time_s": "Mean travel time of emergency vehicles that finished.",
-    "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage.",
+    "mean_depart_delay_s": "Mean SUMO departDelay (s/veh, time waiting to enter a blocked entry lane) of the trips "
+    "inserted in the window. Not part of mean_delay_s (timeLoss excludes it).",
+    "mean_delay_incl_depart_s": "Mean timeLoss + departDelay (s/veh) of the finished window trips: the primary "
+    "endpoint's population with the entry wait added.",
+    "mean_delay_incl_unfinished_s": "Mean timeLoss accrued so far by all inserted window trips, finished or not. "
+    "A lower bound: unfinished trips have only part of their delay and never-inserted trips are left out.",
+    "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage. "
+    "Always the same preemption setting and run end; null = no such baseline run.",
+    "end_time": "Effective run end in s (the --end given, else the scenario's duration).",
 }
 
 
@@ -65,16 +83,27 @@ def _stat(values, digits=3) -> dict:
 
 
 def load_runs(exp_dir: Path) -> list[dict]:
-    """One flat dict per run directory: identity fields + scalar summary metrics."""
+    """One flat dict per run directory: identity fields + scalar summary metrics.
+
+    status "ok" only for a finished run (runner.run_status: summary.json parses, is not marked
+    incomplete, no error.json, and the run reached its end time); "failed" when error.json is
+    present; "incomplete" otherwise (still running, killed, or a truncated legacy summary).
+    Only "ok" runs enter the statistics; "error" says why the others did not."""
     runs = []
     runs_dir = Path(exp_dir) / "runs"
     if not runs_dir.exists():
         return runs
     for d in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
-        spec = json.loads((d / "run_spec.json").read_text()) if (d / "run_spec.json").exists() else {}
-        summary = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else None
-        error = json.loads((d / "error.json").read_text()).get("error") if (d / "error.json").exists() else None
+        spec = read_json(d / "run_spec.json", {})
+        spec = spec if isinstance(spec, dict) else {}
+        status, summary, error = run_status(d, expected_end=spec.get("end_time"))
         src = summary or {}
+        end_time = spec.get("end_time")
+        if end_time is None:  # the scenario's duration: from the manifest, else where the run stopped
+            manifest = read_json(d / "manifest.json", {})
+            end_time = ((manifest.get("config") or {}) if isinstance(manifest, dict) else {}).get("end_time")
+        if end_time is None:
+            end_time = src.get("sim_time_s")
         scenario = spec.get("scenario", src.get("scenario"))
         controller = spec.get("controller", src.get("controller"))
         row = {
@@ -88,13 +117,14 @@ def load_runs(exp_dir: Path) -> list[dict]:
             "coverage": spec.get("coverage", src.get("coverage")),
             "sampling": spec.get("sampling", src.get("sampling", "uniform")),
             "ev_preemption": spec.get("ev_preemption", src.get("ev_preemption", True)),
-            "end_time": spec.get("end_time", src.get("sim_time_s")),
-            "status": "ok" if summary else ("failed" if error else "incomplete"),
+            "end_time": None if end_time is None else float(end_time),
+            "status": status,
             "error": error,
             "wall_total_s": spec.get("wall_total_s"),
             "bytes": spec.get("bytes"),
             "scenario_params": spec.get("scenario_params", {}),
             "run_dir": str(d),
+            "current_name": canonical_run_name(spec) == d.name,  # False: an older run name
         }
         for k, v in src.items():
             if k not in row and _scalar(v):
@@ -107,32 +137,55 @@ def write_summary_csv(runs: list[dict], path: Path) -> None:
     cols = list(IDENTITY)
     for r in runs:
         for k, v in r.items():
-            if k not in cols and _scalar(v) and k not in ("error", "run_dir"):
+            if k not in cols and _scalar(v) and k not in ("error", "run_dir", "current_name"):
                 cols.append(k)
     cols.append("error")
-    with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
-        w.writeheader()
-        for r in runs:
-            w.writerow({k: r.get(k) for k in cols})
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore", lineterminator="\n")  # text mode adds the OS newline
+    w.writeheader()
+    for r in runs:
+        w.writerow({k: r.get(k) for k in cols})
+    atomic_write_text(path, buf.getvalue())
 
 
 def _group_key(r: dict) -> tuple:
-    return (r["scenario_variant"], r["variant"], float(r["coverage"]), r["sampling"], bool(r["ev_preemption"]))
+    """(scenario_variant, variant, coverage, sampling, ev_preemption, end_time): runs that differ
+    only in the seed. end_time is the effective run end (float, or None if unknown)."""
+    end = r.get("end_time")
+    return (r["scenario_variant"], r["variant"], float(r["coverage"]), r["sampling"], bool(r["ev_preemption"]),
+            None if end is None else float(end))
 
 
 def _find_baseline(key: tuple, groups: dict, baseline: str) -> tuple[tuple | None, str | None]:
-    scen, _, cov, sampling, pre = key
-    cands = [k for k, rs in groups.items() if k[0] == scen and rs[0]["controller"] == baseline]
+    scen, _, cov, sampling, pre, end = key
+    # never across preemption or run end: both change the baseline's own result (evaluation-8, ext-79)
+    cands = [k for k, rs in groups.items() if k[0] == scen and k[4] == pre and k[5] == end and rs[0]["controller"] == baseline]
     if not cands:
         return None, None
     plain = [k for k in cands if k[1] == baseline] or cands  # prefer the baseline without custom params
-    exact = [k for k in plain if k[2] == cov and k[3] == sampling and k[4] == pre]
+    exact = [k for k in plain if k[2] == cov and k[3] == sampling]
     if exact:
         return exact[0], "exact"
-    same_pre = [k for k in plain if k[4] == pre] or plain
-    same_pre.sort(key=lambda k: (k[2] != 1.0, k[3] != "uniform", -k[2]))
-    return same_pre[0], "scenario"
+    plain.sort(key=lambda k: (k[2] != 1.0, k[3] != "uniform", -k[2]))
+    return plain[0], "scenario"
+
+
+def _one_run_per_seed(ok: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(runs, duplicates): one finished run per (group key, seed), in the original order.
+
+    Two folders can hold the same run: one named under an older naming rule (before the run end
+    and exact coverage were part of the name) next to its re-run, or a default run next to an
+    --end equal to the scenario's duration. Counting both would double the seeds and shrink the
+    confidence intervals. Kept: the folder whose name is today's RunSpec name, then the first."""
+    by_key: dict[tuple, list[dict]] = {}
+    for r in ok:
+        by_key.setdefault((*_group_key(r), r["seed"]), []).append(r)
+    keep, dups = set(), []
+    for rs in by_key.values():
+        rs = sorted(rs, key=lambda r: (not r.get("current_name"), Path(r["run_dir"]).name))
+        keep.add(id(rs[0]))
+        dups += [{"name": Path(d["run_dir"]).name, "kept": Path(rs[0]["run_dir"]).name, "seed": d["seed"]} for d in rs[1:]]
+    return [r for r in ok if id(r) in keep], sorted(dups, key=lambda d: d["name"])
 
 
 def _by_seed(rs: list[dict], metric: str) -> dict:
@@ -142,7 +195,7 @@ def _by_seed(rs: list[dict], metric: str) -> dict:
 def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
     exp_dir = Path(exp_dir)
     runs = load_runs(exp_dir)
-    ok = [r for r in runs if r["status"] == "ok"]
+    ok, duplicates = _one_run_per_seed([r for r in runs if r["status"] == "ok"])
     groups: dict[tuple, list[dict]] = {}
     for r in ok:
         groups.setdefault(_group_key(r), []).append(r)
@@ -151,7 +204,8 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
 
     def sort_key(k):
         rs = groups[k]
-        return (scen_order.index(k[0]), rs[0]["controller"] != baseline, ctrl_order.index(k[1]), -k[2], k[3], not k[4])
+        return (scen_order.index(k[0]), k[5] is None, k[5] or 0.0, rs[0]["controller"] != baseline,
+                ctrl_order.index(k[1]), -k[2], k[3], not k[4])
 
     rows = []
     for key in sorted(groups, key=sort_key):
@@ -190,6 +244,7 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
                 "scenario_variant": first["scenario_variant"],
                 "sampling": first["sampling"],
                 "ev_preemption": first["ev_preemption"],
+                "end_time": key[5],
                 "seeds": [r["seed"] for r in rs],
                 "is_baseline": is_base,
                 "baseline_match": "self" if is_base else match,
@@ -204,8 +259,8 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
         for i, p in zip(idx, adj):
             rows[i]["p_holm"] = _round(p, 4)
 
-    meta_path = exp_dir / "experiment.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta = read_json(exp_dir / "experiment.json", {})
+    meta = meta if isinstance(meta, dict) else {}
     report = {
         "name": exp_dir.name,
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -219,14 +274,31 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
         "recovery": _recovery_table(groups),
         "emergency": _ev_table(groups),
         "perf01": _perf_table(groups),
-        "compute": _compute(runs, meta),
+        "compute": {**_compute(runs, meta), "runs_duplicate": len(duplicates)},
+        "duplicate_runs": duplicates,
         "failed_runs": [{"name": r["name"], "error": r["error"]} for r in runs if r["status"] == "failed"],
+        "incomplete_runs": [{"name": r["name"], "reason": r["error"]} for r in runs if r["status"] == "incomplete"],
         "code_revision": _first_manifest_value(exp_dir, "code_revision"),
         "sumo_version": _first_manifest_value(exp_dir, "sumo_version"),
     }
     config = _first_manifest_value(exp_dir, "config") or {}
     report["matrix"]["warmup_s"] = config.get("warmup")
     report["commands"] = [i["command"] for i in meta.get("invocations", []) if i.get("command")]
+    warnings = []
+    if len(report["matrix"]["end_time"]) > 1:
+        warnings.append(
+            f"runs end at different times ({', '.join(f'{x:g}' for x in report['matrix']['end_time'])} s); "
+            "each run end is reported and paired separately"
+        )
+    if duplicates:
+        n = len(duplicates)
+        warnings.append(
+            f"{n} run folder{'s' if n > 1 else ''} repeat{'' if n > 1 else 's'} a run that is already counted "
+            f"(same settings, run end and seed), e.g. `{duplicates[0]['name']}` repeats `{duplicates[0]['kept']}`; "
+            "each run is counted once (the folder with the current run name is kept, else the first) and the "
+            "others are listed under duplicate_runs: delete them to clear this warning"
+        )
+    report["warnings"] = warnings
     return report
 
 
@@ -261,8 +333,11 @@ def _coverage_sweep(groups: dict, rows: list[dict]) -> list[dict]:
     """Delay and estimation error by coverage, for every (scenario, controller, sampling) run at >= 2 coverages."""
     by_line: dict[tuple, list[tuple]] = {}
     for key in groups:
-        by_line.setdefault((key[0], key[1], key[3], key[4]), []).append(key)
-    delta = {(r["scenario_variant"], r["variant"], r["coverage"], r["sampling"], r["ev_preemption"]): r["delta_vs_baseline_pct"] for r in rows}
+        by_line.setdefault((key[0], key[1], key[3], key[4], key[5]), []).append(key)
+    delta = {
+        (r["scenario_variant"], r["variant"], r["coverage"], r["sampling"], bool(r["ev_preemption"]), r["end_time"]): r["delta_vs_baseline_pct"]
+        for r in rows
+    }
     out = []
     for line, keys in by_line.items():
         if len({k[2] for k in keys}) < 2:
@@ -327,7 +402,7 @@ def _security_table(groups: dict) -> list[dict]:
 
 def _twin_key(key: tuple, groups: dict) -> tuple | None:
     """The no-event counterfactual group of a disrupted group: same scenario (+ params) with
-    events=[], same controller variant, coverage, sampling and preemption."""
+    events=[], same controller variant, coverage, sampling, preemption and run end."""
     base = groups[key][0]
     want = {**(base.get("scenario_params") or {}), "events": []}
     for k, rs in groups.items():
@@ -346,24 +421,52 @@ def _read_series(run_dir: str) -> tuple[list[float], list[float]]:
     return [float(r["t"]) for r in rows], [float(r["delay_rate"]) for r in rows]
 
 
-def _vs_counterfactual(rs: list[dict], twins: list[dict]) -> list[dict]:
-    """Per seed: recovery of each disruption window against the no-event twin run."""
-    from teamb.evaluation.recovery import recovery_vs_reference
+def _vs_counterfactual(rs: list[dict], twins: list[dict]) -> tuple[list[dict], dict]:
+    """Per seed: recovery of each disruption window against the no-event twin run, and the
+    seed's total excess over the union of its windows (each second once). Windows are merged
+    into their union first (older evaluation.json files kept overlapping windows apart)."""
+    from teamb.evaluation.recovery import merge_windows, recovery_vs_reference, union_excess
 
     by_seed = {r["seed"]: r for r in twins}
-    out = []
+    out, seed_excess = [], {}
     for r in rs:
         twin = by_seed.get(r["seed"])
-        detail = Path(r["run_dir"]) / "evaluation.json"
-        if twin is None or not detail.exists():
+        detail = read_json(Path(r["run_dir"]) / "evaluation.json")
+        if twin is None or not isinstance(detail, dict):
             continue
-        windows = json.loads(detail.read_text()).get("recovery", [])
+        windows = merge_windows(detail.get("recovery") or [])
         t, v = _read_series(r["run_dir"])
         t0, v0 = _read_series(twin["run_dir"])
+        per = []
         for w in windows:
             res = recovery_vs_reference(t, v, t0, v0, start=w["start"], end=w["end"])
-            out.append({"seed": r["seed"], "what": w["what"], **res})
-    return out
+            per.append({"seed": r["seed"], "what": w["what"], **res})
+        out += per
+        if len(per) == 1:
+            seed_excess[r["seed"]] = per[0]["excess_veh_h"]
+        elif per:
+            ref = dict(zip(t0, v0))
+            matched = [(a, b) for a, b in zip(t, v) if a in ref]
+            last = matched[-1][0] if matched else None
+            spans = [(p["start"], p["recovered_at"] if p["recovered_at"] is not None else last, ref) for p in per]
+            seed_excess[r["seed"]] = union_excess([a for a, _ in matched], [b for _, b in matched], spans)
+    return out, seed_excess
+
+
+def _per_seed_recovery(per: list[dict], seed_excess: dict) -> dict:
+    """One value per seed (the windows of one run are not independent replicates): recovery =
+    the slowest window, censored if any window is; excess = the union over the run's windows."""
+    by_seed: dict = {}
+    for p in per:
+        by_seed.setdefault(p["seed"], []).append(p)
+    recovery, censored = [], 0
+    for ps in by_seed.values():
+        if any(p["censored"] for p in ps):
+            censored += 1
+        else:
+            recovery.append(max(p["recovery_s"] for p in ps))
+    return {"n": len(by_seed), "recovery_s": _stat(recovery), "censored": censored,
+            "excess_veh_h": _stat([seed_excess.get(s) for s in by_seed])}
 
 
 def _recovery_table(groups: dict) -> list[dict]:
@@ -381,14 +484,8 @@ def _recovery_table(groups: dict) -> list[dict]:
         }
         twin = _twin_key(key, groups)
         if twin is not None:
-            per = _vs_counterfactual(rs, groups[twin])
-            row["vs_no_event"] = {
-                "n": len(per),
-                "recovery_s": _stat([p["recovery_s"] for p in per]),
-                "censored": sum(p["censored"] for p in per),
-                "excess_veh_h": _stat([p["excess_veh_h"] for p in per]),
-                "per_seed": per,
-            }
+            per, seed_excess = _vs_counterfactual(rs, groups[twin])
+            row["vs_no_event"] = {**_per_seed_recovery(per, seed_excess), "per_seed": per}  # n, censored: seeds
         out.append(row)
     return out
 
@@ -408,7 +505,7 @@ def _ev_table(groups: dict) -> list[dict]:
             "ev_extra_delay_others_s": _stat([r.get("ev_extra_delay_others_s") for r in rs]),
         }
         if key[4]:  # preemption on: paired comparison with the same group without preemption, if run
-            off = groups.get((key[0], key[1], key[2], key[3], False))
+            off = groups.get((key[0], key[1], key[2], key[3], False, key[5]))
             if off:
                 ev = paired(_by_seed(off, "ev_mean_travel_time_s"), _by_seed(rs, "ev_mean_travel_time_s"))
                 oth = paired(_by_seed(off, "others_mean_delay_s"), _by_seed(rs, "others_mean_delay_s"))
@@ -430,7 +527,7 @@ def _perf_table(groups: dict) -> list[dict]:
                 "ev_preemption": key[4], "n_seeds": len(rs),
                 **{m: _stat([r.get(m) for r in rs], 2) for m in (
                     "completed", "unfinished", "unfinished_pct", "in_network_at_end", "never_inserted", "teleports",
-                    "mean_delay_s", "mean_delay_incl_unfinished_s")},
+                    "mean_delay_s", "mean_delay_incl_unfinished_s", "mean_depart_delay_s", "mean_delay_incl_depart_s")},
             }
         )
     return out
@@ -447,6 +544,7 @@ def _compute(runs: list[dict], meta: dict) -> dict:
     return {
         "runs_ok": len(ok),
         "runs_failed": sum(r["status"] == "failed" for r in runs),
+        "runs_incomplete": sum(r["status"] == "incomplete" for r in runs),
         "experiment_wall_time_s": round(sum(i.get("wall_time_s", 0) for i in meta.get("invocations", [])), 1),
         "sum_run_wall_time_s": round(run_wall, 1),
         "workers": sorted({i.get("workers") for i in meta.get("invocations", [])}),
@@ -498,9 +596,11 @@ def render_markdown(report: dict) -> str:
         f"Matrix: scenarios {', '.join(m['scenarios'])} · controllers {', '.join(m['controllers'])} · seeds {m['seeds']} · "
         f"coverage {', '.join(f'{x:g}' for x in m['coverages'])} · sampling {', '.join(m['samplings'])} · "
         f"EV preemption {', '.join('on' if x else 'off' for x in m['ev_preemption'])} · "
-        f"warm-up {m.get('warmup_s')} s · run end {', '.join(f'{x:g}' for x in m['end_time'])} s",
+        f"warm-up {m.get('warmup_s')} s · run end {', '.join(f'{x:g}' for x in m['end_time']) or 'default'} s",
         "",
     ]
+    for w in report.get("warnings") or []:
+        lines += [f"**Warning:** {w}.", ""]
     for label, params in (("Scenario parameters", m.get("scenario_params")), ("Controller parameters", m.get("controller_params"))):
         if params:
             lines += [f"{label}: " + " · ".join(f"`{k}` = `{json.dumps(v)}`" for k, v in sorted(params.items())), ""]
@@ -514,6 +614,7 @@ def render_markdown(report: dict) -> str:
         "Unfinished % must be read next to delay (PERF-01): a controller that keeps cars out of the network can look fast.",
         "",
     ]
+    several_ends = len(m["end_time"]) > 1
     for scen in m["scenarios"]:
         srows = [r for r in rows if r["scenario_variant"] == scen]
         lines += [f"## Scenario `{scen}`", ""]
@@ -522,6 +623,7 @@ def render_markdown(report: dict) -> str:
             mm = r["metrics"]
             body.append([
                 f"**{r['variant']}**" if r["is_baseline"] else r["variant"],
+                *([f"{r['end_time']:g}" if r.get("end_time") is not None else "–"] if several_ends else []),
                 f"{r['coverage']:g}", r["sampling"], "on" if r["ev_preemption"] else "off", r["n_seeds"],
                 _fmt(r["mean_delay_s"]),
                 "baseline" if r["is_baseline"] else _fmt(r["delta_vs_baseline_pct"], 1, pct=True),
@@ -531,12 +633,15 @@ def render_markdown(report: dict) -> str:
                 _fmt(mm["queue_p95_veh"]), _fmt(mm["spillback_duration_s"], 0), _fmt(r["ev_mean_travel_time_s"]),
             ])
         lines.append(_table(
-            ["controller", "cov", "sampling", "EV pre", "n", "delay s", "Δ vs base", "diff s", "p (Holm)", "p95 TT s",
-             "stops/veh", "unfinished", "arterial delay", "cross delay", "queue p95", "spillback s", "EV TT s"],
+            ["controller", *(["end s"] if several_ends else []), "cov", "sampling", "EV pre", "n", "delay s", "Δ vs base",
+             "diff s", "p (Holm)", "p95 TT s", "stops/veh", "unfinished", "arterial delay", "cross delay", "queue p95",
+             "spillback s", "EV TT s"],
             body,
         ))
         if any(r.get("baseline_match") == "scenario" for r in srows):
             lines += ["", "_Some rows are paired with a baseline run at another coverage/sampling (fixed-time ignores sensor data)._"]
+        if any(r.get("baseline_match") is None for r in srows):
+            lines += ["", "_Rows with Δ '–' have no baseline run with the same preemption setting and run end._"]
         lines.append("")
     if report["coverage_sweep"]:
         lines += ["## Coverage sweep (sampling bias)", "",
@@ -605,19 +710,24 @@ def render_markdown(report: dict) -> str:
             body,
         ))
         lines.append("")
-    lines += ["## PERF-01: completed and unfinished trips", ""]
+    lines += ["## PERF-01: completed and unfinished trips", "",
+              "Depart delay = time waiting to enter a blocked entry lane (not in the delay column, which is timeLoss). "
+              "Accrued delay incl. unfinished is a lower bound: trips still driving have only part of their delay.", ""]
     lines.append(_table(
         ["scenario", "controller", "cov", "sampling", "EV pre", "n", "completed", "unfinished", "unfinished %", "never inserted",
-         "teleports", "delay incl. unfinished s"],
+         "teleports", "depart delay s", "delay + depart delay s", "accrued delay incl. unfinished s (lower bound)"],
         [[p["scenario"], p["controller"], f"{p['coverage']:g}", p["sampling"], "on" if p["ev_preemption"] else "off", p["n_seeds"],
           _fmt(p["completed"], 0), _fmt(p["unfinished"], 0), _fmt(p["unfinished_pct"], 1), _fmt(p["never_inserted"], 0),
-          _fmt(p["teleports"], 1), _fmt(p["mean_delay_incl_unfinished_s"])] for p in report["perf01"]],
+          _fmt(p["teleports"], 1), _fmt(p.get("mean_depart_delay_s")), _fmt(p.get("mean_delay_incl_depart_s")),
+          _fmt(p["mean_delay_incl_unfinished_s"])] for p in report["perf01"]],
     ))
     lines += [
         "",
         "## Compute cost",
         "",
-        f"{c['runs_ok']} runs ok, {c['runs_failed']} failed · experiment wall time {c['experiment_wall_time_s']} s with "
+        f"{c['runs_ok']} runs ok"
+        + (f" ({c['runs_duplicate']} of them duplicates, not in the statistics)" if c.get("runs_duplicate") else "")
+        + f", {c['runs_failed']} failed, {c.get('runs_incomplete', 0)} incomplete · experiment wall time {c['experiment_wall_time_s']} s with "
         f"{c['workers']} worker(s) · sum of run wall times {c['sum_run_wall_time_s']} s · "
         f"{c['sim_speedup']}× faster than real time per run · data {c['data_bytes'] / 1e6:.1f} MB "
         f"({c['data_mb_per_run']} MB/run, {c['data_mb_per_sim_hour']} MB per simulated hour).",
@@ -628,6 +738,12 @@ def render_markdown(report: dict) -> str:
     ]
     if report["failed_runs"]:
         lines += ["## Failed runs", ""] + [f"- `{f['name']}`: {f['error']}" for f in report["failed_runs"]] + [""]
+    if report.get("duplicate_runs"):
+        lines += ["## Duplicate run folders (not in the statistics)", ""]
+        lines += [f"- `{d['name']}`: the same run as `{d['kept']}`" for d in report["duplicate_runs"]] + [""]
+    if report.get("incomplete_runs"):
+        lines += ["## Incomplete runs (not in the statistics)", ""]
+        lines += [f"- `{f['name']}`: {f['reason']}" for f in report["incomplete_runs"]] + [""]
     lines += [
         "## Caveats",
         "",
@@ -646,6 +762,6 @@ def write_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
     runs = load_runs(exp_dir)
     write_summary_csv(runs, exp_dir / "summary.csv")
     report = build_report(exp_dir, baseline)
-    (exp_dir / "report.json").write_text(json.dumps(report, indent=2, default=str))
-    (exp_dir / "report.md").write_text(render_markdown(report))
+    atomic_write_json(exp_dir / "report.json", report, default=str)
+    atomic_write_text(exp_dir / "report.md", render_markdown(report))
     return report
