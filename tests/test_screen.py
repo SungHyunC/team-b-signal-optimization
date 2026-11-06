@@ -10,7 +10,8 @@ from teamb.experiments.screen import render_markdown, screen
 END = 2400.0
 
 
-def _write(exp, controller, seed, params=None, *, scenario="rush_hour", status="ok", folder=None, **metrics):
+def _write(exp, controller, seed, params=None, *, scenario="rush_hour", status="ok", folder=None,
+           error="RuntimeError: controller crashed", **metrics):
     """One run folder. status "failed" writes error.json (no summary), "incomplete" a summary
     marked complete: false; `folder` overrides the directory name (e.g. a legacy name)."""
     spec = RunSpec(scenario, controller, seed, 1.0, end_time=END, controller_params=params or {})
@@ -18,7 +19,7 @@ def _write(exp, controller, seed, params=None, *, scenario="rush_hour", status="
     d.mkdir(parents=True)
     (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": spec.name, "variant": spec.variant}))
     if status == "failed":
-        (d / "error.json").write_text(json.dumps({"error": "RuntimeError: controller crashed"}))
+        (d / "error.json").write_text(json.dumps({"error": error}))
         return spec.variant
     summary = {"complete": status != "incomplete", "end_time": END, "sim_time_s": END, "controller_errors": 0,
                "fallback_steps": 0, "rejected_actions": 0, "unfinished_pct": 2.0, "completed": 1000, **metrics}
@@ -99,6 +100,16 @@ def test_candidate_runs_that_crashed_fail_the_screen(tmp_path):
     assert all(r["status"] == "failed" and "crashed" in r["error"] for r in safety["failed_runs"])
     md = render_markdown(result)
     assert "Failed / incomplete candidate runs" in md and "controller crashed" in md
+
+
+def test_a_multi_line_run_error_stays_on_its_list_line(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed)
+    _write(exp, "max_pressure", 6, {"rho": 0.25}, status="failed", error="FatalTraCIError: connection closed\n  by SUMO")
+    _write(exp, "max_pressure", 6, mean_delay_s=30.0)
+    md = render_markdown(screen(exp, "max_pressure", cand))
+    assert "failed: FatalTraCIError: connection closed by SUMO" in md
 
 
 def test_an_incomplete_candidate_run_fails_the_screen(tmp_path):

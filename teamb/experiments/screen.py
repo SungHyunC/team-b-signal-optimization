@@ -211,7 +211,8 @@ def render_markdown(result: dict) -> str:
     for c in result["conditions"]:
         safety = c["guards"]["safety"]
         where = f"{c['scenario']} (cov {c['coverage']:g}, end {_num(c['end_time'], 0)})"
-        problems += [f"- {where}: `{r['name']}` {r['status']}: {r['error'] or 'no reason recorded'}" for r in safety["failed_runs"]]
+        problems += [f"- {where}: `{r['name']}` {r['status']}: {' '.join(str(r['error'] or 'no reason recorded').split())}"
+                     for r in safety["failed_runs"]]  # one line per run, whatever the error text holds
         if safety["missing_seeds"]:
             problems.append(f"- {where}: no candidate run for seed(s) {', '.join(str(x) for x in safety['missing_seeds'])} "
                             "that the baseline finished")
