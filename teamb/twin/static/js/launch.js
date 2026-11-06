@@ -40,11 +40,30 @@ export function sameValue(a, b) {
   return ka.length === kb.length && kb.every((k) => Object.prototype.hasOwnProperty.call(a, k) && sameValue(a[k], b[k]));
 }
 
+/** Settings that a link naming a scenario resets to the scenario's own when it leaves them out
+ *  (TopBar.setForm does the same, so that is the run it would start), instead of not caring. */
+const SCENARIO_OWN = ['coverage', 'end_time', 'scenario_params'];
+
+/** The value of setting `k` that configDiffers compares. Unset means the scenario's own: coverage
+ *  null is its design coverage, end_time null its duration, and scenario_params {} demand 1.
+ *  Only demand_scale is compared in scenario_params: it is the one a URL can name (and the only
+ *  one the hosted twin accepts), so the language switch still attaches to a scripted run. */
+function runValue(cfg, k, meta) {
+  if (k === 'coverage') return cfg.coverage ?? scenarioDefaultCoverage(meta, cfg.scenario);
+  if (k === 'end_time') return cfg.end_time ?? null;
+  if (k === 'scenario_params') return cfg.scenario_params?.demand_scale ?? 1;
+  return cfg[k];
+}
+
 /** True when the URL settings `want` ask for another run than `config` (the running session's
- *  config from /api/state). Speed and start time never force a restart. */
-export function configDiffers(want, config) {
+ *  config from /api/state). Speed and start time never force a restart. A `want` that names a
+ *  scenario describes the whole run (a sandbox launch, a deep link): a coverage, end time or
+ *  demand it leaves out means the scenario's own. Without a scenario only the keys it names
+ *  count. `meta` (/api/meta) supplies the scenarios' design coverage. */
+export function configDiffers(want, config, meta = null) {
   if (!config) return false;
-  return Object.entries(want).some(([k, v]) => k !== 'speed' && k !== 'start_at' && !sameValue(config[k], v));
+  const keys = new Set([...Object.keys(want), ...(want.scenario ? SCENARIO_OWN : [])]);
+  return [...keys].some((k) => k !== 'speed' && k !== 'start_at' && !sameValue(runValue(config, k, meta), runValue(want, k, meta)));
 }
 
 /** The scenario's design coverage (e.g. 0.25 for fake_data_attack), or 1 when it has none. */

@@ -161,7 +161,7 @@ async function boot() {
     if (params.get('autostart') === '0') return;
     let want = urlConfig(params);
     if (STATIC && !want.scenario) want = { ...meta.demo.default, ...want }; // the demo opens on its best moment
-    if (['idle', 'error', 'finished'].includes(s.state) || configDiffers(want, s.config)) {
+    if (['idle', 'error', 'finished'].includes(s.state) || configDiffers(want, s.config, meta)) {
       if (Object.keys(want).length) ctx.topbar.setForm(want);
       ctx.topbar.start(want);
     } else if (want.speed != null && String(want.speed) !== String(s.speed)) ctx.topbar.setSpeed(want.speed);
