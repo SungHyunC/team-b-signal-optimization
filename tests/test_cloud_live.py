@@ -102,3 +102,27 @@ def test_vendor_file_guard_unit(tmp_path):
     assert vendor_file("build/three.module.js", tmp_path) == (tmp_path / "build" / "three.module.js").resolve()
     for bad in ("/etc/passwd", "../server.py", "build/../../x.js", "a b.js", "", ".hidden/../../x", "build\\x.js"):
         assert vendor_file(bad, tmp_path) is None, bad
+
+
+# --- non-ASCII passwords and cookies (twin-security-4, ext-155) ---------------------------
+def test_non_ascii_secret_password_and_cookie(monkeypatch):
+    monkeypatch.setenv("TWIN_ACCESS_TOKEN", "비밀번호-long-secret")
+    assert access.valid_password("비밀번호-long-secret") is True
+    assert access.valid_password("ä") is False
+    assert access.authenticated("ä") is False
+    assert access.authenticated(access.expected_cookie("비밀번호-long-secret")) is True
+    client = TestClient(create_app(), base_url="https://testserver")
+    assert client.post("/login", data={"password": "é"}, follow_redirects=False).status_code == 401
+    good = client.post("/login", data={"password": "비밀번호-long-secret"}, follow_redirects=False)
+    assert good.status_code == 303 and good.cookies.get(access.COOKIE)
+    # A raw non-ASCII cookie (Starlette decodes cookies as latin-1) is just "not logged in".
+    fresh = TestClient(create_app(), base_url="https://testserver")
+    raw = [(b"cookie", f"{access.COOKIE}=é".encode("utf-8"))]
+    r = fresh.get("/api/state", headers=raw)
+    assert r.status_code == 401
+
+
+def test_ascii_secret_rejects_non_ascii_password(monkeypatch):
+    monkeypatch.setenv("TWIN_ACCESS_TOKEN", "test-only-long-secret")
+    client = TestClient(create_app(), base_url="https://testserver")
+    assert client.post("/login", data={"password": "pässword"}, follow_redirects=False).status_code == 401
