@@ -11,7 +11,7 @@
 
 Three scenarios (`rush_hour`, `emergency`, `road_closure`), two controllers (`fixed_time`, `max_pressure`), and thirty paired seeds (1–30) per demand level. The nominal 100% experiment (180 runs) and 75%/125% experiments (180 each) yielded **540/540 full-matrix valid runs**, zero failures. The additional 12-run low/high pilot passed, bringing the total to 552 completed pilot + full-matrix runs, excluding smoke tests.
 
-Both sensitivity matrices passed the strict per-run provenance audit. The read-only diagnostic found **no within-pair code revision, SUMO version, network hash, seed, or demand hash mismatches**. GitHub job logs identify SUMO **1.28.0** for both nominal and sensitivity workflows. Nominal and sensitivity experiments have different commit SHAs; compare within-condition controller pairs, and treat across-experiment trends as descriptive rather than formal tests of interaction. The dependency spec allows future SUMO updates, so version pinning is desirable for further comparisons.
+Both sensitivity matrices passed the strict per-run provenance audit. The read-only diagnostic found **no within-pair code revision, SUMO version, network hash, seed, or demand hash mismatches**. GitHub job logs identify SUMO **1.28.0** for both nominal and sensitivity workflows. Nominal and sensitivity experiments have different commit SHAs; compare within-condition controller pairs, and treat across-experiment trends as descriptive rather than formal tests of interaction. The dependency spec allowed future SUMO updates at the time, so version pinning was desirable for further comparisons; SUMO, traci and sumolib are now pinned to 1.28.0 in `pyproject.toml` and `requirements.txt`.
 
 ## Primary outcome — mean delay
 

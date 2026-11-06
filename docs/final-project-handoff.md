@@ -23,7 +23,7 @@ These commands work around machines that have Python 3.11 installed with the `py
 ```powershell
 git clone https://github.com/SungHyunC/team-b-signal-optimization.git
 cd team-b-signal-optimization
-py -3.11 -m pip install -r requirements.txt
+py -3.11 -m pip install -e ".[dev]"   # teamb, SUMO 1.28.0 and the test tools
 # Make SUMO command-line executables visible for this PowerShell session if necessary:
 $env:Path += ";$env:LOCALAPPDATA\Programs\Python\Python311\Scripts"
 py -3.11 -m pytest tests/test_sandbox.py tests/test_sandbox_http.py -q
@@ -34,7 +34,7 @@ Open `http://127.0.0.1:8000/static/sandbox.html` **on the same computer**. In th
 
 ### Automated short SUMO smoke (known working)
 
-The CI covers: page and JS routes, JSON-to-experiment contract, JS syntax, strict-valid 1-run SUMO simulation, zero controller errors, zero fallbacks and zero rejected actions. [Release smoke CI](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41973492051) passed all steps before merge.
+The CI covers: page and JS routes, JSON-to-experiment contract, JS syntax, strict-valid 1-run SUMO simulation, zero controller errors, zero fallbacks and zero rejected actions. [Release smoke CI](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41973492051) passed all steps before merge. Since then the same smoke run, the whole test suite and the Docker image checks run in [CI](../.github/workflows/ci.yml) on every pull request and push to `main`.
 
 ## Research findings (synthetic network only)
 
