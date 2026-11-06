@@ -15,7 +15,7 @@ Each run executes the same :func:`teamb.experiments.runner.run_one` as a local r
 Linux container built from this checkout (same code, same pinned SUMO/traci versions as the
 local environment). The run folder comes back as a ``.tar.gz`` and is unpacked into
 ``results/experiments/<name>/runs/``, so ``report``, ``--strict-validation`` and resume work
-exactly as for local runs. Runs that already have a ``summary.json`` are skipped unless
+exactly as for local runs: complete runs of exactly the requested spec are skipped unless
 ``--force``.
 
 Keep every run of one paired comparison on the same backend: SUMO's Linux and macOS builds
@@ -28,7 +28,6 @@ and does the Q-learning updates locally.
 from __future__ import annotations
 
 import io
-import json
 import os
 import shutil
 import sys
@@ -147,11 +146,14 @@ def run_specs(specs, runs_dir: Path, *, workers: int, force: bool = False, git_r
     """Yield one result dict per spec (same shape as ``runner.run_one``), running the missing ones on Modal."""
     _require_modal()
     runs_dir = Path(runs_dir)
+    from teamb.experiments.runner import check_resume
+
     todo = []
     for spec in specs:
-        summary = runs_dir / spec.name / "summary.json"
-        if summary.exists() and not force:
-            yield {"run": spec.name, "status": "skipped", "summary": json.loads(summary.read_text())}
+        # same resume rules as local runs: only complete runs of exactly this spec are reused
+        done = None if force else check_resume(spec, runs_dir)
+        if done is not None:
+            yield done
         else:
             todo.append(spec)
     if not todo:
