@@ -4,6 +4,7 @@
 - Documented `teamb exp run` / `python -m teamb.experiments run` commands still pass --dry-run
   (put `<!-- docs-check: skip -->` on the line before a fenced block that must not be checked,
   e.g. a command that needs another branch).
+- The cloud deployment guide documents every TWIN_* switch and matches render.yaml.
 """
 from __future__ import annotations
 
@@ -140,3 +141,22 @@ def test_documented_experiment_command_dry_runs(where, cmd):
     except SystemExit as exc:  # argparse errors and explicit exits
         code = exc.code
     assert code in (0, None), f"{where}\n{out.getvalue()[-2000:]}"
+
+
+def test_twin_environment_switches_are_documented():
+    guide = (DOCS / "cloud-live-sumo-deployment.md").read_text(encoding="utf-8")
+    names = set()
+    for py in (ROOT / "teamb" / "twin").glob("*.py"):
+        names |= set(re.findall(r"""(?:getenv|environ\.get|environ\[)\(?\s*["'](TWIN_[A-Z0-9_]+)""", py.read_text(encoding="utf-8")))
+    assert {"TWIN_ACCESS_TOKEN", "TWIN_COOKIE_INSECURE"} <= names
+    missing = sorted(n for n in names if n not in guide)
+    assert not missing, f"document these in docs/cloud-live-sumo-deployment.md: {missing}"
+
+
+def test_deployment_guide_matches_render_blueprint():
+    yaml = pytest.importorskip("yaml")
+    guide = (DOCS / "cloud-live-sumo-deployment.md").read_text(encoding="utf-8")
+    (svc,) = yaml.safe_load((ROOT / "render.yaml").read_text(encoding="utf-8"))["services"]
+    assert "not yet hosted" not in guide.lower()
+    assert f"`{svc['name']}`" in guide, "say which service render.yaml creates"
+    assert f"**{svc['plan'].capitalize()}**" in guide, "name render.yaml's plan in the guide"
