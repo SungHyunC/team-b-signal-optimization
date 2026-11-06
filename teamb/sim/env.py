@@ -102,6 +102,7 @@ class SimEnv:
         output_dir: str | Path | None = None,
         frames: bool = False,
         fallback: str = "fixed_time",
+        traci_backend: str | None = None,
     ):
         self.scenario = get_scenario(scenario, **(scenario_params or {})) if isinstance(scenario, str) else scenario
         self.controller = (
@@ -117,6 +118,8 @@ class SimEnv:
         self.step_length = float(step_length)
         self.end_time = float(end_time if end_time is not None else self.scenario.duration)
         self.frames = frames
+        self._requested_backend = backend.requested(traci_backend)  # None: $TEAMB_TRACI_BACKEND (default traci)
+        self.traci_backend: str | None = None  # the backend start() actually used: 'traci' or 'libsumo'
         self.run_id = (
             f"{self.scenario.name}__{self.controller.name}__s{self.seed}__c{round(self.coverage * 100)}__{self.sampling}__{uuid.uuid4().hex[:6]}"
         )
@@ -167,7 +170,7 @@ class SimEnv:
             "--tripinfo-output", str(self.tripinfo_path),
             "--tripinfo-output.write-unfinished", "true",
         ]
-        self.conn, self._sumo_version = backend.start(cmd, self.label)
+        self.conn, self._sumo_version, self.traci_backend = backend.start(cmd, self.label, self._requested_backend)
         try:  # anything failing from here on (sampling spec, RL model, scenario) must not leak SUMO
             self.supervisor = SafetySupervisor(list(self.topology.tls_ids))
             # a fresh feed per run (shared by sensors and metrics); closures come from the runtime
@@ -509,6 +512,7 @@ class SimEnv:
             "created_unix": round(time.time()),
             "code_revision": _git_revision(),
             "sumo_version": self._sumo_version,
+            "traci_backend": self.traci_backend,
             "network_hash": network_hash(self._net_paths.net),
             "demand_hash": file_hash(self.routes_path),
             "seed": self.seed,

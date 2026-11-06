@@ -22,9 +22,9 @@ def started(monkeypatch):
     original = backend.start
 
     def recording(cmd, label, *args, **kwargs):
-        conn, version = original(cmd, label, *args, **kwargs)
+        conn, version, used = original(cmd, label, *args, **kwargs)
         conns.append(conn)
-        return conn, version
+        return conn, version, used
 
     monkeypatch.setattr(backend, "start", recording)
     return conns
