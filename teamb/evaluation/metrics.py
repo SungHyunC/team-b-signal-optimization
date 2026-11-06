@@ -35,7 +35,7 @@ from pathlib import Path
 import traci
 
 from teamb.evaluation.estimation import headline, summarize_estimation
-from teamb.evaluation.recovery import event_windows, recovery_time
+from teamb.evaluation.recovery import event_windows, recovery_time, union_excess
 from teamb.evaluation.spillback import SpillbackMonitor
 from teamb.network.build import edge_kind
 from teamb.sensors.feed import HALT_SPEED, get_feed, lane_edge, origin_group
@@ -419,19 +419,30 @@ class MetricsCollector:
         return list(events) if events is not None else list(self.feed.events)
 
     def _recovery(self, events: list[dict] | None) -> dict:
+        """Recovery per disruption. event_windows merges overlapping windows into one disruption;
+        with several disruptions the headline excess is their union (recovery.union_excess), so
+        a disruption that has not recovered when the next one starts is not counted twice."""
         windows = event_windows(self._events(events), self.end_time)
         times = [row[0] for row in self.timeseries]
         rates = [row[5] for row in self.timeseries]
         detail = []
         for w in windows:
             res = recovery_time(times, rates, start=w["start"], end=w["end"])
-            detail.append({"kind": w["kind"], "what": w["what"], **res})
+            item = {"kind": w["kind"], "what": w["what"], **res}
+            if len(w.get("parts") or []) > 1:
+                item["parts"] = w["parts"]
+            detail.append(item)
         recovered = [d["recovery_s"] for d in detail if d["recovery_s"] is not None]
+        if len(detail) > 1 and times:
+            spans = [(d["start"], d["recovered_at"] if d["recovered_at"] is not None else times[-1], d["pre_level"]) for d in detail]
+            excess = union_excess(times, rates, spans) or 0.0
+        else:
+            excess = sum(d["excess_veh_h"] or 0.0 for d in detail)
         headline = {
             "disruptions": len(detail),
             "recovery_time_s": max(recovered) if recovered else None,
             "recovery_censored": any(d["censored"] for d in detail) if detail else None,
-            "excess_delay_veh_h": _r(sum(d["excess_veh_h"] or 0.0 for d in detail), 3) if detail else None,
+            "excess_delay_veh_h": _r(excess, 3) if detail else None,
         }
         return {"headline": headline, "detail": detail}
 

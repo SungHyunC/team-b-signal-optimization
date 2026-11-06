@@ -3,6 +3,8 @@ counterfactual twins (ext-79, ext-83, evaluation-2, evaluation-8, evaluation-12)
 from __future__ import annotations
 
 import json
+
+import pytest
 from dataclasses import asdict
 
 from teamb.experiments.analysis import build_report, load_runs, render_markdown
@@ -91,3 +93,29 @@ def test_counterfactual_twin_must_have_the_same_run_end(tmp_path):
                                    scenario_params={"events": []}), 60.0)
     rec = build_report(tmp_path)["recovery"]
     assert "vs_no_event" in rec[0]
+
+
+def _series(d, rates):
+    with open(d / "timeseries.csv", "w") as fh:
+        fh.write("t,delay_rate\n")
+        for t, r in rates:
+            fh.write(f"{t},{r}\n")
+
+
+def test_vs_no_event_counts_seeds_not_windows(tmp_path):
+    times = [float(t) for t in range(1, 4500, 5)]
+    for seed in (1, 2):
+        run = make_run(tmp_path, RunSpec("earthquake", "fixed_time", seed, 1.0, end_time=4500.0), 200.0, disruptions=2)
+        # an older evaluation.json: two overlapping windows kept apart
+        (run / "evaluation.json").write_text(json.dumps({"recovery": [
+            {"kind": "closure", "what": "J1_N1+N1_J1", "start": 1200.0, "end": 3600.0},
+            {"kind": "closure", "what": "J3_J4+J4_J3", "start": 1200.0, "end": 3000.0},
+        ]}))
+        _series(run, [(t, 30.0 if 1200 <= t < 3600 else 10.0) for t in times])
+        twin = make_run(tmp_path, RunSpec("earthquake", "fixed_time", seed, 1.0, end_time=4500.0,
+                                          scenario_params={"events": []}), 80.0)
+        _series(twin, [(t, 10.0) for t in times])
+    rec = build_report(tmp_path)["recovery"][0]["vs_no_event"]
+    assert rec["n"] == 2 and rec["censored"] == 0
+    assert rec["excess_veh_h"]["mean"] == pytest.approx(20 * 2400 / 3600, rel=0.01)  # once, not twice
+    assert len(rec["per_seed"]) == 2

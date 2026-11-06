@@ -380,24 +380,52 @@ def _read_series(run_dir: str) -> tuple[list[float], list[float]]:
     return [float(r["t"]) for r in rows], [float(r["delay_rate"]) for r in rows]
 
 
-def _vs_counterfactual(rs: list[dict], twins: list[dict]) -> list[dict]:
-    """Per seed: recovery of each disruption window against the no-event twin run."""
-    from teamb.evaluation.recovery import recovery_vs_reference
+def _vs_counterfactual(rs: list[dict], twins: list[dict]) -> tuple[list[dict], dict]:
+    """Per seed: recovery of each disruption window against the no-event twin run, and the
+    seed's total excess over the union of its windows (each second once). Windows are merged
+    into their union first (older evaluation.json files kept overlapping windows apart)."""
+    from teamb.evaluation.recovery import merge_windows, recovery_vs_reference, union_excess
 
     by_seed = {r["seed"]: r for r in twins}
-    out = []
+    out, seed_excess = [], {}
     for r in rs:
         twin = by_seed.get(r["seed"])
-        detail = Path(r["run_dir"]) / "evaluation.json"
-        if twin is None or not detail.exists():
+        detail = read_json(Path(r["run_dir"]) / "evaluation.json")
+        if twin is None or not isinstance(detail, dict):
             continue
-        windows = json.loads(detail.read_text()).get("recovery", [])
+        windows = merge_windows(detail.get("recovery") or [])
         t, v = _read_series(r["run_dir"])
         t0, v0 = _read_series(twin["run_dir"])
+        per = []
         for w in windows:
             res = recovery_vs_reference(t, v, t0, v0, start=w["start"], end=w["end"])
-            out.append({"seed": r["seed"], "what": w["what"], **res})
-    return out
+            per.append({"seed": r["seed"], "what": w["what"], **res})
+        out += per
+        if len(per) == 1:
+            seed_excess[r["seed"]] = per[0]["excess_veh_h"]
+        elif per:
+            ref = dict(zip(t0, v0))
+            matched = [(a, b) for a, b in zip(t, v) if a in ref]
+            last = matched[-1][0] if matched else None
+            spans = [(p["start"], p["recovered_at"] if p["recovered_at"] is not None else last, ref) for p in per]
+            seed_excess[r["seed"]] = union_excess([a for a, _ in matched], [b for _, b in matched], spans)
+    return out, seed_excess
+
+
+def _per_seed_recovery(per: list[dict], seed_excess: dict) -> dict:
+    """One value per seed (the windows of one run are not independent replicates): recovery =
+    the slowest window, censored if any window is; excess = the union over the run's windows."""
+    by_seed: dict = {}
+    for p in per:
+        by_seed.setdefault(p["seed"], []).append(p)
+    recovery, censored = [], 0
+    for ps in by_seed.values():
+        if any(p["censored"] for p in ps):
+            censored += 1
+        else:
+            recovery.append(max(p["recovery_s"] for p in ps))
+    return {"n": len(by_seed), "recovery_s": _stat(recovery), "censored": censored,
+            "excess_veh_h": _stat([seed_excess.get(s) for s in by_seed])}
 
 
 def _recovery_table(groups: dict) -> list[dict]:
@@ -415,14 +443,8 @@ def _recovery_table(groups: dict) -> list[dict]:
         }
         twin = _twin_key(key, groups)
         if twin is not None:
-            per = _vs_counterfactual(rs, groups[twin])
-            row["vs_no_event"] = {
-                "n": len(per),
-                "recovery_s": _stat([p["recovery_s"] for p in per]),
-                "censored": sum(p["censored"] for p in per),
-                "excess_veh_h": _stat([p["excess_veh_h"] for p in per]),
-                "per_seed": per,
-            }
+            per, seed_excess = _vs_counterfactual(rs, groups[twin])
+            row["vs_no_event"] = {**_per_seed_recovery(per, seed_excess), "per_seed": per}  # n, censored: seeds
         out.append(row)
     return out
 
