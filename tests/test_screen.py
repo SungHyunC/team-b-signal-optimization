@@ -152,3 +152,50 @@ def test_a_condition_with_too_few_paired_seeds_fails_instead_of_disappearing(tmp
     emergency = next(c for c in result["conditions"] if c["scenario"] == "emergency")
     assert emergency["pass"] is False and emergency["guards"]["seeds"] == {"pass": False, "n": 1, "min": 2}
     render_markdown(result)
+
+
+EV_BASE = {"ev_count": 1, "ev_mean_travel_time_s": 120.0, "ev_unfinished": 0}
+
+
+def test_a_stranded_emergency_vehicle_fails_the_emergency_guard(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):  # two EVs; the candidate strands one, so the other's faster time is the mean
+        cand = _pair(exp, seed, scenario="emergency", base_metrics={**EV_BASE, "ev_count": 2},
+                     cand_metrics={"ev_count": 2, "ev_mean_travel_time_s": 100.0, "ev_unfinished": 1})
+    result = screen(exp, "max_pressure", cand)
+    guard = result["conditions"][0]["guards"]["emergency"]
+    assert guard["pass"] is False and guard["more_unfinished_seeds"] == [1, 2, 3, 4, 5]
+    assert result["verdict"] == "FAIL"
+    assert result["conditions"][0]["metrics"]["ev_unfinished"]["diff"] == 1.0
+
+
+def test_no_emergency_vehicle_arriving_fails_instead_of_dropping_the_seed(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        stranded = seed == 2
+        cand = _pair(exp, seed, scenario="emergency", base_metrics=EV_BASE,
+                     cand_metrics={"ev_count": 1, "ev_mean_travel_time_s": None if stranded else 118.0,
+                                   "ev_unfinished": 1 if stranded else 0})
+    guard = screen(exp, "max_pressure", cand)["conditions"][0]["guards"]["emergency"]
+    assert guard["pass"] is False and guard["no_ev_arrived_seeds"] == [2]
+
+
+def test_every_emergency_vehicle_stranded_still_runs_the_guard(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed, scenario="emergency", base_metrics=EV_BASE,
+                     cand_metrics={"ev_count": 1, "ev_mean_travel_time_s": None, "ev_unfinished": 1})
+    result = screen(exp, "max_pressure", cand)
+    assert result["conditions"][0]["guards"]["emergency"]["pass"] is False
+    assert result["verdict"] == "FAIL"
+    assert "| – | 1.00 |" in render_markdown(result)  # no arrived EV to time; one more EV not arrived
+
+
+def test_faster_emergency_vehicles_that_all_arrive_pass(tmp_path):
+    exp = tmp_path / "exp"
+    for seed in range(1, 6):
+        cand = _pair(exp, seed, scenario="emergency", base_metrics=EV_BASE,
+                     cand_metrics={"ev_count": 1, "ev_mean_travel_time_s": 110.0 + seed, "ev_unfinished": 0})
+    result = screen(exp, "max_pressure", cand)
+    assert result["conditions"][0]["guards"]["emergency"]["pass"] is True
+    assert result["verdict"] == "PASS"
