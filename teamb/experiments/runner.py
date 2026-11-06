@@ -14,10 +14,13 @@ run's results. A finished run of exactly the requested spec in a folder with the
 (no ``__e<end>``, coverage rounded to a whole percent) is renamed to today's name and reused. A failed or interrupted run (including Ctrl-C) leaves ``error.json`` and no
 ``summary.json``, so the next invocation runs it again.
 
-Runs execute in parallel worker processes (``workers``); each worker starts its own SUMO.
+Runs execute in parallel worker processes (``workers``); each worker starts its own SUMO. Only
+the runs that are executing are handed to the process pool, so Ctrl-C starts nothing new, and a
+worker that dies costs one retry of the runs it took down, not the rest of the matrix.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
@@ -27,7 +30,9 @@ import shutil
 import sys
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from collections import deque
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
@@ -496,6 +501,106 @@ def _progress_line(i: int, n: int, res: dict) -> str:
     return f"[{i}/{n}] {res['run']}: delay {delay} s/veh, unfinished {s.get('unfinished_pct')} %, {tag}"
 
 
+INTERRUPT_GRACE_S = 5.0  # after Ctrl-C: time the runs in flight get to stop on their own before their workers are killed
+
+
+def _mark_failed(run_dir: Path, error: str, *, interrupted: bool) -> None:
+    """Leave the marker run_one leaves for a failed run (error.json, no summary.json) for a run
+    whose worker process died or was stopped before run_one could write it."""
+    if not run_dir.is_dir():
+        return
+    with contextlib.suppress(OSError):
+        (run_dir / "summary.json").unlink(missing_ok=True)
+        atomic_write_json(run_dir / "error.json", {"error": error, "interrupted": interrupted})
+
+
+def _stop_runs(pool: ProcessPoolExecutor, running: dict, runs_dir: Path, report) -> None:
+    """After Ctrl-C: give the runs in flight INTERRUPT_GRACE_S to stop (a Ctrl-C in the terminal
+    reaches the workers too, and run_one then writes error.json), report the runs that finished
+    meanwhile, then kill the workers that are still busy and mark their runs interrupted.
+    A second Ctrl-C skips the wait."""
+    procs = list((getattr(pool, "_processes", None) or {}).values())
+    try:
+        done, not_done = wait(running, timeout=INTERRUPT_GRACE_S)
+    except KeyboardInterrupt:
+        done, not_done = {f for f in running if f.done()}, {f for f in running if not f.done()}
+    for fut in done:
+        if not fut.cancelled() and fut.exception() is None:
+            report(fut.result())
+    if not not_done:
+        return
+    for proc in procs:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+    for proc in procs:
+        with contextlib.suppress(Exception):
+            proc.join(timeout=5)
+    for fut in not_done:
+        _mark_failed(runs_dir / running[fut].name, "KeyboardInterrupt (worker stopped)", interrupted=True)
+
+
+def _run_pool(specs: list[RunSpec], runs_dir: Path, workers: int, force: bool, report) -> None:
+    """Run `specs` in `workers` spawned worker processes and report() each result.
+
+    At most `workers` runs are handed to the pool at a time, so every submitted run is executing:
+    after Ctrl-C (or any other exception) nothing new starts, and the runs in flight are stopped
+    (see :func:`_stop_runs`). A worker that dies (a SUMO crash, an OOM kill) breaks the whole
+    pool: every run in flight fails with BrokenProcessPool, whichever of them killed it. Those
+    runs are retried in a new pool one at a time, so a second death is pinned on its own run:
+    that run is reported failed (each run is retried once), and every other run goes on."""
+    ctx = multiprocessing.get_context("spawn")
+    todo: deque[RunSpec] = deque(specs)
+    retry: deque[RunSpec] = deque()  # in flight when a worker died: re-run alone
+    losses: dict[str, int] = {}
+    while todo or retry:
+        pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+        running: dict[Future, RunSpec] = {}
+        interrupted = False
+        try:
+            broken = False
+            while (todo or retry or running) and not broken:
+                queue, limit = (retry, 1) if retry else (todo, workers)
+                while queue and len(running) < limit:
+                    spec = queue.popleft()
+                    try:
+                        running[pool.submit(run_one, asdict(spec), str(runs_dir), force)] = spec
+                    except BrokenProcessPool:  # a worker died while the pool was being filled
+                        queue.appendleft(spec)
+                        broken = True
+                        break
+                done, _ = wait(running, return_when=ALL_COMPLETED if broken else FIRST_COMPLETED)
+                lost: list[tuple[RunSpec, BaseException]] = []
+                while done:
+                    for fut in done:
+                        spec = running.pop(fut)
+                        try:
+                            res = fut.result()
+                        except BrokenProcessPool as exc:
+                            lost.append((spec, exc))
+                            continue
+                        except Exception as exc:  # the result could not be sent back (e.g. not picklable)
+                            res = {"run": spec.name, "status": "failed", "error": f"worker: {type(exc).__name__}: {exc}"}
+                        report(res)
+                    # a broken pool fails every run in flight: settle them all before starting a new pool
+                    done = wait(running)[0] if lost and running else set()
+                if lost:
+                    broken = True
+                for spec, exc in lost:
+                    losses[spec.name] = losses.get(spec.name, 0) + 1
+                    if losses[spec.name] < 2:
+                        retry.append(spec)
+                        continue
+                    error = f"worker: {type(exc).__name__}: {exc} (it died again while running only this run)"
+                    _mark_failed(Path(runs_dir) / spec.name, error, interrupted=False)
+                    report({"run": spec.name, "status": "failed", "error": error})
+        except BaseException:
+            interrupted = True
+            _stop_runs(pool, running, Path(runs_dir), report)
+            raise
+        finally:
+            pool.shutdown(wait=not interrupted, cancel_futures=True)
+
+
 MODAL_DEFAULT_WORKERS = 2  # cloud containers when --workers is not given (unchanged)
 
 
@@ -521,9 +626,11 @@ def run_matrix(
 
     backend="local" uses worker processes on this machine; backend="modal" runs each spec in
     its own Modal cloud container (see teamb/experiments/cloud.py) with ``workers`` containers.
-    workers=None picks :func:`default_workers`. A worker process that dies (BrokenProcessPool)
-    turns its runs into failed runs instead of aborting the matrix, and the invocation record is
-    appended to experiment.json even when the matrix is interrupted.
+    workers=None picks :func:`default_workers`. Locally (see :func:`_run_pool`) a worker process
+    that dies costs one retry of the runs it took down; only a run that kills its worker again,
+    running alone, fails, and the rest of the matrix goes on. The invocation record is appended
+    to experiment.json even when the matrix is interrupted; "not_run" then counts the runs that
+    did not finish in this invocation (never started, or interrupted).
     """
     collisions = name_collisions(specs)
     if collisions:  # two workers must never write into one run directory
@@ -560,15 +667,7 @@ def run_matrix(
             for spec in specs:
                 report(run_one(asdict(spec), str(runs_dir), force))
         else:
-            ctx = multiprocessing.get_context("spawn")
-            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-                futures = {pool.submit(run_one, asdict(spec), str(runs_dir), force): spec for spec in specs}
-                for fut in as_completed(futures):
-                    try:
-                        res = fut.result()
-                    except Exception as exc:  # the worker process died (BrokenProcessPool) or the result was lost
-                        res = {"run": futures[fut].name, "status": "failed", "error": f"worker: {type(exc).__name__}: {exc}"}
-                    report(res)
+            _run_pool(specs, runs_dir, workers, force, report)
     except BaseException:
         interrupted = True
         raise
