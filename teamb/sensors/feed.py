@@ -24,6 +24,8 @@ on request, at most once per step (``snapshot_at``)
     * all vehicles: position on the lane (m) and SUMO time loss (s). Taken by a one-shot
       context subscription (subscribe, read, unsubscribe = 2 round trips). The metrics
       ask for it every 5 s.
+on request (``vehicle_values``)
+    * any vehicle variables, the same way; SimEnv.frame() uses it for drawing.
 
 Who uses it
 -----------
@@ -260,6 +262,17 @@ class TrafficFeed:
         c.junction.unsubscribeContext(self._snap_ego, tc.CMD_GET_VEHICLE_VARIABLE, self._snap_radius)
         self.snapshot_t = t
         return self.snapshot
+
+    def vehicle_values(self, variables) -> dict[str, dict]:
+        """{vehicle id: {variable: value}} for every vehicle on the network now.
+
+        One-shot context subscription like `snapshot_at` (2 round trips, decoded once), for
+        callers that need values only now and then, e.g. the twin's frames."""
+        c = self.conn
+        c.junction.subscribeContext(self._snap_ego, tc.CMD_GET_VEHICLE_VARIABLE, self._snap_radius, list(variables))
+        res = dict(c.junction.getContextSubscriptionResults(self._snap_ego) or {})
+        c.junction.unsubscribeContext(self._snap_ego, tc.CMD_GET_VEHICLE_VARIABLE, self._snap_radius)
+        return res
 
     def closed_edges(self) -> set[str]:
         return set(self._closed)

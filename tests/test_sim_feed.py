@@ -61,3 +61,26 @@ def test_every_start_gets_a_fresh_shared_feed(tmp_path):
         assert feed_module.get_feed(env.conn, env.topology) is fresh
     finally:
         env.close()
+
+
+def test_frames_query_vehicles_only_when_a_frame_is_built(tmp_path):
+    """runtime-perf-2: frames=True must not decode every vehicle's variables on every step."""
+    env = SimEnv("earthquake", "max_pressure", seed=1, end_time=400, output_dir=tmp_path, frames=True).start()
+    try:
+        while env.t < 300:
+            env.step()
+        assert env.conn.vehicle.getAllSubscriptionResults() == {}
+        for _ in range(3):
+            env.step()
+            rows = env.frame()["vehicles"]
+            on_road = set(env.conn.vehicle.getIDList())
+            assert {r[0] for r in rows} == on_road and len(rows) == len(on_road) > 20
+            for vid, x, y, angle, speed, kind in rows[:25]:
+                px, py = env.conn.vehicle.getPosition(vid)
+                assert abs(px - x) <= 0.01 and abs(py - y) <= 0.01
+                assert abs(env.conn.vehicle.getSpeed(vid) - speed) <= 0.01
+                assert kind in ("car", "probe", "truck", "bus", "ambulance", "firetruck")
+        env.step()
+        assert env.conn.vehicle.getAllSubscriptionResults() == {}
+    finally:
+        env.close()

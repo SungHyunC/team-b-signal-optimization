@@ -10,7 +10,8 @@ Every simulation step (Aditya's controller interface):
     SUMO step → sensors, metrics, scenario events, controller.log(step)
 
 Headless experiments call `SimEnv(...).run()`. The twin server steps it itself with
-frames=True, which subscribes to vehicle positions for drawing.
+frames=True: frame() then also reads every vehicle's position for drawing (one query per
+published frame, nothing per step).
 
 Run outputs and completeness
 ----------------------------
@@ -266,8 +267,6 @@ class SimEnv:
         self.departed, self.arrived = departed, arrived
         vtypes = self._vtypes
         for vid in departed:
-            if self.frames:
-                self.conn.vehicle.subscribe(vid, VEHICLE_VARS)
             vtype = vtypes.get(vid)
             if vtype is None:  # added during the run (e.g. dispatch_ev): ask SUMO
                 vtype = self.conn.vehicle.getTypeID(vid)
@@ -375,8 +374,8 @@ class SimEnv:
 
     def frame(self) -> dict:
         vehicles = []
-        if self.frames:
-            for vid, r in self.conn.vehicle.getAllSubscriptionResults().items():
+        if self.frames:  # queried only when a frame is published, not decoded every step (runtime-perf-2)
+            for vid, r in self._feed.vehicle_values(VEHICLE_VARS).items():
                 if not r:
                     continue
                 x, y = r[tc.VAR_POSITION]
