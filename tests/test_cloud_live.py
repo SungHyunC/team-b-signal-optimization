@@ -224,3 +224,51 @@ def test_login_cookie_is_lax_httponly_and_secure(monkeypatch):
     # Lax sends the cookie on cross-site GET navigations, so no GET may change the simulation.
     for path in ("/api/session", "/api/control", "/api/command"):
         assert client.get(path).status_code == 405, path
+
+
+# --- limits on queued work over HTTP and WebSocket (twin-security-3) ------------------------
+def test_full_queue_answers_503(open_client):
+    from teamb.twin.session import MAX_QUEUED_REQUESTS
+
+    session = open_client.app.state.session
+    for _ in range(MAX_QUEUED_REQUESTS):  # no lifespan: nothing drains the queue
+        session.submit(lambda: None)
+    r = open_client.post("/api/command", json={"type": "dispatch_ev"})
+    assert r.status_code == 503 and "busy" in r.json()["detail"]
+    assert open_client.post("/api/control", json={"action": "pause"}).status_code == 503
+    # A restart is coalesced into the queued one, but a full queue still refuses it cleanly.
+    assert open_client.post("/api/session", json={}).status_code == 503
+
+
+def test_superseded_restart_answers_409(open_client):
+    import threading
+
+    results = {}
+
+    def waiting_start():
+        results["first"] = open_client.post("/api/session?wait=1", json={"seed": 1})
+
+    first = threading.Thread(target=waiting_start)
+    first.start()
+    session = open_client.app.state.session
+    for _ in range(100):  # until the first restart is queued
+        if session._pending_restart is not None:
+            break
+        threading.Event().wait(0.02)
+    second = open_client.post("/api/session", json={"seed": 2})
+    first.join(10)
+    assert second.status_code == 200 and second.json()["config"]["seed"] == 2
+    assert results["first"].status_code == 409 and "superseded" in results["first"].json()["detail"]
+
+
+def test_websocket_in_flight_limit(open_client):
+    from teamb.twin.server import MAX_WS_INFLIGHT
+
+    with open_client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        extra = 3
+        for i in range(MAX_WS_INFLIGHT + extra):  # no lifespan: these stay unanswered
+            ws.send_json({"type": "control", "id": i, "action": "pause"})
+        busy = [ws.receive_json() for _ in range(extra)]
+        assert [m["id"] for m in busy] == list(range(MAX_WS_INFLIGHT, MAX_WS_INFLIGHT + extra))
+        assert all(m["ok"] is False and "busy" in m["error"] for m in busy)

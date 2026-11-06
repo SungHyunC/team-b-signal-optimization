@@ -50,6 +50,14 @@ KPI_HISTORY = 720  # KPI samples (one per 5 sim-s, so one hour) for the sparklin
 KPI_KEYS = ("t", "vehicles", "arrived", "halting", "mean_speed", "mean_delay", "current_mean_delay")
 SPEEDS = (1, 2, 5, 10, 20, "max")
 CALL_TIMEOUT_S = 10.0
+# Limits on work one tester can queue on the single shared instance (twin-security-3).
+MAX_QUEUED_REQUESTS = 64  # pending sim-thread requests; more -> SessionBusy (HTTP 503 / "busy" reply)
+MAX_CLIENT_BACKLOG = 256  # unsent status/reply messages per browser; more -> the socket is closed (1013)
+MAX_LIVE_EVS = 50  # emergency vehicles dispatched or en route at the same time in the twin
+
+
+class SessionBusy(RuntimeError):
+    """The sim thread cannot take more work right now (queue full, or the thread is not running)."""
 
 
 # --- small helpers -------------------------------------------------------------
@@ -232,16 +240,24 @@ class SessionConfig:
 class Client:
     """One WebSocket connection. Only touched from the event-loop thread."""
 
-    def __init__(self, ws):
+    def __init__(self, ws, max_backlog: int = MAX_CLIENT_BACKLOG):
         self.ws = ws
         self.messages: collections.deque[str] = collections.deque()
         self.frame: str | None = None
         self.wake = asyncio.Event()
         self.closed = False
+        self.overflowed = False
+        self.max_backlog = max_backlog
 
     def offer(self, text: str, droppable: bool) -> None:
+        if self.closed:
+            return
         if droppable:
             self.frame = text  # a newer frame replaces one that was not sent yet
+        elif len(self.messages) >= self.max_backlog:
+            # A browser that stopped reading: replies and status messages must not be dropped
+            # silently, and must not pile up without bound either. Disconnect it; it reconnects.
+            self.overflowed = self.closed = True
         else:
             self.messages.append(text)
         self.wake.set()
@@ -256,6 +272,9 @@ class Client:
             if self.frame is not None and not self.closed:
                 text, self.frame = self.frame, None
                 await self.ws.send_text(text)
+        if self.overflowed:
+            self.messages.clear()
+            await self.ws.close(code=1013, reason="client too slow; reconnect")
 
 
 class Hub:
@@ -299,7 +318,9 @@ class TwinSession:
         self.hub = hub
         self.runs_dir = Path(runs_dir) if runs_dir else config.RESULTS / "twin"
         self.fps = fps
-        self._requests: queue.Queue = queue.Queue()
+        self._requests: queue.Queue = queue.Queue(maxsize=MAX_QUEUED_REQUESTS)
+        self._restart_lock = threading.Lock()
+        self._pending_restart: concurrent.futures.Future | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         # Everything below is written only by the sim thread; other threads just read it.
@@ -340,7 +361,10 @@ class TwinSession:
     def shutdown(self, timeout: float = 20.0) -> None:
         """Stop stepping, close SUMO (writes the run outputs) and join the thread."""
         self._stop.set()
-        self._requests.put(None)  # wake the thread if it is waiting
+        try:
+            self._requests.put_nowait(None)  # wake the thread if it is waiting
+        except queue.Full:
+            pass  # a full queue wakes it anyway
         if self._thread:
             self._thread.join(timeout)
 
@@ -354,7 +378,12 @@ class TwinSession:
             except Exception as exc:
                 fut.set_exception(exc)
             return fut
-        self._requests.put((fn, fut))
+        if self._thread is not None and not self._thread.is_alive() and not self._stop.is_set():
+            raise SessionBusy("the simulation thread is not running (see the server log)")
+        try:
+            self._requests.put_nowait((fn, fut))
+        except queue.Full:
+            raise SessionBusy("the simulation is busy (too many queued requests); try again in a moment") from None
         return fut
 
     def call(self, fn: Callable[[], Any], timeout: float = CALL_TIMEOUT_S):
@@ -362,7 +391,14 @@ class TwinSession:
         return self.submit(fn).result(timeout)
 
     def restart(self, cfg: SessionConfig) -> concurrent.futures.Future:
-        return self.submit(lambda: self._restart(cfg))
+        """Queue a restart. A newer restart supersedes (cancels) one that is still waiting, so
+        N quick clicks or scripted calls cost at most one running plus one queued SUMO start."""
+        with self._restart_lock:
+            fut = self.submit(lambda: self._restart(cfg))
+            previous, self._pending_restart = self._pending_restart, fut
+        if previous is not None:
+            previous.cancel()  # only succeeds while it is still queued
+        return fut
 
     def control(self, action: str, speed=None, t=None) -> concurrent.futures.Future:
         return self.submit(lambda: self._control(action, speed, t))
@@ -409,6 +445,17 @@ class TwinSession:
             self._publish_status()
         finally:
             self._close_env()
+            self._cancel_queued()
+
+    def _cancel_queued(self) -> None:
+        """The thread is leaving: let everyone still waiting on a request know right away."""
+        while True:
+            try:
+                item = self._requests.get_nowait()
+            except queue.Empty:
+                return
+            if item is not None:
+                item[1].cancel()
 
     def _stepping(self) -> bool:
         return self.env is not None and self.state != "loading" and (self.playing or self.ff_target is not None)
@@ -598,6 +645,8 @@ class TwinSession:
         env = self.env
         if env is None or self.state == "loading":
             return {"ok": False, "error": "no simulation running"}
+        if command.get("type") == "dispatch_ev" and _live_evs(env) >= MAX_LIVE_EVS:
+            return {"ok": False, "error": f"{MAX_LIVE_EVS} emergency vehicles are already on the road; wait for some to arrive"}
         try:
             reply = env.handle_command(dict(command))
         except Exception as exc:
@@ -713,6 +762,12 @@ class EnvProxy:
 
         call.__name__ = name
         return call
+
+
+def _live_evs(env) -> int:
+    """Emergency vehicles dispatched or still driving in this run (each costs TraCI calls per step)."""
+    evs = getattr(getattr(env, "runtime", None), "evs", None) or {}
+    return sum(1 for ev in evs.values() if isinstance(ev, dict) and ev.get("status") in ("dispatched", "en_route"))
 
 
 def _safe_close(env) -> None:

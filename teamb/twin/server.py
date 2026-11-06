@@ -40,7 +40,9 @@ from fastapi.staticfiles import StaticFiles
 
 from teamb import config
 from teamb.twin import meta, access
-from teamb.twin.session import CALL_TIMEOUT_S, Client, Hub, SessionConfig, TwinSession, dumps, parse_control
+from teamb.twin.session import (
+    CALL_TIMEOUT_S, Client, Hub, SessionBusy, SessionConfig, TwinSession, dumps, parse_control,
+)
 
 log = logging.getLogger("teamb.twin")
 
@@ -48,6 +50,22 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 THREE_VERSION = "0.160.0"  # keep in sync with the importmap in static/index.html
 THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{THREE_VERSION}/"
 VENDOR_DIR = STATIC_DIR / "vendor" / f"three@{THREE_VERSION}"  # optional offline copy (python -m teamb.twin.vendor)
+MAX_WS_INFLIGHT = 16  # unanswered requests per WebSocket; more get a "busy" reply instead of a task
+
+
+class Superseded(Exception):
+    """The queued request was cancelled before it ran (a newer restart replaced it)."""
+
+
+async def await_future(fut, timeout: float):
+    """Wait for a sim-thread future; Superseded if it was cancelled rather than this task."""
+    try:
+        return await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if fut.cancelled() and not (task is not None and task.cancelling()):
+            raise Superseded("superseded by a newer restart request") from None
+        raise
 # A relative path below VENDOR_DIR: no leading "/" (pathlib would make it absolute), no "..".
 _VENDOR_PATH = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_./-]*")
 
@@ -89,12 +107,18 @@ def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | 
 
     async def wait_for(fut, timeout: float = CALL_TIMEOUT_S) -> dict:
         try:
-            result = await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+            result = await await_future(fut, timeout)
         except asyncio.TimeoutError:
             raise HTTPException(504, "timed out waiting for the simulation thread") from None
+        except Superseded as exc:
+            raise HTTPException(409, str(exc)) from None
         except ValueError as exc:  # bad parameters, e.g. an invalid speed
             raise HTTPException(400, str(exc)) from None
         return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    @app.exception_handler(SessionBusy)
+    async def session_busy(request: Request, exc: SessionBusy):
+        return JSONResponse({"detail": str(exc)}, status_code=503, headers={"Retry-After": "2"})
 
     @app.get("/healthz", include_in_schema=False)
     def healthz():
@@ -265,6 +289,10 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
                     client.offer(dumps({"type": "reply", "id": None, "ok": False,
                                         "error": "binary frames are not supported; send JSON text"}), droppable=False)
                     continue
+                if len(tasks) >= MAX_WS_INFLIGHT:
+                    client.offer(dumps({"type": "reply", "id": _message_id(text), "ok": False,
+                                        "error": "busy: too many requests in flight on this connection"}), droppable=False)
+                    continue
                 task = asyncio.create_task(_handle(client, text))
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)
@@ -306,7 +334,7 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
                 fut = None
             else:
                 raise ValueError(f"unknown message type '{kind}' (expected 'control' or 'command')")
-            result = {"ok": True} if fut is None else await asyncio.wait_for(asyncio.wrap_future(fut), 120)
+            result = {"ok": True} if fut is None else await await_future(fut, 120)
         except asyncio.TimeoutError:
             result = {"ok": False, "error": "timed out waiting for the simulation thread"}
         except Exception as exc:
@@ -316,6 +344,17 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         client.offer(dumps({**result, "type": "reply", "id": msg.get("id"), "request": kind}), droppable=False)
 
     return app
+
+
+def _message_id(text: str):
+    """The "id" of a client message, for a reply to a message that is not processed."""
+    import json
+
+    try:
+        msg = json.loads(text)
+    except ValueError:
+        return None
+    return msg.get("id") if isinstance(msg, dict) else None
 
 
 def main(host: str = "127.0.0.1", port: int = 8000) -> None:

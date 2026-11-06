@@ -104,6 +104,95 @@ def test_session_config_redacts_secrets():
     assert cfg.controller_params["approval_token"] == "tok-XYZ"  # the sim thread still gets the real value
 
 
+# --- limits on queued work (twin-security-3), no SUMO needed --------------------------------
+def test_restarts_are_coalesced():
+    from teamb.twin.session import Hub, TwinSession
+
+    session = TwinSession(Hub())
+    ran = []
+    session._restart = lambda cfg: (ran.append(cfg.seed), {"ok": True, "seed": cfg.seed})[1]  # no SUMO
+    futures = [session.restart(SessionConfig(seed=i)) for i in range(5)]  # thread not started yet
+    assert [f.cancelled() for f in futures] == [True, True, True, True, False]
+    session.start_thread()
+    try:
+        assert futures[-1].result(5) == {"ok": True, "seed": 4}
+        assert ran == [4]  # the four superseded restarts never started SUMO
+    finally:
+        session.shutdown()
+
+
+def test_queue_is_bounded_and_dead_thread_is_reported():
+    from teamb.twin.session import MAX_QUEUED_REQUESTS, Hub, SessionBusy, TwinSession
+
+    session = TwinSession(Hub())
+    for _ in range(MAX_QUEUED_REQUESTS):
+        session.submit(lambda: None)
+    with pytest.raises(SessionBusy):
+        session.submit(lambda: None)
+    session.shutdown()
+
+    crashed = TwinSession(Hub())
+    crashed._drain = lambda timeout: (_ for _ in ()).throw(RuntimeError("boom"))
+    crashed.start_thread()
+    crashed._thread.join(5)
+    assert crashed.state == "error"
+    with pytest.raises(SessionBusy, match="not running"):
+        crashed.submit(lambda: None)
+
+
+def test_live_ev_cap():
+    from types import SimpleNamespace
+
+    from teamb.twin.session import MAX_LIVE_EVS, Hub, TwinSession
+
+    dispatched = []
+    evs = {f"ambulance_{i}": {"status": "en_route"} for i in range(MAX_LIVE_EVS - 1)}
+    evs["old"] = {"status": "arrived"}
+    env = SimpleNamespace(runtime=SimpleNamespace(evs=evs), handle_command=lambda c: dispatched.append(c) or {"ok": True})
+    session = TwinSession(Hub())
+    session.env, session.state, session.playing = env, "running", True
+    assert session._command({"type": "dispatch_ev"})["ok"] is True
+    evs["new"] = {"status": "dispatched"}
+    refused = session._command({"type": "dispatch_ev"})
+    assert refused["ok"] is False and str(MAX_LIVE_EVS) in refused["error"]
+    assert session._command({"type": "close_road", "edge": "J2_J3"})["ok"] is True  # other commands unaffected
+    assert len(dispatched) == 2
+
+
+def test_slow_client_backlog_is_bounded():
+    import asyncio
+
+    from teamb.twin.session import Client
+
+    class StuckSocket:
+        def __init__(self):
+            self.sent, self.closed_with, self.release = [], None, None
+
+        async def send_text(self, text):
+            await self.release.wait()
+            self.sent.append(text)
+
+        async def close(self, code=1000, reason=None):
+            self.closed_with = code
+
+    async def scenario():
+        ws = StuckSocket()
+        ws.release = asyncio.Event()
+        client = Client(ws, max_backlog=10)
+        pump = asyncio.create_task(client.pump())
+        for i in range(50):
+            client.offer(f"status {i}", droppable=False)
+            client.offer(f"frame {i}", droppable=True)
+            await asyncio.sleep(0)
+        assert client.closed and client.overflowed and len(client.messages) <= 10
+        ws.release.set()
+        await asyncio.wait_for(pump, 2)
+        return ws
+
+    ws = asyncio.run(scenario())
+    assert ws.closed_with == 1013 and len(ws.sent) <= 11
+
+
 # --- REST -------------------------------------------------------------------------------
 def test_meta(client):
     meta = client.get("/api/meta").json()
