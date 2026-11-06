@@ -50,9 +50,9 @@ Strong synthetic evidence for max-pressure compared with fixed-time in typical s
 - [Full engineering review](final-engineering-review.md)
 - [Independent 360-run decision and outcome table](independent-controller-confirmation-review.md)
 - [Final handoff and Windows reproduction](final-project-handoff.md)
-- [Baseline statistical study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299)
-- [Demand robustness study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451)
-- [Independent holdout study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840)
+- [Baseline statistical study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299) ([data](results/studies/baseline-180/README.md))
+- [Demand robustness study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451) ([data](results/studies/robustness-360/README.md))
+- [Independent holdout study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840) ([data](results/studies/confirmation-360/README.md))
 - [Sandbox CI after release branch](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41973492051)
 
 - [Presentation-day runbook and attendee safety checklist](presentation-day-demo-runbook.md)

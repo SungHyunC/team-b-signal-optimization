@@ -3,9 +3,9 @@
 **Status:** Simulation sensitivity review completed; strong performance is **not** established for every scenario. This review does not approve real-world deployment or a controller algorithm change.
 
 **Evidence**
-- [Nominal 100% demand: 180-run validation](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299)
-- [75% and 125% demand: 360-run validation](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451)
-- [Read-only paired diagnostic analysis](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41958378469)
+- [Nominal 100% demand: 180-run validation](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299) ([committed data](results/studies/baseline-180/README.md))
+- [75% and 125% demand: 360-run validation](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451) ([committed data](results/studies/robustness-360/README.md))
+- [Read-only paired diagnostic analysis](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41958378469) ([committed data](results/studies/congestion-diagnosis/README.md))
 
 ## Experimental design and audit
 

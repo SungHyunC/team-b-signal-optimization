@@ -10,15 +10,17 @@ The original max-pressure controller substantially reduced completed-trip mean d
 
 ## Roadmap and evidence
 
+The Actions runs are the provenance; their artifacts expire on Nov 18–19, 2026. The aggregate data of each study is committed under [results/studies/](results/studies/README.md).
+
 | Checkpoint | State | Evidence / next action |
 |---|---|---|
 | Research & scope | Complete | [Research documents](research/) and [architecture](ARCHITECTURE.md) |
 | Four-junction SUMO prototype | Implemented | [Repository README](../README.md), [live demo](https://sunghyunc.github.io/team-b-signal-optimization/) |
-| Statistical validation | Complete | [180-run baseline Actions](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299) |
-| Demand robustness review | Complete with exception | [360-run sensitivity Actions](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451), [review](robustness-and-sensitivity-review.md) |
-| Congestion analysis | Complete, root cause not proven | [Diagnostics](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41958378469), [pilot review](congestion-controller-pilot-review.md) |
-| Penalty calibration | Three-seed exploratory screen complete | [24-run calibration Actions](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968041524), [review](spillback-penalty-calibration-review.md) |
-| Independent experimental confirmation | **360/360 runs valid; experimental controller rejected** | [360-run independent confirmation](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840); [decision](independent-controller-confirmation-review.md) |
+| Statistical validation | Complete | [180-run baseline Actions](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299), [data](results/studies/baseline-180/README.md) |
+| Demand robustness review | Complete with exception | [360-run sensitivity Actions](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451), [data](results/studies/robustness-360/README.md), [review](robustness-and-sensitivity-review.md) |
+| Congestion analysis | Complete, root cause not proven | [Diagnostics](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41958378469), [data](results/studies/congestion-diagnosis/README.md), [pilot review](congestion-controller-pilot-review.md) ([pilot data](results/studies/controller-pilot-15/README.md)) |
+| Penalty calibration | Three-seed exploratory screen complete | [24-run calibration Actions](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968041524), [data](results/studies/calibration-24/README.md), [review](spillback-penalty-calibration-review.md) |
+| Independent experimental confirmation | **360/360 runs valid; experimental controller rejected** | [360-run independent confirmation](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840), [data](results/studies/confirmation-360/README.md); [decision](independent-controller-confirmation-review.md) |
 | Engineering sign-off | **Review decision recorded: do not promote candidate** | Severe road-closure gain but high-demand rush-hour and emergency delay regressions |
 | Production merge of experimental controller | **Not approved** | Keep [draft PR #5](https://github.com/SungHyunC/team-b-signal-optimization/pull/5) for research review; original `max_pressure` remains benchmark |
 | Final results presentation | Handoff brief complete | [Presentation brief](final-presentation-brief.md); disclose synthetic-model limitations |

@@ -7,6 +7,9 @@ trips next to delay (PERF-01). Full tables, p-values and sensor accuracy are in 
 
 파일럿 수치입니다(행마다 시드 3개, 합성 수요). 발표에 인용하기 전에 시드를 늘려 다시 돌려 주세요.
 
+The validated 30-seed studies that followed (540 baseline/robustness runs, the rejected-controller
+confirmation) are archived with their data in [studies/](studies/README.md).
+
 ## 1. Normal peak — rush hour · 출퇴근 ([v1-main](v1-main.md), runs to 2700 s)
 
 | Controller | Delay (s/veh) | Δ vs fixed-time | p95 travel time (s) | Unfinished |

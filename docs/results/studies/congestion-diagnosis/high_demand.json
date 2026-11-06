@@ -1,0 +1,553 @@
+{
+  "experiment": "robustness_high",
+  "issues": [],
+  "run_count": 180,
+  "scenarios": {
+    "emergency": {
+      "metrics": {
+        "completed": {
+          "baseline_mean": 3725.1667,
+          "candidate_mean": 4110.0667,
+          "candidate_minus_baseline": {
+            "ci95": [
+              364.6459,
+              405.1541
+            ],
+            "mean": 384.9,
+            "n": 30
+          }
+        },
+        "ev_mean_travel_time_s": {
+          "baseline_mean": 133.8793,
+          "candidate_mean": 111.32,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -26.7559,
+              -18.3628
+            ],
+            "mean": -22.5593,
+            "n": 30
+          }
+        },
+        "mean_delay_incl_unfinished_s": {
+          "baseline_mean": 107.6643,
+          "candidate_mean": 43.9927,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -66.462,
+              -60.8813
+            ],
+            "mean": -63.6717,
+            "n": 30
+          }
+        },
+        "mean_delay_s": {
+          "baseline_mean": 107.3797,
+          "candidate_mean": 44.6517,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -65.3528,
+              -60.1032
+            ],
+            "mean": -62.728,
+            "n": 30
+          }
+        },
+        "never_inserted": {
+          "baseline_mean": 281.1667,
+          "candidate_mean": 0.2333,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -305.1712,
+              -256.6954
+            ],
+            "mean": -280.9333,
+            "n": 30
+          }
+        },
+        "p95_travel_time_s": {
+          "baseline_mean": 405.7383,
+          "candidate_mean": 205.825,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -211.6713,
+              -188.1554
+            ],
+            "mean": -199.9133,
+            "n": 30
+          }
+        },
+        "queue_p95_veh": {
+          "baseline_mean": 26.335,
+          "candidate_mean": 6.4333,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -20.5014,
+              -19.3019
+            ],
+            "mean": -19.9017,
+            "n": 30
+          }
+        },
+        "queue_warning_s": {
+          "baseline_mean": 0.6667,
+          "candidate_mean": 0.0,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -1.7333,
+              0.4
+            ],
+            "mean": -0.6667,
+            "n": 30
+          }
+        },
+        "recovery_time_s": {
+          "baseline_mean": null,
+          "candidate_mean": null,
+          "candidate_minus_baseline": {
+            "ci95": null,
+            "mean": null,
+            "n": 0
+          }
+        },
+        "spillback_duration_s": {
+          "baseline_mean": 0.6667,
+          "candidate_mean": 0.0,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -2.0301,
+              0.6967
+            ],
+            "mean": -0.6667,
+            "n": 30
+          }
+        },
+        "spillback_events": {
+          "baseline_mean": 0.0333,
+          "candidate_mean": 0.0,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -0.1015,
+              0.0348
+            ],
+            "mean": -0.0333,
+            "n": 30
+          }
+        },
+        "throughput_veh_h": {
+          "baseline_mean": 3725.1667,
+          "candidate_mean": 4110.0667,
+          "candidate_minus_baseline": {
+            "ci95": [
+              364.6459,
+              405.1541
+            ],
+            "mean": 384.9,
+            "n": 30
+          }
+        },
+        "unfinished_pct": {
+          "baseline_mean": 11.7707,
+          "candidate_mean": 2.6777,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -9.5533,
+              -8.6327
+            ],
+            "mean": -9.093,
+            "n": 30
+          }
+        }
+      },
+      "paired_seeds": 30,
+      "spillback_hotspots": {
+        "fixed_time": [
+          {
+            "edge": "N4_J4",
+            "mean_spillback_s": 0.67
+          }
+        ],
+        "max_pressure": []
+      },
+      "warnings": []
+    },
+    "road_closure": {
+      "metrics": {
+        "completed": {
+          "baseline_mean": 4117.5667,
+          "candidate_mean": 4424.3333,
+          "candidate_minus_baseline": {
+            "ci95": [
+              265.7291,
+              347.8043
+            ],
+            "mean": 306.7667,
+            "n": 30
+          }
+        },
+        "ev_mean_travel_time_s": {
+          "baseline_mean": null,
+          "candidate_mean": null,
+          "candidate_minus_baseline": {
+            "ci95": null,
+            "mean": null,
+            "n": 0
+          }
+        },
+        "mean_delay_incl_unfinished_s": {
+          "baseline_mean": 125.5213,
+          "candidate_mean": 123.6527,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -7.6077,
+              3.8704
+            ],
+            "mean": -1.8687,
+            "n": 30
+          }
+        },
+        "mean_delay_s": {
+          "baseline_mean": 126.0213,
+          "candidate_mean": 123.767,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -7.653,
+              3.1443
+            ],
+            "mean": -2.2543,
+            "n": 30
+          }
+        },
+        "never_inserted": {
+          "baseline_mean": 484.7,
+          "candidate_mean": 154.4,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -363.6332,
+              -296.9668
+            ],
+            "mean": -330.3,
+            "n": 30
+          }
+        },
+        "p95_travel_time_s": {
+          "baseline_mean": 618.925,
+          "candidate_mean": 620.84,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -25.5139,
+              29.3439
+            ],
+            "mean": 1.915,
+            "n": 30
+          }
+        },
+        "queue_p95_veh": {
+          "baseline_mean": 25.8333,
+          "candidate_mean": 15.7,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -10.7892,
+              -9.4775
+            ],
+            "mean": -10.1333,
+            "n": 30
+          }
+        },
+        "queue_warning_s": {
+          "baseline_mean": 31.3333,
+          "candidate_mean": 1.5,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -39.1807,
+              -20.486
+            ],
+            "mean": -29.8333,
+            "n": 30
+          }
+        },
+        "recovery_time_s": {
+          "baseline_mean": null,
+          "candidate_mean": null,
+          "candidate_minus_baseline": {
+            "ci95": null,
+            "mean": null,
+            "n": 0
+          }
+        },
+        "spillback_duration_s": {
+          "baseline_mean": 136.3333,
+          "candidate_mean": 309.0,
+          "candidate_minus_baseline": {
+            "ci95": [
+              84.0455,
+              261.2878
+            ],
+            "mean": 172.6667,
+            "n": 30
+          }
+        },
+        "spillback_events": {
+          "baseline_mean": 5.7667,
+          "candidate_mean": 17.0667,
+          "candidate_minus_baseline": {
+            "ci95": [
+              6.8764,
+              15.7236
+            ],
+            "mean": 11.3,
+            "n": 30
+          }
+        },
+        "throughput_veh_h": {
+          "baseline_mean": 3294.0533,
+          "candidate_mean": 3539.4667,
+          "candidate_minus_baseline": {
+            "ci95": [
+              212.5833,
+              278.2434
+            ],
+            "mean": 245.4133,
+            "n": 30
+          }
+        },
+        "unfinished_pct": {
+          "baseline_mean": 14.5397,
+          "candidate_mean": 8.1633,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -7.2361,
+              -5.5166
+            ],
+            "mean": -6.3763,
+            "n": 30
+          }
+        }
+      },
+      "paired_seeds": 30,
+      "spillback_hotspots": {
+        "fixed_time": [
+          {
+            "edge": "N3_J3",
+            "mean_spillback_s": 94.0
+          },
+          {
+            "edge": "N4_J4",
+            "mean_spillback_s": 30.33
+          },
+          {
+            "edge": "N2_N3",
+            "mean_spillback_s": 4.5
+          },
+          {
+            "edge": "N4_N3",
+            "mean_spillback_s": 3.83
+          },
+          {
+            "edge": "J1_J2",
+            "mean_spillback_s": 3.17
+          },
+          {
+            "edge": "N2_J2",
+            "mean_spillback_s": 2.33
+          }
+        ],
+        "max_pressure": [
+          {
+            "edge": "N3_J3",
+            "mean_spillback_s": 145.83
+          },
+          {
+            "edge": "N4_J4",
+            "mean_spillback_s": 68.5
+          },
+          {
+            "edge": "J1_J2",
+            "mean_spillback_s": 37.67
+          },
+          {
+            "edge": "N2_J2",
+            "mean_spillback_s": 29.67
+          },
+          {
+            "edge": "N2_N3",
+            "mean_spillback_s": 22.67
+          },
+          {
+            "edge": "N3_N4",
+            "mean_spillback_s": 7.83
+          },
+          {
+            "edge": "J2_J3",
+            "mean_spillback_s": 2.33
+          },
+          {
+            "edge": "J2_N2",
+            "mean_spillback_s": 2.0
+          }
+        ]
+      },
+      "warnings": []
+    },
+    "rush_hour": {
+      "metrics": {
+        "completed": {
+          "baseline_mean": 3695.2333,
+          "candidate_mean": 4100.2667,
+          "candidate_minus_baseline": {
+            "ci95": [
+              382.0216,
+              428.0451
+            ],
+            "mean": 405.0333,
+            "n": 30
+          }
+        },
+        "ev_mean_travel_time_s": {
+          "baseline_mean": null,
+          "candidate_mean": null,
+          "candidate_minus_baseline": {
+            "ci95": null,
+            "mean": null,
+            "n": 0
+          }
+        },
+        "mean_delay_incl_unfinished_s": {
+          "baseline_mean": 107.7817,
+          "candidate_mean": 41.896,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -68.0447,
+              -63.7266
+            ],
+            "mean": -65.8857,
+            "n": 30
+          }
+        },
+        "mean_delay_s": {
+          "baseline_mean": 107.5823,
+          "candidate_mean": 42.5597,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -67.1976,
+              -62.8477
+            ],
+            "mean": -65.0227,
+            "n": 30
+          }
+        },
+        "never_inserted": {
+          "baseline_mean": 301.8667,
+          "candidate_mean": 0.2333,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -326.3881,
+              -276.8786
+            ],
+            "mean": -301.6333,
+            "n": 30
+          }
+        },
+        "p95_travel_time_s": {
+          "baseline_mean": 402.7783,
+          "candidate_mean": 199.045,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -214.2532,
+              -193.2135
+            ],
+            "mean": -203.7333,
+            "n": 30
+          }
+        },
+        "queue_p95_veh": {
+          "baseline_mean": 26.835,
+          "candidate_mean": 6.0667,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -21.2355,
+              -20.3012
+            ],
+            "mean": -20.7683,
+            "n": 30
+          }
+        },
+        "queue_warning_s": {
+          "baseline_mean": 0.0,
+          "candidate_mean": 0.0,
+          "candidate_minus_baseline": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "mean": 0.0,
+            "n": 30
+          }
+        },
+        "recovery_time_s": {
+          "baseline_mean": null,
+          "candidate_mean": null,
+          "candidate_minus_baseline": {
+            "ci95": null,
+            "mean": null,
+            "n": 0
+          }
+        },
+        "spillback_duration_s": {
+          "baseline_mean": 0.0,
+          "candidate_mean": 0.0,
+          "candidate_minus_baseline": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "mean": 0.0,
+            "n": 30
+          }
+        },
+        "spillback_events": {
+          "baseline_mean": 0.0,
+          "candidate_mean": 0.0,
+          "candidate_minus_baseline": {
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "mean": 0.0,
+            "n": 30
+          }
+        },
+        "throughput_veh_h": {
+          "baseline_mean": 3695.2333,
+          "candidate_mean": 4100.2667,
+          "candidate_minus_baseline": {
+            "ci95": [
+              382.0216,
+              428.0451
+            ],
+            "mean": 405.0333,
+            "n": 30
+          }
+        },
+        "unfinished_pct": {
+          "baseline_mean": 12.2637,
+          "candidate_mean": 2.679,
+          "candidate_minus_baseline": {
+            "ci95": [
+              -10.0912,
+              -9.0781
+            ],
+            "mean": -9.5847,
+            "n": 30
+          }
+        }
+      },
+      "paired_seeds": 30,
+      "spillback_hotspots": {
+        "fixed_time": [],
+        "max_pressure": []
+      },
+      "warnings": []
+    }
+  }
+}

@@ -5,11 +5,14 @@
   (put `<!-- docs-check: skip -->` on the line before a fenced block that must not be checked,
   e.g. a command that needs another branch).
 - The cloud deployment guide documents every TWIN_* switch and matches render.yaml.
+- Study evidence is committed under docs/results/studies/, not only in expiring Actions artifacts.
 """
 from __future__ import annotations
 
 import contextlib
+import csv
 import io
+import json
 import re
 import shlex
 import subprocess
@@ -20,6 +23,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
+STUDIES = DOCS / "results" / "studies"
 SKIP_DIRS = {".git", ".venv", "node_modules", "site", "build", "dist", "results"}
 
 LINK = re.compile(r"!?\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
@@ -95,6 +99,8 @@ def test_link_checker_catches_broken_links(tmp_path):
 def _experiment_commands():
     """`... experiments run ...` commands in fenced bash/sh/console blocks of the docs."""
     for md in MARKDOWN:
+        if STUDIES in md.parents:  # archived reports reproduce their own (research) commit
+            continue
         lines = md.read_text(encoding="utf-8").splitlines()
         i = 0
         while i < len(lines):
@@ -160,3 +166,56 @@ def test_deployment_guide_matches_render_blueprint():
     assert "not yet hosted" not in guide.lower()
     assert f"`{svc['name']}`" in guide, "say which service render.yaml creates"
     assert f"**{svc['plan'].capitalize()}**" in guide, "name render.yaml's plan in the guide"
+
+
+def test_no_links_to_expiring_actions_artifacts():
+    offenders = [f"{md.relative_to(ROOT)}:{no}" for md in MARKDOWN
+                 for no, line in enumerate(md.read_text(encoding="utf-8").splitlines(), 1)
+                 if re.search(r"actions/runs/\d+/artifacts/\d+", line)]
+    assert not offenders, "Actions artifacts expire; link docs/results/studies/ instead: " + ", ".join(offenders)
+
+
+# study folder -> {experiment folder: expected strict-valid runs}
+STUDY_RUNS = {
+    "baseline-180": {"lesson1_validation": 180, "lesson1_smoke": 2},
+    "robustness-360": {"robustness_low": 180, "robustness_high": 180,
+                       "robustness_pilot_low": 6, "robustness_pilot_high": 6},
+    "controller-pilot-15": {"congestion_pilot_heavy": 9, "congestion_pilot_nominal": 6},
+    "calibration-24": {f"mild_{p}_{s}": 6 for p in ("110", "125") for s in ("closure", "rush")},
+    "confirmation-360": {f"confirm_{c}": 60 for c in ("closure_125", "closure_075", "rush_100", "rush_125",
+                                                      "emergency_100", "emergency_125")},
+}
+# headline run counts quoted in the reviews (pilots and smoke runs excluded)
+STUDY_TOTALS = {"baseline-180": 180, "robustness-360": 360, "controller-pilot-15": 15,
+                "calibration-24": 24, "confirmation-360": 360}
+
+
+def test_study_archives_are_committed_and_small():
+    studies = sorted(p for p in STUDIES.iterdir() if p.is_dir())
+    assert {p.name for p in studies} == set(STUDY_RUNS) | {"congestion-diagnosis"}
+    for study, total in STUDY_TOTALS.items():
+        counted = sum(n for e, n in STUDY_RUNS[study].items() if "smoke" not in e and "robustness_pilot" not in e)
+        assert counted == total, study
+    for name in ("high_demand.json", "light_demand.json"):
+        diagnosis = json.loads((STUDIES / "congestion-diagnosis" / name).read_text(encoding="utf-8"))
+        assert diagnosis["run_count"] == 180
+        assert all(s["paired_seeds"] == 30 for s in diagnosis["scenarios"].values())
+    total = 0
+    for study in studies:
+        readme = (study / "README.md").read_text(encoding="utf-8")
+        assert re.search(r"actions/runs/\d+", readme) and re.search(r"\b[0-9a-f]{7,40}\b", readme), study.name
+        for f in study.rglob("*"):
+            if f.is_file():
+                assert f.suffix in (".json", ".md", ".csv"), f
+                total += f.stat().st_size
+    assert total < 8 * 1024 * 1024, f"study archives grew to {total / 1e6:.1f} MB"
+
+
+@pytest.mark.parametrize("study,experiment,runs", [(s, e, n) for s, d in STUDY_RUNS.items() for e, n in d.items()])
+def test_study_experiments_are_complete_and_strict_valid(study, experiment, runs):
+    folder = STUDIES / study / experiment
+    audit = json.loads((folder / "validation.json").read_text(encoding="utf-8"))
+    assert audit["complete"] and audit["valid_runs"] == runs, audit
+    with open(folder / "summary.csv", newline="", encoding="utf-8") as fh:
+        assert len(list(csv.DictReader(fh))) == runs
+    assert json.loads((folder / "report.json").read_text(encoding="utf-8"))

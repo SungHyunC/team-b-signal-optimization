@@ -4,7 +4,7 @@
 
 ## Evidence
 
-- [Successful calibration workflow #41968041524](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968041524)
+- [Successful calibration workflow #41968041524](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968041524) ([committed data](results/studies/calibration-24/README.md))
 - [Prior high-demand controller pilot #41959366607](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41959366607)
 - Experimental design: [spillback-penalty-calibration.md](https://github.com/SungHyunC/team-b-signal-optimization/blob/77ca85d/docs/spillback-penalty-calibration.md) (on the research commit 77ca85d; the experimental controller is not on `main`)
 

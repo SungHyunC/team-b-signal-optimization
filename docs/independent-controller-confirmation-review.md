@@ -4,7 +4,7 @@
 
 ## Evidence
 - [Independent 360-run workflow #41968750840](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840): **SUCCESS**, 360/360 strict-valid simulations, independent paired seeds 31–60.
-- [Full downloadable data artifact #13390656343](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840/artifacts/13390656343).
+- [Committed study data](results/studies/confirmation-360/README.md): reports, per-run summary tables, audits and the evaluator's paired intervals for all six conditions. (The full Actions artifact #13390656343, with the per-run SUMO outputs, expires on 2026-11-19.)
 - Parameters fixed before confirmation: stopped downstream queue threshold **8 vehicles** and downstream penalty **1.25x**.
 - All per-run `controller_errors`, `fallback_steps` and `rejected_actions` were checked as zero by the confirmation evaluator.
 
