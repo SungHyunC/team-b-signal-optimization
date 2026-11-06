@@ -233,6 +233,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-unfinished-pp", type=float, default=0.5, help="allowed mean increase of the unfinished share, pp")
     args = p.parse_args(argv)
     exp_dir = EXPERIMENTS_DIR / args.name
+    if not (exp_dir / "runs").is_dir():  # a mistyped name must not create a stray experiment folder
+        print(f"no runs in {exp_dir} (see `teamb exp list`)", file=sys.stderr)
+        return 2
     result = screen(exp_dir, args.baseline, args.candidate, max_delay_regression=args.max_delay_regression,
                     max_unfinished_pp=args.max_unfinished_pp)
     atomic_write_json(exp_dir / "screen.json", result)

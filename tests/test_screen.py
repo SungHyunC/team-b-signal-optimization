@@ -199,3 +199,13 @@ def test_faster_emergency_vehicles_that_all_arrive_pass(tmp_path):
     result = screen(exp, "max_pressure", cand)
     assert result["conditions"][0]["guards"]["emergency"]["pass"] is True
     assert result["verdict"] == "PASS"
+
+
+def test_screen_of_an_unknown_experiment_writes_nothing(tmp_path, monkeypatch, capsys):
+    import teamb.experiments.runner as runner
+    from teamb.experiments.screen import main
+
+    monkeypatch.setattr(runner, "EXPERIMENTS_DIR", tmp_path)
+    assert main(["--name", "typo_nope", "--baseline", "max_pressure", "--candidate", "x"]) == 2
+    assert not (tmp_path / "typo_nope").exists()
+    assert "typo_nope" in capsys.readouterr().err
