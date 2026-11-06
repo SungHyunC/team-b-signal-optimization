@@ -127,3 +127,74 @@ def test_a_run_lost_on_modal_is_resubmitted(fake, tmp_path, monkeypatch):
     results = {r["run"]: r for r in cloud.run_specs(_specs(), tmp_path, workers=2)}
     assert results[lost]["status"] == "ok"
     assert remote.sent.count(lost) == 2
+
+
+class Spinning(BaseException):
+    """A FakeCall polled far more often than any real wait needs: _collect is looping."""
+
+
+class StickyCall(FakeCall):
+    """get() raises the same stored error every time, like a finished Modal call; bounded."""
+
+    def __init__(self, error, limit=50):
+        super().__init__(error=error)
+        self.calls, self.limit = 0, limit
+
+    def get(self, timeout=None):
+        self.calls += 1
+        if self.calls > self.limit:
+            raise Spinning(f"get() called {self.calls} times")
+        return super().get(timeout)
+
+
+class ErrorRemote(FakeRemote):
+    """FakeRemote whose calls for `names` fail with `make_error()` on every get()."""
+
+    def __init__(self, names, make_error):
+        super().__init__()
+        self.names, self.make_error = set(names), make_error
+
+    def spawn(self, spec, git_revision):
+        call = super().spawn(spec, git_revision)
+        return StickyCall(self.make_error()) if RunSpec(**spec).name in self.names else call
+
+
+def test_a_run_past_the_modal_function_timeout_fails_without_resubmitting(fake, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
+    slow = _specs()[1].name
+    remote = fake(ErrorRemote({slow}, lambda: cloud.modal.exception.FunctionTimeoutError("function timed out")))
+    results = {r["run"]: r for r in cloud.run_specs(_specs(), tmp_path, workers=2)}
+    assert results[slow]["status"] == "failed" and "FunctionTimeoutError" in results[slow]["error"]
+    assert remote.sent.count(slow) == 1, "a deterministic timeout is not worth another hour"
+    assert results[_specs()[0].name]["status"] == "ok"
+
+
+def test_an_expired_output_is_resubmitted_then_reported(fake, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
+    gone = _specs()[1].name
+    remote = fake(ErrorRemote({gone}, lambda: cloud.modal.exception.OutputExpiredError("output expired")))
+    results = {r["run"]: r for r in cloud.run_specs(_specs(), tmp_path, workers=2)}
+    assert results[gone]["status"] == "failed" and "OutputExpiredError" in results[gone]["error"]
+    assert remote.sent.count(gone) == cloud.CLIENT_ATTEMPTS
+
+
+def test_the_poll_timeout_only_means_still_running(fake, tmp_path):
+    class SlowCall(FakeCall):
+        def __init__(self, inner, polls):
+            super().__init__(inner.result)
+            self.polls = polls
+
+        def get(self, timeout=None):
+            if self.polls:
+                self.polls -= 1
+                raise TimeoutError()  # what FunctionCall.get(timeout=...) raises while the run is going
+            return super().get(timeout)
+
+    class SlowRemote(FakeRemote):
+        def spawn(self, spec, git_revision):
+            return SlowCall(super().spawn(spec, git_revision), polls=3)
+
+    remote = fake(SlowRemote())
+    results = list(cloud.run_specs(_specs(), tmp_path, workers=2))
+    assert sorted(r["status"] for r in results) == ["ok", "ok"]
+    assert sorted(remote.sent) == sorted(s.name for s in _specs()), "nothing re-submitted"

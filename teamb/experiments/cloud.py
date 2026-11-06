@@ -203,13 +203,21 @@ def _transient(exc: BaseException) -> bool:
 
 
 def _collect(fn, spec, call, git_revision: str) -> tuple[dict | None, str | None]:
-    """Wait for one spawned run; re-wait on connection loss, re-spawn a run lost on Modal's side."""
+    """Wait for one spawned run; re-wait on connection loss, re-spawn a run lost on Modal's side.
+
+    Only the builtin TimeoutError means "no output within POLL_TIMEOUT_S, still running": modal's
+    own TimeoutError subclasses are final results of the call, which get() returns again at once.
+    FunctionTimeoutError (the run went past RUN_TIMEOUT_S, after Modal's retries) fails the run
+    without resubmitting it; OutputExpiredError counts as a lost run.
+    """
     attempts, waits = 1, 0
     while True:
         try:
             return call.get(timeout=POLL_TIMEOUT_S), None
-        except (TimeoutError, modal.exception.TimeoutError):
+        except TimeoutError:  # builtin (also an OSError, so it must come before _transient)
             continue  # still running
+        except modal.exception.FunctionTimeoutError as exc:
+            return None, f"FunctionTimeoutError: the run exceeded the {RUN_TIMEOUT_S} s limit ({exc})"
         except Exception as exc:  # noqa: BLE001 - classify below
             if _transient(exc) and waits < CLIENT_WAIT_RETRIES:
                 waits += 1
