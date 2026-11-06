@@ -134,10 +134,10 @@ def test_a_step_that_fails_at_the_end_time_is_not_complete(tmp_path):
     env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=10, output_dir=out).start()
     original = env.runtime.on_step
 
-    def failing(t):
+    def failing(t, *step_lists):
         if t >= 10:
             raise RuntimeError("bookkeeping failed in the last step")
-        original(t)
+        original(t, *step_lists)
 
     env.runtime.on_step = failing
     with pytest.raises(RuntimeError):
