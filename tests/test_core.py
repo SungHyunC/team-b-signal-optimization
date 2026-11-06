@@ -162,6 +162,25 @@ def test_sig02_failing_controller_falls_back_to_fixed_time(tmp_path):
     assert summary["signal_switches"] > 0
 
 
+class _Slow(Controller):
+    name = "slow_for_test"
+
+    def propose_action(self, state):
+        import time
+
+        time.sleep(0.03)
+        return {}
+
+
+def test_sig02_slow_controller_falls_back_to_fixed_time(tmp_path, monkeypatch):
+    """sim-core-12: the CONTROLLER_TIME_BUDGET_S branch (a valid but late action is replaced)."""
+    monkeypatch.setattr(config, "CONTROLLER_TIME_BUDGET_S", 0.01)
+    env = SimEnv("rush_hour", _Slow(), seed=1, end_time=5, output_dir=tmp_path)
+    summary = env.run()
+    assert summary["fallback_steps"] == 5 and summary["controller_errors"] == 0
+    assert sum(1 for e in env.supervisor.events if e.reason == "timeout") == 5
+
+
 class _ArrayPolicy(Controller):
     name = "array_policy_for_test"
 
