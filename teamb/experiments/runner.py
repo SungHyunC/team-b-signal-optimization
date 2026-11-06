@@ -53,9 +53,26 @@ class RunSpec:
 
     @property
     def name(self) -> str:
+        """Run directory name and resume key: every field that changes the run is in it.
+
+        Default specs keep the historic names (so existing experiments still resume). A
+        coverage that is not a whole percentage gets a decimal token (c12.5, not c12) and an
+        explicit end time adds ``__e<seconds>``, so runs that differ never share a directory."""
         sampling = self.sampling.replace(":", "-")
         pre = "" if self.ev_preemption else "__nopre"
-        return f"{self.scenario_variant}__{self.variant}__s{self.seed}__c{round(self.coverage * 100)}__{sampling}{pre}"
+        end = "" if self.end_time is None else f"__e{_num_token(self.end_time)}"
+        return (
+            f"{self.scenario_variant}__{self.variant}__s{self.seed}__c{_num_token(self.coverage * 100)}"
+            f"__{sampling}{pre}{end}"
+        )
+
+
+def _num_token(x: float) -> str:
+    """'100' for a whole number (within float noise, e.g. 0.07 * 100), else the shortest decimal ('12.5')."""
+    x = float(x)
+    if abs(x - round(x)) < 1e-9:
+        return str(int(round(x)))
+    return f"{x:.10g}"
 
 
 def parse_seeds(text: str) -> list[int]:
@@ -67,6 +84,8 @@ def parse_seeds(text: str) -> list[int]:
             continue
         if "-" in part:
             a, b = part.split("-", 1)
+            if int(b) < int(a):
+                raise ValueError(f"invalid seed range '{part}' (write low-high, e.g. 1-5)")
             seeds.extend(range(int(a), int(b) + 1))
         else:
             seeds.append(int(part))
@@ -74,16 +93,20 @@ def parse_seeds(text: str) -> list[int]:
 
 
 def parse_coverages(text: str) -> list[float | None]:
-    """'0.1,0.25,1' or percentages '10,25,100' -> [0.1, 0.25, 1.0]; 'default' -> [None]
-    (None = the scenario's own default coverage, usually 1.0)."""
+    """'0.1,0.25,1' or percentages '10,25,100' / '1%,5%' -> [0.1, 0.25, 1.0]; 'default' -> [None]
+    (None = the scenario's own default coverage, usually 1.0).
+
+    A bare number above 1 is a percentage; a number with '%' is always a percentage, so
+    '1%' is 0.01 (not 100 %) and '0.5%' is 0.005."""
     out: list[float | None] = []
     for part in str(text).split(","):
-        part = part.strip().rstrip("%")
+        part = part.strip()
         if part.lower() == "default":
             out.append(None)
         elif part:
-            v = float(part)
-            out.append(v / 100.0 if v > 1.0 else v)
+            pct = part.endswith("%")
+            v = float(part.rstrip("%").strip())
+            out.append(v / 100.0 if (pct or v > 1.0) else v)
     return out
 
 
@@ -117,6 +140,10 @@ def build_matrix(
     """All combinations. counterfactual=True adds, for every scenario with events, the same runs
     with the events removed (scenario_params events=[]): the "what if nothing had happened"
     reference used for recovery time under time-varying demand."""
+    # repeated list entries (e.g. --controllers a,b,a) would give two specs with one run directory
+    scenarios, controllers, seeds = list(dict.fromkeys(scenarios)), list(dict.fromkeys(controllers)), list(dict.fromkeys(seeds))
+    samplings = list(dict.fromkeys(samplings)) if samplings else None
+    preemption = list(dict.fromkeys(bool(p) for p in preemption)) if preemption else None
     per_controller = split_controller_params(controller_params, controllers)
     base_params = dict(scenario_params or {})
     twins: list[RunSpec] = []
@@ -143,7 +170,8 @@ def build_matrix(
                                     per_controller[controller], dict(base_params),
                                 )
                             )
-    return specs + twins  # the counterfactual twins run after the main runs
+    # the counterfactual twins run after the main runs; identical specs (same name) collapse to one
+    return list({s.name: s for s in specs + twins}.values())
 
 
 def validate_matrix(specs: list[RunSpec]) -> list[str]:
@@ -167,6 +195,24 @@ def validate_matrix(specs: list[RunSpec]) -> list[str]:
     for c in sorted({s.coverage for s in specs}):
         if not 0.0 < c <= 1.0:
             problems.append(f"coverage {c} outside (0, 1]")
+    problems += name_collisions(specs)
+    return problems
+
+
+def name_collisions(specs: list[RunSpec]) -> list[str]:
+    """Specs that would share a run directory: two different specs with one name, or a repeated spec."""
+    by_name: dict[str, list[RunSpec]] = {}
+    for s in specs:
+        by_name.setdefault(s.name, []).append(s)
+    problems = []
+    for name, group in by_name.items():
+        if len(group) < 2:
+            continue
+        distinct = {json.dumps(asdict(s), sort_keys=True) for s in group}
+        if len(distinct) > 1:
+            problems.append(f"run name collision: {name} is used by {len(distinct)} different specs")
+        else:
+            problems.append(f"duplicate run: {name} appears {len(group)} times")
     return problems
 
 
@@ -239,6 +285,9 @@ def run_matrix(
     backend="local" uses worker processes on this machine; backend="modal" runs each spec in
     its own Modal cloud container (see teamb/experiments/cloud.py) with ``workers`` containers.
     """
+    collisions = name_collisions(specs)
+    if collisions:  # two workers must never write into one run directory
+        raise ValueError("; ".join(collisions))
     exp_dir = Path(exp_dir)
     runs_dir = exp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)

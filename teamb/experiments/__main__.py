@@ -73,7 +73,8 @@ def main(argv=None) -> int:
     run.add_argument("--controllers", default="fixed_time,coordinated", help="comma-separated controller names")
     run.add_argument("--seeds", default="1-3", help="e.g. 1-20 or 1,2,5")
     run.add_argument("--coverages", default="default",
-                     help="probe coverage(s), 0-1 or percent: 10,25,50,75,100; 'default' = the scenario's default")
+                     help="probe coverage(s), 0-1 or percent: 10,25,50,75,100 or 1%%,5%% ('%%' always means percent); "
+                          "'default' = the scenario's default")
     run.add_argument("--sampling", default="uniform", help="uniform, approach_biased[:ratio], speed_biased[:p] (comma-separated)")
     run.add_argument("--ev-preemption", default="on", type=_onoff, help="on, off or on,off")
     run.add_argument("--end", type=float, default=None, help="simulation end time in s (default: the scenario's duration)")
@@ -118,12 +119,16 @@ def main(argv=None) -> int:
             print(f"copied to {args.copy_to}")
         return 0
 
-    specs = build_matrix(
-        _csv(args.scenarios), _csv(args.controllers), parse_seeds(args.seeds), parse_coverages(args.coverages),
-        _csv(args.sampling), args.ev_preemption, args.end, args.controller_params, args.scenario_params,
-        counterfactual=args.counterfactual,
-    )
-    problems = validate_matrix(specs)
+    try:
+        specs = build_matrix(
+            _csv(args.scenarios), _csv(args.controllers), parse_seeds(args.seeds), parse_coverages(args.coverages),
+            _csv(args.sampling), args.ev_preemption, args.end, args.controller_params, args.scenario_params,
+            counterfactual=args.counterfactual,
+        )
+    except ValueError as exc:  # e.g. a reversed seed range or mixed --controller-params forms
+        print(f"cannot run:\n  {exc}", file=sys.stderr)
+        return 2
+    problems = validate_matrix(specs) if specs else ["the matrix is empty (check --scenarios, --controllers, --seeds)"]
     if problems:
         print("cannot run:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 2
