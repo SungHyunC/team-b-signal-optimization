@@ -57,8 +57,6 @@ CALL_TIMEOUT_S = 10.0
 MAX_QUEUED_REQUESTS = 64  # pending sim-thread requests; more -> SessionBusy (HTTP 503 / "busy" reply)
 MAX_CLIENT_BACKLOG = 256  # unsent status/reply messages per browser; more -> the socket is closed (1013)
 MAX_LIVE_EVS = 50  # emergency vehicles dispatched or en route at the same time in the twin
-
-
 KEEP_RUNS_DEFAULT = 10  # twin run folders kept under runs_dir (TWIN_KEEP_RUNS; 0 = keep all)
 # SimEnv.run_id: <scenario>__<controller>__s<seed>__c<coverage>__<sampling>__<6 hex>
 _RUN_DIR = re.compile(r"[^/]+__[^/]+__s-?\d+__c\d+__.+__[0-9a-f]{6}")

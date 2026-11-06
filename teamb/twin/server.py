@@ -52,24 +52,9 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 THREE_VERSION = "0.160.0"  # keep in sync with the importmap in static/index.html
 THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{THREE_VERSION}/"
 VENDOR_DIR = STATIC_DIR / "vendor" / f"three@{THREE_VERSION}"  # optional offline copy (python -m teamb.twin.vendor)
-MAX_WS_INFLIGHT = 16  # unanswered requests per WebSocket; more get a "busy" reply instead of a task
-
-
-class Superseded(Exception):
-    """The queued request was cancelled before it ran (a newer restart replaced it)."""
-
-
-async def await_future(fut, timeout: float):
-    """Wait for a sim-thread future; Superseded if it was cancelled rather than this task."""
-    try:
-        return await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
-    except asyncio.CancelledError:
-        task = asyncio.current_task()
-        if fut.cancelled() and not (task is not None and task.cancelling()):
-            raise Superseded("superseded by a newer restart request") from None
-        raise
 # A relative path below VENDOR_DIR: no leading "/" (pathlib would make it absolute), no "..".
 _VENDOR_PATH = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_./-]*")
+MAX_WS_INFLIGHT = 16  # unanswered requests per WebSocket; more get a "busy" reply instead of a task
 
 
 def vendor_file(path: str, base: Path | None = None) -> Path | None:
@@ -85,6 +70,21 @@ def vendor_file(path: str, base: Path | None = None) -> Path | None:
     if not local.is_relative_to(base):
         return None
     return local
+
+
+class Superseded(Exception):
+    """The queued request was cancelled before it ran (a newer restart replaced it)."""
+
+
+async def await_future(fut, timeout: float):
+    """Wait for a sim-thread future; Superseded if it was cancelled rather than this task."""
+    try:
+        return await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if fut.cancelled() and not (task is not None and task.cancelling()):
+            raise Superseded("superseded by a newer restart request") from None
+        raise
 
 
 def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | None = None) -> FastAPI:
