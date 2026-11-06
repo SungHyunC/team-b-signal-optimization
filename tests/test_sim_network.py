@@ -1,7 +1,12 @@
 """Network build cache and network_hash (sim-core-5, ext-104)."""
 from __future__ import annotations
 
+import inspect
+import os
 import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 from teamb import config
 from teamb.network import build
@@ -55,3 +60,50 @@ def test_build_digest_covers_the_detector_writer(monkeypatch):
     assert build.build_digest() != before
     monkeypatch.setattr(build, "_write_detectors", original)
     assert build.build_digest() == before
+
+
+_NO_SOURCE = """
+import inspect
+def no_source(*args, **kwargs):
+    raise OSError("could not get source code")  # a source-less (.pyc-only) or frozen install
+inspect.getsource = no_source
+from teamb.network import build
+"""
+
+
+def test_source_less_digest_is_the_same_in_every_process():
+    """Without source, the detector code fell back to repr(co_consts), whose nested <genexpr> code
+    object repr holds a memory address, so every process (every worker, every twin start) got
+    another digest and rebuilt the network. A set constant's repr order follows the hash seed."""
+    root = Path(__file__).resolve().parents[1]
+
+    def run(code, seed):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        return subprocess.run([sys.executable, "-c", _NO_SOURCE + code], cwd=root, env=env,
+                              capture_output=True, text=True, check=True).stdout
+
+    digest = "print(build.build_digest())"
+    assert run(digest, "1") == run(digest, "2")
+    a_set = """print(build._code_fingerprint(compile('x in {"a", "b", "c", "d", "e", "f"}', "<set>", "eval")))"""
+    assert run(a_set, "1") == run(a_set, "2")
+
+
+def test_source_less_fingerprint_follows_nested_code_without_addresses(monkeypatch):
+    def no_source(*args, **kwargs):
+        raise OSError("could not get source code")
+
+    monkeypatch.setattr(inspect, "getsource", no_source)
+    fallback = build._detector_code(build._write_detectors)
+    assert " at 0x" not in fallback and "code object" not in fallback and build.__file__ not in fallback
+
+    def plus_one(xs):
+        return sorted(x + 1 for x in xs)
+
+    def plus_one_again(xs):
+        return sorted(x + 1 for x in xs)
+
+    def plus_two(xs):
+        return sorted(x + 2 for x in xs)  # differs only inside the generator expression
+
+    assert build._detector_code(plus_one) == build._detector_code(plus_one_again)
+    assert build._detector_code(plus_one) != build._detector_code(plus_two)

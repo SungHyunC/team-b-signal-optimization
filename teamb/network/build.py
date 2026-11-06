@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
@@ -113,13 +114,29 @@ def _plain_xml() -> tuple[str, str]:
     return nod, edg
 
 
-def _detector_code() -> str:
+def _const_fingerprint(const: object) -> str:
+    if isinstance(const, types.CodeType):
+        return _code_fingerprint(const)
+    if isinstance(const, tuple):
+        return "(" + ",".join(_const_fingerprint(c) for c in const) + ")"
+    if isinstance(const, frozenset):  # its repr order follows the per-process string hash seed
+        return "frozenset(" + ",".join(sorted(_const_fingerprint(c) for c in const)) + ")"
+    return repr(const)
+
+
+def _code_fingerprint(code: types.CodeType) -> str:
+    """Bytecode, referenced names and constants of `code`, recursing into nested code objects
+    (a generator expression, say) instead of using their repr, which holds a memory address and
+    the file path. The same code gives the same string in every process."""
+    return "|".join((code.co_code.hex(), repr(code.co_names), *map(_const_fingerprint, code.co_consts)))
+
+
+def _detector_code(fn: types.FunctionType) -> str:
     """The detector writer's code: its source, or its bytecode where no source ships."""
     try:
-        return inspect.getsource(_write_detectors)
+        return inspect.getsource(fn)
     except (OSError, TypeError):
-        code = _write_detectors.__code__
-        return code.co_code.hex() + repr(code.co_consts)
+        return _code_fingerprint(fn.__code__)
 
 
 def build_digest(nod: str | None = None, edg: str | None = None) -> str:
@@ -134,7 +151,7 @@ def build_digest(nod: str | None = None, edg: str | None = None) -> str:
         nod, edg = _plain_xml()
     h = hashlib.sha256()
     for part in (NETWORK_VERSION, nod, edg, json.dumps(NETCONVERT_OPTIONS), repr(E2_LENGTH_M), repr(E1_SETBACK_M),
-                 _detector_code()):
+                 _detector_code(_write_detectors)):
         h.update(part.encode())
         h.update(b"\0")
     return f"{NETWORK_VERSION}:{h.hexdigest()[:16]}"
