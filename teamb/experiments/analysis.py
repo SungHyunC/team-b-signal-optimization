@@ -285,10 +285,14 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
     report["matrix"]["warmup_s"] = config.get("warmup")
     report["commands"] = [i["command"] for i in meta.get("invocations", []) if i.get("command")]
     warnings = []
-    if len(report["matrix"]["end_time"]) > 1:
+    # scenarios have their own durations (road_closure 5400 s, most others 4500 s): only several
+    # ends within one scenario need a warning
+    mixed = {s: ends for s, ends in _ends_by_scenario(rows, "scenario_variant").items() if len(ends) > 1}
+    if mixed:
         warnings.append(
-            f"runs end at different times ({', '.join(f'{x:g}' for x in report['matrix']['end_time'])} s); "
-            "each run end is reported and paired separately"
+            "runs of one scenario end at different times ("
+            + "; ".join(f"{s}: {', '.join(_end_text(e) for e in _sorted_ends(ends))}" for s, ends in mixed.items())
+            + "); each run end is reported and paired separately"
         )
     if duplicates:
         n = len(duplicates)
@@ -300,6 +304,27 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
         )
     report["warnings"] = warnings
     return report
+
+
+def _sorted_ends(ends) -> list:
+    return sorted(ends, key=lambda e: (e is None, e or 0.0))
+
+
+def _end_text(end) -> str:
+    return "unknown" if end is None else f"{end:g} s"
+
+
+def _ends_by_scenario(rows: list[dict], key: str) -> dict:
+    """{scenario: set of run ends} over report rows (`key`: "scenario_variant" or "scenario")."""
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r.get(key), set()).add(r.get("end_time"))
+    return out
+
+
+def _several_ends(rows: list[dict], key: str = "scenario") -> bool:
+    """Does one scenario appear at more than one run end among `rows`? (then tables need an end column)"""
+    return any(len(ends) > 1 for ends in _ends_by_scenario(rows, key).values())
 
 
 def _first_manifest_value(exp_dir: Path, key: str):
@@ -350,6 +375,7 @@ def _coverage_sweep(groups: dict, rows: list[dict]) -> list[dict]:
                     "controller": rs[0]["variant"],
                     "sampling": key[3],
                     "coverage": key[2],
+                    "end_time": key[5],
                     "n_seeds": len(rs),
                     "mean_delay_s": _stat([r.get("mean_delay_s") for r in rs]),
                     "delta_vs_baseline_pct": delta.get(key),
@@ -389,7 +415,7 @@ def _security_table(groups: dict) -> list[dict]:
         out.append(
             {
                 "scenario": rs[0]["scenario"], "controller": rs[0]["variant"], "coverage": key[2], "sampling": key[3],
-                "n_seeds": len(rs),
+                "end_time": key[5], "n_seeds": len(rs),
                 "detected_share": _round(sum(bool(d) for d in detected) / len(detected)) if detected else None,
                 "detection_delay_s": _stat([r.get("detection_delay_s") for r in rs]),
                 "alert_s": _stat([r.get("alert_s") for r in rs]),
@@ -476,7 +502,7 @@ def _recovery_table(groups: dict) -> list[dict]:
             continue
         row = {
             "scenario": rs[0]["scenario"], "controller": rs[0]["variant"], "coverage": key[2], "sampling": key[3],
-            "n_seeds": len(rs),
+            "end_time": key[5], "n_seeds": len(rs),
             "recovery_time_s": _stat([r.get("recovery_time_s") for r in rs]),
             "censored": sum(bool(r.get("recovery_censored")) for r in rs),
             "excess_delay_veh_h": _stat([r.get("excess_delay_veh_h") for r in rs]),
@@ -497,7 +523,7 @@ def _ev_table(groups: dict) -> list[dict]:
             continue
         row = {
             "scenario": rs[0]["scenario"], "controller": rs[0]["variant"], "coverage": key[2], "sampling": key[3],
-            "ev_preemption": key[4], "n_seeds": len(rs),
+            "ev_preemption": key[4], "end_time": key[5], "n_seeds": len(rs),
             "ev_count": _stat([r.get("ev_count") for r in rs]),
             "ev_mean_travel_time_s": _stat([r.get("ev_mean_travel_time_s") for r in rs]),
             "ev_mean_delay_s": _stat([r.get("ev_mean_delay_s") for r in rs]),
@@ -524,7 +550,7 @@ def _perf_table(groups: dict) -> list[dict]:
         out.append(
             {
                 "scenario": rs[0]["scenario"], "controller": rs[0]["variant"], "coverage": key[2], "sampling": key[3],
-                "ev_preemption": key[4], "n_seeds": len(rs),
+                "ev_preemption": key[4], "end_time": key[5], "n_seeds": len(rs),
                 **{m: _stat([r.get(m) for r in rs], 2) for m in (
                     "completed", "unfinished", "unfinished_pct", "in_network_at_end", "never_inserted", "teleports",
                     "mean_delay_s", "mean_delay_incl_unfinished_s", "mean_depart_delay_s", "mean_delay_incl_depart_s")},
@@ -577,6 +603,10 @@ def _p(v) -> str:
     return "<0.001" if v < 0.001 else f"{v:.3f}"
 
 
+def _end_cell(r: dict) -> str:
+    return f"{r['end_time']:g}" if r.get("end_time") is not None else "–"
+
+
 def _table(header: list[str], lines: list[list[str]]) -> str:
     out = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
     out += ["| " + " | ".join(str(c) for c in line) + " |" for line in lines]
@@ -614,16 +644,16 @@ def render_markdown(report: dict) -> str:
         "Unfinished % must be read next to delay (PERF-01): a controller that keeps cars out of the network can look fast.",
         "",
     ]
-    several_ends = len(m["end_time"]) > 1
     for scen in m["scenarios"]:
         srows = [r for r in rows if r["scenario_variant"] == scen]
+        several_ends = len({r.get("end_time") for r in srows}) > 1  # other scenarios may have other durations
         lines += [f"## Scenario `{scen}`", ""]
         body = []
         for r in srows:
             mm = r["metrics"]
             body.append([
                 f"**{r['variant']}**" if r["is_baseline"] else r["variant"],
-                *([f"{r['end_time']:g}" if r.get("end_time") is not None else "–"] if several_ends else []),
+                *([_end_cell(r)] if several_ends else []),
                 f"{r['coverage']:g}", r["sampling"], "on" if r["ev_preemption"] else "off", r["n_seeds"],
                 _fmt(r["mean_delay_s"]),
                 "baseline" if r["is_baseline"] else _fmt(r["delta_vs_baseline_pct"], 1, pct=True),
@@ -647,9 +677,12 @@ def render_markdown(report: dict) -> str:
         lines += ["## Coverage sweep (sampling bias)", "",
                   "Queue error = probe queue estimate (halted reports ÷ coverage) − true halted vehicles per approach, "
                   "every 5 s. Bias > 0 overestimates. Adjusted = ÷ measured penetration instead of ÷ coverage.", ""]
+        ends = _several_ends(report["coverage_sweep"])
         lines.append(_table(
-            ["scenario", "controller", "sampling", "coverage", "n", "delay s", "Δ vs base", "queue MAE", "queue bias", "adj. bias", "flow MAE veh/h", "false alarm s"],
-            [[s["scenario"], s["controller"], s["sampling"], f"{s['coverage']:g}", s["n_seeds"], _fmt(s["mean_delay_s"]),
+            ["scenario", "controller", *(["end s"] if ends else []), "sampling", "coverage", "n", "delay s", "Δ vs base",
+             "queue MAE", "queue bias", "adj. bias", "flow MAE veh/h", "false alarm s"],
+            [[s["scenario"], s["controller"], *([_end_cell(s)] if ends else []), s["sampling"], f"{s['coverage']:g}",
+              s["n_seeds"], _fmt(s["mean_delay_s"]),
               _fmt(s["delta_vs_baseline_pct"], 1, pct=True), _fmt(s["est_queue_mae"], 2), _fmt(s["est_queue_bias"], 2),
               _fmt(s["est_queue_adj_bias"], 2), _fmt(s["est_flow_mae"], 0), _fmt(s["false_alarm_s"], 0)] for s in report["coverage_sweep"]],
         ))
@@ -673,20 +706,24 @@ def render_markdown(report: dict) -> str:
                   "Extra delay near EVs = within-run, movement-stratified difference between trips overlapping an EV trip and the rest "
                   "(an indication; the clean number is the paired preemption on/off comparison when both were run).", ""]
         body = []
+        ends = _several_ends(report["emergency"])
         for e in report["emergency"]:
             eff = e.get("preemption_effect")
-            body.append([e["scenario"], e["controller"], f"{e['coverage']:g}", "on" if e["ev_preemption"] else "off", e["n_seeds"],
+            body.append([e["scenario"], e["controller"], *([_end_cell(e)] if ends else []), f"{e['coverage']:g}",
+                         "on" if e["ev_preemption"] else "off", e["n_seeds"],
                          _fmt(e["ev_count"], 1), _fmt(e["ev_mean_travel_time_s"]), _fmt(e["ev_mean_delay_s"]),
                          _fmt(e["others_mean_delay_s"]), _fmt(e["ev_extra_delay_others_s"]),
                          _fmt(eff["ev_travel_time_diff_s"]) if eff else "–", _fmt(eff["others_delay_diff_s"]) if eff else "–"])
-        lines.append(_table(["scenario", "controller", "cov", "EV pre", "n", "EVs", "EV TT s", "EV delay s", "others' delay s",
+        lines.append(_table(["scenario", "controller", *(["end s"] if ends else []), "cov", "EV pre", "n", "EVs", "EV TT s", "EV delay s", "others' delay s",
                              "extra delay near EVs s", "EV TT on−off s", "others on−off s"], body))
         lines.append("")
     if report["security"]:
         lines += ["## Fake-data attack and the cross-check", ""]
+        ends = _several_ends(report["security"])
         lines.append(_table(
-            ["scenario", "controller", "cov", "sampling", "n", "detected", "detection delay s", "alert s", "false alarm s", "delay s"],
-            [[s["scenario"], s["controller"], f"{s['coverage']:g}", s["sampling"], s["n_seeds"],
+            ["scenario", "controller", *(["end s"] if ends else []), "cov", "sampling", "n", "detected", "detection delay s",
+             "alert s", "false alarm s", "delay s"],
+            [[s["scenario"], s["controller"], *([_end_cell(s)] if ends else []), f"{s['coverage']:g}", s["sampling"], s["n_seeds"],
               "–" if s["detected_share"] is None else f"{100 * s['detected_share']:.0f}%", _fmt(s["detection_delay_s"]),
               _fmt(s["alert_s"], 0), _fmt(s["false_alarm_s"], 0), _fmt(s["mean_delay_s"])] for s in report["security"]],
         ))
@@ -698,14 +735,16 @@ def render_markdown(report: dict) -> str:
                   "profile, so the pre-event level can be out of reach; the *vs no event* columns compare with the same "
                   "seed and controller run without the event (`--counterfactual`) at the same clock time.", ""]
         body = []
+        ends = _several_ends(report["recovery"])
         for s in report["recovery"]:
             cf = s.get("vs_no_event")
-            body.append([s["scenario"], s["controller"], f"{s['coverage']:g}", s["n_seeds"], _fmt(s["recovery_time_s"], 0),
+            body.append([s["scenario"], s["controller"], *([_end_cell(s)] if ends else []), f"{s['coverage']:g}", s["n_seeds"],
+                         _fmt(s["recovery_time_s"], 0),
                          s["censored"], _fmt(s["excess_delay_veh_h"], 2),
                          _fmt(cf["recovery_s"], 0) if cf else "–", cf["censored"] if cf else "–",
                          _fmt(cf["excess_veh_h"], 2) if cf else "–", _fmt(s["spillback_duration_s"], 0)])
         lines.append(_table(
-            ["scenario", "controller", "cov", "n", "recovery s (pre-event)", "censored", "excess veh·h",
+            ["scenario", "controller", *(["end s"] if ends else []), "cov", "n", "recovery s (pre-event)", "censored", "excess veh·h",
              "recovery s (vs no event)", "censored", "excess vs no event veh·h", "spillback s"],
             body,
         ))
@@ -713,10 +752,13 @@ def render_markdown(report: dict) -> str:
     lines += ["## PERF-01: completed and unfinished trips", "",
               "Depart delay = time waiting to enter a blocked entry lane (not in the delay column, which is timeLoss). "
               "Accrued delay incl. unfinished is a lower bound: trips still driving have only part of their delay.", ""]
+    ends = _several_ends(report["perf01"])
     lines.append(_table(
-        ["scenario", "controller", "cov", "sampling", "EV pre", "n", "completed", "unfinished", "unfinished %", "never inserted",
-         "teleports", "depart delay s", "delay + depart delay s", "accrued delay incl. unfinished s (lower bound)"],
-        [[p["scenario"], p["controller"], f"{p['coverage']:g}", p["sampling"], "on" if p["ev_preemption"] else "off", p["n_seeds"],
+        ["scenario", "controller", *(["end s"] if ends else []), "cov", "sampling", "EV pre", "n", "completed", "unfinished",
+         "unfinished %", "never inserted", "teleports", "depart delay s", "delay + depart delay s",
+         "accrued delay incl. unfinished s (lower bound)"],
+        [[p["scenario"], p["controller"], *([_end_cell(p)] if ends else []), f"{p['coverage']:g}", p["sampling"],
+          "on" if p["ev_preemption"] else "off", p["n_seeds"],
           _fmt(p["completed"], 0), _fmt(p["unfinished"], 0), _fmt(p["unfinished_pct"], 1), _fmt(p["never_inserted"], 0),
           _fmt(p["teleports"], 1), _fmt(p.get("mean_depart_delay_s")), _fmt(p.get("mean_delay_incl_depart_s")),
           _fmt(p["mean_delay_incl_unfinished_s"])] for p in report["perf01"]],

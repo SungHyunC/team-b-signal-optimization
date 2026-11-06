@@ -175,3 +175,42 @@ def test_a_default_run_and_an_explicit_end_of_the_same_length_count_once(tmp_pat
     assert ft["n_seeds"] == 2 and rows_by(report, controller="max_pressure")[0]["n_paired"] == 2
     assert [d["kept"] for d in report["duplicate_runs"]] == [RunSpec("rush_hour", "fixed_time", s, 1.0).name for s in (1, 2)]
     assert report["compute"]["runs_ok"] == 6 and report["compute"]["runs_duplicate"] == 2
+
+
+def test_scenarios_with_their_own_durations_raise_no_end_warning(tmp_path):
+    # default runs end at each scenario's duration (road_closure 5400 s, rush_hour 4500 s): within
+    # every scenario all runs end together, so there is nothing to warn about and no end column
+    for scenario, end in (("rush_hour", 4500.0), ("road_closure", 5400.0)):
+        for controller, delay in (("fixed_time", 60.0), ("max_pressure", 45.0)):
+            for seed in (1, 2, 3):
+                make_run(tmp_path, RunSpec(scenario, controller, seed, 1.0), delay + seed, manifest_end=end)
+    report = build_report(tmp_path)
+    assert report["matrix"]["end_time"] == [4500.0, 5400.0]
+    assert report["warnings"] == []
+    md = render_markdown(report)
+    assert "end s" not in md and "**Warning:**" not in md and "run end 4500, 5400 s" in md
+    # one scenario at two ends still warns, names that scenario, and gets the column
+    for seed in (1, 2, 3):
+        make_run(tmp_path, RunSpec("rush_hour", "fixed_time", seed, 1.0, end_time=2700.0), 50.0 + seed)
+    report = build_report(tmp_path)
+    (warning,) = report["warnings"]
+    assert "rush_hour: 2700 s, 4500 s" in warning and "road_closure" not in warning
+    md = render_markdown(report)
+    closure, rush = md.split("## Scenario `road_closure`")[1].split("## Scenario `rush_hour`")
+    assert "| controller | end s |" in rush.split("##")[0] and "end s" not in closure
+
+
+def test_side_tables_say_which_run_end_each_row_is(tmp_path):
+    extra = {"ev_count": 2, "ev_mean_travel_time_s": 100.0, "disruptions": 1, "recovery_time_s": 60.0,
+             "attacks": 1, "attack_detected": True}
+    for end in (1500.0, 3600.0):
+        for seed in (1, 2):
+            make_run(tmp_path, RunSpec("rush_hour", "fixed_time", seed, 1.0, end_time=end), 60.0 + seed, **extra)
+            for cov in (1.0, 0.5):
+                make_run(tmp_path, RunSpec("rush_hour", "max_pressure", seed, cov, end_time=end), 40.0 + seed, **extra)
+    report = build_report(tmp_path)
+    for table in ("coverage_sweep", "emergency", "security", "recovery", "perf01"):
+        assert report[table] and {r["end_time"] for r in report[table]} == {1500.0, 3600.0}, table
+    md = render_markdown(report)
+    assert md.count("| scenario | controller | end s |") == 5  # sweep, emergency, attack, recovery, PERF-01
+    assert "| rush_hour | max_pressure | 1500 | 0.5 |" in md and "| rush_hour | max_pressure | 3600 | 0.5 |" in md
