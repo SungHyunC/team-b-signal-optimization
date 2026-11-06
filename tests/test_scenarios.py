@@ -458,3 +458,73 @@ def test_impact_cli_reads_an_experiment_folder(tmp_path):
     assert "actuated" in md and "B/C" in md
     data = json.loads((exp / "impact.json").read_text())
     assert data["rows"][0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(-15.0)
+
+
+# --- runtime bookkeeping with a fake TraCI connection (no SUMO) ------------------------------
+class _FakeVehicles:
+    def __init__(self, routes):
+        self.routes = {vid: list(r) for vid, r in routes.items()}
+        self.calls = 0
+
+    def getIDList(self):
+        return list(self.routes)
+
+    def getRoute(self, vid):
+        return tuple(self.routes[vid])
+
+    def getRouteIndex(self, vid):
+        return 0
+
+    def rerouteTraveltime(self, vid, current=False):
+        self.calls += 1  # the fastest route is the one it already has: nothing changes
+
+
+class _FakeEdges:
+    def adaptTraveltime(self, eid, value):
+        pass
+
+
+class _FakeEnv:
+    def __init__(self, topo, routes):
+        from types import SimpleNamespace
+
+        self.topology, self.t, self.events = topo, 1600.0, []
+        self.conn = SimpleNamespace(vehicle=_FakeVehicles(routes), edge=_FakeEdges())
+        self.sensors = SimpleNamespace(is_probe=lambda vid: True)
+
+    def log_event(self, event_type, /, **data):
+        self.events.append({"t": self.t, "type": event_type, **data})
+
+
+def test_rerouted_counts_vehicles_whose_route_changed_not_calls(topo):
+    from teamb.scenarios.events import ScenarioRuntime
+
+    env = _FakeEnv(topo, {"p1": ["J1_J2", "J2_N2", "N2_N3", "N3_J3", "J3_J4"]})
+    runtime = ScenarioRuntime(env, get_scenario("road_closure"))
+    runtime.closed = {"J2_J3": {"edge": "J2_J3", "cause": "flood", "since": 1500.0}}
+    runtime._refresh_detours()
+    for _ in range(3):  # three navigation updates, the route never changes
+        runtime._navigation_reroute()
+    report = runtime.report()
+    assert env.conn.vehicle.calls == 3 and report["reroute_calls"] == 3
+    assert report["rerouted"] == 0
+    env.conn.vehicle.rerouteTraveltime = lambda vid, current=False: env.conn.vehicle.routes.__setitem__(vid, ["J1_J2", "J2_N2", "N2_N3", "N3_J3", "J3_J4", "J4_E5"])
+    runtime._navigation_reroute()
+    runtime._navigation_reroute()
+    assert runtime.report()["rerouted"] == 1  # one vehicle, however often it is asked
+
+
+def test_failed_scheduled_events_are_reported_with_details(topo):
+    from teamb.scenarios.events import ScenarioRuntime
+
+    env = _FakeEnv(topo, {})
+    scenario = get_scenario("rush_hour", events=[{"time": 10, "kind": "close_road", "params": {"edge": "J2-J3"}},
+                                                 {"time": 20, "kind": "no_such_kind", "params": {}}])
+    runtime = ScenarioRuntime(env, scenario)
+    runtime._dispatch_pending(25.0)
+    report = runtime.report()
+    assert report["failed_events"] == 2
+    first, second = report["failed_event_details"]
+    assert first["kind"] == "close_road" and first["params"] == {"edge": "J2-J3"} and "unknown edge" in first["error"]
+    assert second["kind"] == "no_such_kind" and second["scheduled_at"] == 20
+    assert [e["type"] for e in env.events] == ["event_failed", "event_failed"]

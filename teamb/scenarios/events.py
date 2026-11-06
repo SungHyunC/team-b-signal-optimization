@@ -63,7 +63,9 @@ class ScenarioRuntime:
         self.history: list[dict] = []  # finished closures and attacks, for analysis
         self.teleports = 0  # SUMO teleports (vehicles stuck > --time-to-teleport) seen so far
         self.failed_events = 0
-        self.rerouted = 0  # vehicles re-routed because of closures (all causes)
+        self.failed: list[dict] = []  # each failed scheduled event: t, kind, params, error
+        self.reroute_calls = 0  # successful re-route requests (the same vehicle may be asked often)
+        self._rerouted_ids: set[str] = set()  # vehicles whose route a re-route actually changed
         self._ev_seq = 0
         self._permissions: dict[str, list[str]] = {}  # lane -> allowed classes before closing
         self._detour_edges: set[str] = set()
@@ -86,6 +88,11 @@ class ScenarioRuntime:
 
     def on_step(self, t: float) -> None:
         """Called by the env after every SUMO step."""
+        self._dispatch_pending(t)
+        self._after_events(t)
+
+    def _dispatch_pending(self, t: float) -> None:
+        """Run the scheduled events that are due; a failing one is logged, never raised."""
         while self.pending and self.pending[0].time <= t:
             event = self.pending.pop(0)
             try:
@@ -97,7 +104,11 @@ class ScenarioRuntime:
             except Exception as exc:  # a broken scheduled event must never stop the run
                 self.failed_events += 1
                 params = dict(event.params) if isinstance(event.params, dict) else repr(event.params)
-                self.env.log_event("event_failed", kind=str(event.kind), params=params, error=f"{type(exc).__name__}: {exc}")
+                error = f"{type(exc).__name__}: {exc}"
+                self.failed.append({"t": self._t(), "scheduled_at": event.time, "kind": str(event.kind), "params": params, "error": error})
+                self.env.log_event("event_failed", kind=str(event.kind), params=params, error=error)
+
+    def _after_events(self, t: float) -> None:
         sim = self.conn.simulation
         self.teleports += sim.getStartingTeleportNumber()
         if self.closed:
@@ -311,21 +322,31 @@ class ScenarioRuntime:
         for e in self.closed:
             self._detour_edges.update(routing.detour(self.topology, e, self.closed) or [])
 
-    def _route_blocked(self, vid: str) -> bool:
+    def _route_blocked(self, vid: str, route=None) -> bool:
         v = self.conn.vehicle
-        route = v.getRoute(vid)
+        route = v.getRoute(vid) if route is None else route
         return any(e in self.closed for e in route[max(0, v.getRouteIndex(vid)) + 1 :])
 
     def _reroute(self, vid: str) -> bool:
         """Re-route one vehicle on the current routing weights; True if it now avoids closures."""
+        v = self.conn.vehicle
         try:
-            self.conn.vehicle.rerouteTraveltime(vid, False)
-            ok = not self._route_blocked(vid)
+            before = v.getRoute(vid)
+            v.rerouteTraveltime(vid, False)
+            after = v.getRoute(vid)
+            ok = not self._route_blocked(vid, after)
         except traci.TraCIException:
             return False
         if ok:
-            self.rerouted += 1
+            self.reroute_calls += 1
+            if after != before:
+                self._rerouted_ids.add(vid)
         return ok
+
+    @property
+    def rerouted(self) -> int:
+        """Distinct vehicles whose route a closure-related re-route changed (all causes)."""
+        return len(self._rerouted_ids)
 
     def _reroute_around(self, edges: set[str]) -> tuple[int, int]:
         """Re-route every vehicle whose remaining route uses one of `edges`."""
@@ -476,7 +497,9 @@ class ScenarioRuntime:
         return {
             "teleports": self.teleports,
             "failed_events": self.failed_events,
+            "failed_event_details": [dict(f) for f in self.failed],
             "rerouted": self.rerouted,
+            "reroute_calls": self.reroute_calls,
             "closures_and_attacks": self.history + ongoing,
             "emergency_vehicles": [{k: v for k, v in ev.items() if k != "live"} for ev in self.evs.values()],
             "ev_preempt_distance_m": config.EV_PREEMPT_DISTANCE_M,
