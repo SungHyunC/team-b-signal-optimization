@@ -98,3 +98,26 @@ def test_archives_cannot_write_outside_their_run_folder(tmp_path):
     with pytest.raises(ValueError):
         cloud._safe_extract(evil, tmp_path / "runs", "run_a")
     assert not (tmp_path / "escape").exists()
+
+
+class FlakyRemote(FakeRemote):
+    """The first map() dies after one result, like a dropped gRPC stream."""
+
+    def __init__(self):
+        super().__init__()
+        self.maps = 0
+
+    def map(self, specs, kwargs=None, order_outputs=True, return_exceptions=False):
+        self.maps += 1
+        for i, item in enumerate(super().map(specs, kwargs, order_outputs, return_exceptions)):
+            if self.maps == 1 and i == 1:
+                raise ConnectionError("Connection lost")
+            yield item
+
+
+def test_a_dropped_client_connection_retries_only_the_missing_runs(fake, tmp_path):
+    remote = fake(FlakyRemote())
+    results = list(cloud.run_specs(_specs(), tmp_path, workers=2))
+    assert remote.maps == 2
+    assert sorted(r["status"] for r in results) == ["ok", "ok"]
+    assert remote.sent == [_specs()[0].name, _specs()[1].name, _specs()[1].name]

@@ -54,6 +54,7 @@ RUNTIME_PACKAGES = ("eclipse-sumo", "traci", "sumolib", "libsumo", "numpy", "opt
 CPU_PER_RUN = 1.0
 MEMORY_MB = 2048
 RUN_TIMEOUT_S = 3600
+CLIENT_ATTEMPTS = 3  # whole map attempts after a client-side connection loss
 RL_EPISODE_TIMEOUT_S = 3600
 
 
@@ -158,29 +159,39 @@ def run_specs(specs, runs_dir: Path, *, workers: int, force: bool = False, git_r
             todo.append(spec)
     if not todo:
         return
-    returned: set[str] = set()
     errors: list[str] = []
-    with modal.enable_output(), app.run():
-        fn = run_remote.with_options(max_containers=max(1, int(workers)))
-        for res in fn.map(
-            [asdict(s) for s in todo], kwargs={"git_revision": git_revision}, order_outputs=False, return_exceptions=True
-        ):
-            if isinstance(res, BaseException):  # infrastructure error after retries; named below
-                errors.append(f"{type(res).__name__}: {res}")
-                continue
-            blob = res.pop("archive", None)
-            name = res["run"]
-            returned.add(name)
-            out = runs_dir / name
-            if out.exists():
-                shutil.rmtree(out)
-            if blob:
-                _safe_extract(blob, runs_dir, name)
-            res["backend"] = "modal"
-            yield res
-    for spec in todo:  # runs lost to infrastructure errors still get a named failure
-        if spec.name not in returned:
-            yield {"run": spec.name, "status": "failed", "error": "cloud: " + (errors[0] if errors else "no result returned")}
+    for attempt in range(1, CLIENT_ATTEMPTS + 1):
+        returned: set[str] = set()
+        try:
+            with modal.enable_output(), app.run():
+                fn = run_remote.with_options(max_containers=max(1, int(workers)))
+                for res in fn.map(
+                    [asdict(s) for s in todo], kwargs={"git_revision": git_revision}, order_outputs=False,
+                    return_exceptions=True,
+                ):
+                    if isinstance(res, BaseException):  # one input failed after Modal's retries
+                        errors.append(f"{type(res).__name__}: {res}")
+                        continue
+                    blob = res.pop("archive", None)
+                    name = res["run"]
+                    returned.add(name)
+                    out = runs_dir / name
+                    if out.exists():
+                        shutil.rmtree(out)
+                    if blob:
+                        _safe_extract(blob, runs_dir, name)
+                    res["backend"] = "modal"
+                    yield res
+        except Exception as exc:  # noqa: BLE001 - client-side loss (e.g. gRPC "Connection lost"): retry the rest
+            errors.append(f"{type(exc).__name__}: {exc}")
+        todo = [s for s in todo if s.name not in returned]
+        if not todo:
+            return
+        if attempt < CLIENT_ATTEMPTS:
+            print(f"cloud: {len(todo)} run(s) without a result ({errors[-1][:200]}); retrying them "
+                  f"(attempt {attempt + 1}/{CLIENT_ATTEMPTS})", flush=True)
+    for spec in todo:  # still lost after every attempt: a named failure, so the next invocation re-runs it
+        yield {"run": spec.name, "status": "failed", "error": "cloud: " + (errors[-1] if errors else "no result returned")}
 
 
 @contextmanager
