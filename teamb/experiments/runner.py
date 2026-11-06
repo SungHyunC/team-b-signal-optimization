@@ -2,9 +2,16 @@
 
 Each run is one ``SimEnv(...).run()`` writing into
 ``results/experiments/<name>/runs/<run name>/`` (the usual run outputs plus
-``run_spec.json`` and ``events.json``). Runs that already have a ``summary.json`` are
-skipped, so an interrupted experiment can be resumed and new controllers or seeds can be
-added to an existing experiment later (``--force`` re-runs).
+``run_spec.json`` and ``events.json``). Finished runs are skipped, so an interrupted
+experiment can be resumed and new controllers or seeds can be added to an existing
+experiment later (``--force`` re-runs).
+
+A run counts as finished (see :func:`run_status`) only if its ``summary.json`` parses, is not
+marked ``"complete": false``, no ``error.json`` sits next to it, and ``sim_time_s`` reached the
+run's end time. Before a finished run is skipped, its saved ``run_spec.json`` is compared with
+the requested spec; a mismatch is reported as a failure instead of silently reusing another
+run's results. A failed or interrupted run (including Ctrl-C) leaves ``error.json`` and no
+``summary.json``, so the next invocation runs it again.
 
 Runs execute in parallel worker processes (``workers``); each worker starts its own SUMO.
 """
@@ -12,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import multiprocessing
 import shutil
 import sys
@@ -22,6 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from teamb import config
+from teamb.fsutil import atomic_write_json, atomic_write_text, read_json
 
 EXPERIMENTS_DIR = config.RESULTS / "experiments"
 
@@ -220,17 +229,122 @@ def _dir_bytes(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
+# the RunSpec fields a saved run_spec.json must match before its results are reused
+SPEC_KEYS = ("scenario", "controller", "seed", "coverage", "sampling", "ev_preemption",
+             "end_time", "controller_params", "scenario_params")
+
+
+def _same(a, b) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return math.isclose(float(a), float(b), rel_tol=0.0, abs_tol=1e-9)
+    return a == b
+
+
+def spec_mismatch(saved: dict, spec: RunSpec) -> list[str]:
+    """Fields where a saved run_spec.json differs from `spec`, e.g. ["end_time (saved 1200.0, requested 2000.0)"].
+
+    end_time None means "the scenario's duration", so None and an explicit end equal to that
+    duration are the same run (an experiment from before end_time was part of the run name)."""
+    out = []
+    for key in SPEC_KEYS:
+        if key not in saved:
+            continue
+        a, b = saved[key], getattr(spec, key)
+        if key == "end_time" and (a is None) != (b is None):
+            a, b = (scenario_end(spec) if a is None else a), (scenario_end(spec) if b is None else b)
+        if not _same(a, b):
+            out.append(f"{key} (saved {saved[key]!r}, requested {getattr(spec, key)!r})")
+    return out
+
+
+def scenario_end(spec: RunSpec) -> float | None:
+    """The end time `spec` runs to: its end_time, else the scenario's duration (None if unknown)."""
+    if spec.end_time is not None:
+        return float(spec.end_time)
+    try:
+        from teamb.scenarios import get_scenario
+
+        return float(get_scenario(spec.scenario, **(spec.scenario_params or {})).duration)
+    except Exception:  # unknown scenario or parameters: the completeness check falls back to the manifest
+        return None
+
+
+def _number(v) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+
+def run_status(run_dir: str | Path, *, expected_end: float | None = None,
+               default_end: float | None = None) -> tuple[str, dict | None, str | None]:
+    """Did the run in `run_dir` finish? Returns (status, summary or None, reason or None).
+
+    status "ok"         summary.json parses as an object, is not marked "complete": false (legacy
+                        summaries have no key), there is no error.json, and sim_time_s reached the
+                        end time when it is known: `expected_end`, else the manifest's
+                        config.end_time, else `default_end`
+    status "failed"     error.json is present (reason = its error message)
+    status "incomplete" anything else: no or unreadable summary.json, or a truncated run
+    """
+    run_dir = Path(run_dir)
+    summary = read_json(run_dir / "summary.json")
+    summary = summary if isinstance(summary, dict) else None
+    if (run_dir / "error.json").exists():
+        err = read_json(run_dir / "error.json", {})
+        return "failed", summary, (err.get("error") if isinstance(err, dict) else None) or "error.json present"
+    if summary is None:
+        missing = not (run_dir / "summary.json").exists()
+        return "incomplete", None, "no summary.json" if missing else "unreadable summary.json"
+    if summary.get("complete", True) is False:
+        return "incomplete", summary, "summary.json is marked complete: false"
+    end = _number(expected_end)
+    if end is None:
+        manifest = read_json(run_dir / "manifest.json", {})
+        end = _number((manifest.get("config") or {}).get("end_time")) if isinstance(manifest, dict) else None
+    if end is None:
+        end = _number(default_end)
+    sim = _number(summary.get("sim_time_s"))
+    if end is not None and sim is not None and sim + 1e-6 < end:
+        return "incomplete", summary, f"stopped at sim_time_s {sim:g} before the end time {end:g}"
+    return "ok", summary, None
+
+
+def check_resume(spec: RunSpec, runs_dir: str | Path) -> dict | None:
+    """The result for a run that need not execute again, or None if it must (re-)run.
+
+    {"status": "skipped", "summary"} for a finished run of exactly this spec; {"status": "failed",
+    "error": "spec mismatch: ..."} when the directory holds a finished run of a different spec
+    (its results are kept, never reused). Failed, interrupted or truncated runs return None.
+    Also used by the cloud backend, so local and Modal runs resume the same way."""
+    out = Path(runs_dir) / spec.name
+    if not out.is_dir():
+        return None
+    status, summary, _ = run_status(out, expected_end=spec.end_time, default_end=scenario_end(spec))
+    saved = read_json(out / "run_spec.json")
+    if status != "ok" or not isinstance(saved, dict):
+        return None
+    diff = spec_mismatch(saved, spec)
+    if diff:
+        return {
+            "run": spec.name, "status": "failed",
+            "error": f"spec mismatch: {'; '.join(diff)}. {out} holds a different run; delete it or re-run with --force",
+        }
+    return {"run": spec.name, "status": "skipped", "summary": summary}
+
+
 def run_one(spec_dict: dict, runs_dir: str, force: bool = False) -> dict:
-    """Execute one run (in a worker process). Never raises: failures are reported and logged."""
+    """Execute one run (in a worker process). Failures are reported and logged in error.json;
+    only an interruption (KeyboardInterrupt, SystemExit) is re-raised, after writing error.json."""
     spec = RunSpec(**spec_dict)
     out = Path(runs_dir) / spec.name
-    if (out / "summary.json").exists() and not force:
-        return {"run": spec.name, "status": "skipped", "summary": json.loads((out / "summary.json").read_text())}
-    if out.exists() and force:
+    if not force:
+        done = check_resume(spec, runs_dir)
+        if done is not None:
+            return done
+    if out.exists():  # forced, or a failed / interrupted / truncated run: start from a clean directory
         shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": spec.name, "variant": spec.variant}, indent=2))
-    (out / "error.json").unlink(missing_ok=True)
+    atomic_write_json(out / "run_spec.json", {**asdict(spec), "name": spec.name, "variant": spec.variant})
     t0 = time.time()
     try:
         from teamb.sim.env import SimEnv
@@ -248,15 +362,23 @@ def run_one(spec_dict: dict, runs_dir: str, force: bool = False) -> dict:
             output_dir=out,
         )
         summary = env.run()
-        (out / "events.json").write_text(json.dumps(env.events, indent=1, default=str))
-    except Exception as exc:  # one broken run must not stop the experiment
-        (out / "error.json").write_text(
-            json.dumps({"error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()}, indent=2)
-        )
-        return {"run": spec.name, "status": "failed", "error": f"{type(exc).__name__}: {exc}", "wall_total_s": round(time.time() - t0, 2)}
+        atomic_write_text(out / "events.json", json.dumps(env.events, indent=1, default=str))
+        status, _, reason = run_status(out, expected_end=getattr(env, "end_time", None), default_end=scenario_end(spec))
+        if status != "ok":
+            raise RuntimeError(f"the run returned without a complete summary.json ({reason})")
+    except BaseException as exc:  # one broken run must not stop the experiment
+        interrupted = not isinstance(exc, Exception)
+        error = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        # a summary written on the way out describes a partial run: never let it pass as finished
+        (out / "summary.json").unlink(missing_ok=True)
+        atomic_write_json(out / "error.json", {"error": error, "interrupted": interrupted, "traceback": traceback.format_exc()})
+        if interrupted:  # Ctrl-C / SystemExit: leave the failure marker, then stop
+            raise
+        return {"run": spec.name, "status": "failed", "error": error, "wall_total_s": round(time.time() - t0, 2)}
     wall = round(time.time() - t0, 2)
-    (out / "run_spec.json").write_text(
-        json.dumps({**asdict(spec), "name": spec.name, "variant": spec.variant, "wall_total_s": wall, "bytes": _dir_bytes(out)}, indent=2)
+    atomic_write_json(
+        out / "run_spec.json",
+        {**asdict(spec), "name": spec.name, "variant": spec.variant, "wall_total_s": wall, "bytes": _dir_bytes(out)},
     )
     return {"run": spec.name, "status": "ok", "summary": summary, "wall_total_s": wall}
 

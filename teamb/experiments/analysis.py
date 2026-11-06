@@ -27,6 +27,8 @@ import time
 from pathlib import Path
 
 from teamb.evaluation.stats import holm, mean_ci, paired
+from teamb.experiments.runner import run_status
+from teamb.fsutil import read_json
 
 ROW_METRICS = ("mean_delay_s", "p95_travel_time_s", "stops_per_veh", "unfinished_pct", "ev_mean_travel_time_s")
 EXTRA_METRICS = (
@@ -65,15 +67,20 @@ def _stat(values, digits=3) -> dict:
 
 
 def load_runs(exp_dir: Path) -> list[dict]:
-    """One flat dict per run directory: identity fields + scalar summary metrics."""
+    """One flat dict per run directory: identity fields + scalar summary metrics.
+
+    status "ok" only for a finished run (runner.run_status: summary.json parses, is not marked
+    incomplete, no error.json, and the run reached its end time); "failed" when error.json is
+    present; "incomplete" otherwise (still running, killed, or a truncated legacy summary).
+    Only "ok" runs enter the statistics; "error" says why the others did not."""
     runs = []
     runs_dir = Path(exp_dir) / "runs"
     if not runs_dir.exists():
         return runs
     for d in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
-        spec = json.loads((d / "run_spec.json").read_text()) if (d / "run_spec.json").exists() else {}
-        summary = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else None
-        error = json.loads((d / "error.json").read_text()).get("error") if (d / "error.json").exists() else None
+        spec = read_json(d / "run_spec.json", {})
+        spec = spec if isinstance(spec, dict) else {}
+        status, summary, error = run_status(d, expected_end=spec.get("end_time"))
         src = summary or {}
         scenario = spec.get("scenario", src.get("scenario"))
         controller = spec.get("controller", src.get("controller"))
@@ -89,7 +96,7 @@ def load_runs(exp_dir: Path) -> list[dict]:
             "sampling": spec.get("sampling", src.get("sampling", "uniform")),
             "ev_preemption": spec.get("ev_preemption", src.get("ev_preemption", True)),
             "end_time": spec.get("end_time", src.get("sim_time_s")),
-            "status": "ok" if summary else ("failed" if error else "incomplete"),
+            "status": status,
             "error": error,
             "wall_total_s": spec.get("wall_total_s"),
             "bytes": spec.get("bytes"),
@@ -221,6 +228,7 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
         "perf01": _perf_table(groups),
         "compute": _compute(runs, meta),
         "failed_runs": [{"name": r["name"], "error": r["error"]} for r in runs if r["status"] == "failed"],
+        "incomplete_runs": [{"name": r["name"], "reason": r["error"]} for r in runs if r["status"] == "incomplete"],
         "code_revision": _first_manifest_value(exp_dir, "code_revision"),
         "sumo_version": _first_manifest_value(exp_dir, "sumo_version"),
     }
@@ -447,6 +455,7 @@ def _compute(runs: list[dict], meta: dict) -> dict:
     return {
         "runs_ok": len(ok),
         "runs_failed": sum(r["status"] == "failed" for r in runs),
+        "runs_incomplete": sum(r["status"] == "incomplete" for r in runs),
         "experiment_wall_time_s": round(sum(i.get("wall_time_s", 0) for i in meta.get("invocations", [])), 1),
         "sum_run_wall_time_s": round(run_wall, 1),
         "workers": sorted({i.get("workers") for i in meta.get("invocations", [])}),
@@ -617,7 +626,7 @@ def render_markdown(report: dict) -> str:
         "",
         "## Compute cost",
         "",
-        f"{c['runs_ok']} runs ok, {c['runs_failed']} failed · experiment wall time {c['experiment_wall_time_s']} s with "
+        f"{c['runs_ok']} runs ok, {c['runs_failed']} failed, {c.get('runs_incomplete', 0)} incomplete · experiment wall time {c['experiment_wall_time_s']} s with "
         f"{c['workers']} worker(s) · sum of run wall times {c['sum_run_wall_time_s']} s · "
         f"{c['sim_speedup']}× faster than real time per run · data {c['data_bytes'] / 1e6:.1f} MB "
         f"({c['data_mb_per_run']} MB/run, {c['data_mb_per_sim_hour']} MB per simulated hour).",
@@ -628,6 +637,9 @@ def render_markdown(report: dict) -> str:
     ]
     if report["failed_runs"]:
         lines += ["## Failed runs", ""] + [f"- `{f['name']}`: {f['error']}" for f in report["failed_runs"]] + [""]
+    if report.get("incomplete_runs"):
+        lines += ["## Incomplete runs (not in the statistics)", ""]
+        lines += [f"- `{f['name']}`: {f['reason']}" for f in report["incomplete_runs"]] + [""]
     lines += [
         "## Caveats",
         "",

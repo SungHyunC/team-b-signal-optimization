@@ -34,7 +34,9 @@ from pathlib import Path
 
 from teamb.experiments.analysis import write_report
 from teamb.experiments.accuracy import audit_specs
-from teamb.experiments.runner import EXPERIMENTS_DIR, build_matrix, parse_coverages, parse_seeds, run_matrix, validate_matrix
+from teamb.experiments.runner import (
+    EXPERIMENTS_DIR, build_matrix, parse_coverages, parse_seeds, run_matrix, run_status, validate_matrix,
+)
 
 
 def _csv(text: str) -> list[str]:
@@ -103,8 +105,10 @@ def main(argv=None) -> int:
 
     if args.command == "list":
         for d in sorted(EXPERIMENTS_DIR.glob("*/")):
-            n = len(list((d / "runs").glob("*/summary.json")))
-            print(f"{d.name}: {n} finished runs" + (" · report.md" if (d / "report.md").exists() else ""))
+            runs = [r for r in (d / "runs").glob("*/") if r.is_dir()]
+            n = sum(run_status(r)[0] == "ok" for r in runs)
+            rest = f", {len(runs) - n} failed or incomplete" if len(runs) > n else ""
+            print(f"{d.name}: {n} finished runs{rest}" + (" · report.md" if (d / "report.md").exists() else ""))
         return 0
 
     exp_dir = EXPERIMENTS_DIR / args.name

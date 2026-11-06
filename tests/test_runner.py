@@ -80,3 +80,154 @@ def test_cli_rejects_bad_matrices_before_running(capsys):
     assert "invalid seed range" in capsys.readouterr().err
     assert main(["run", "--name", "t", "--controllers", "fixed_time,fixed_time", "--seeds", "1", "--dry-run"]) == 0
     assert capsys.readouterr().out.strip().endswith("1 runs")
+
+
+# --- run completeness and resume (evaluation-1, ext-94, contract 2) ---------------------------
+import json  # noqa: E402
+from dataclasses import asdict  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from teamb.experiments.runner import check_resume, run_one, run_status, spec_mismatch  # noqa: E402
+
+
+class FakeEnv:
+    """Stands in for SimEnv: writes a summary like SimEnv.close() does, then behaves as told."""
+
+    behaviour = "ok"  # ok | raise | interrupt | truncate | legacy_ok
+    calls = 0
+
+    def __init__(self, scenario, controller, *, end_time=None, output_dir=None, **kwargs):
+        self.end_time = float(end_time if end_time is not None else 4500.0)
+        self.out = Path(output_dir)
+        self.events = [{"t": 0.0, "type": "started"}]
+
+    def run(self):
+        FakeEnv.calls += 1
+        partial = FakeEnv.behaviour in ("raise", "interrupt", "truncate")
+        summary = {"mean_delay_s": 10.0, "sim_time_s": self.end_time / 2 if partial else self.end_time}
+        if FakeEnv.behaviour == "ok":
+            summary["complete"] = True
+        (self.out / "summary.json").write_text(json.dumps(summary))
+        if FakeEnv.behaviour == "raise":
+            raise RuntimeError("boom at t=1000")
+        if FakeEnv.behaviour == "interrupt":
+            raise KeyboardInterrupt
+        return summary
+
+
+@pytest.fixture
+def fake_env(monkeypatch):
+    import teamb.sim.env
+
+    monkeypatch.setattr(teamb.sim.env, "SimEnv", FakeEnv)
+    FakeEnv.behaviour, FakeEnv.calls = "ok", 0
+    return FakeEnv
+
+
+SPEC = RunSpec("rush_hour", "fixed_time", 1, 1.0, end_time=600.0)
+
+
+def test_failed_run_leaves_no_summary_and_is_rerun(tmp_path, fake_env):
+    fake_env.behaviour = "raise"
+    res = run_one(asdict(SPEC), str(tmp_path))
+    out = tmp_path / SPEC.name
+    assert res["status"] == "failed" and "boom" in res["error"]
+    assert not (out / "summary.json").exists() and (out / "error.json").exists()
+    assert run_status(out)[0] == "failed" and check_resume(SPEC, tmp_path) is None
+    fake_env.behaviour = "ok"
+    again = run_one(asdict(SPEC), str(tmp_path))
+    assert again["status"] == "ok" and fake_env.calls == 2 and not (out / "error.json").exists()
+    assert run_one(asdict(SPEC), str(tmp_path))["status"] == "skipped" and fake_env.calls == 2
+
+
+def test_interrupted_run_writes_error_json_and_reraises(tmp_path, fake_env):
+    fake_env.behaviour = "interrupt"
+    with pytest.raises(KeyboardInterrupt):
+        run_one(asdict(SPEC), str(tmp_path))
+    out = tmp_path / SPEC.name
+    err = json.loads((out / "error.json").read_text())
+    assert err["interrupted"] is True and err["error"] == "KeyboardInterrupt"
+    assert not (out / "summary.json").exists()
+    fake_env.behaviour = "ok"
+    assert run_one(asdict(SPEC), str(tmp_path))["status"] == "ok"
+
+
+def test_truncated_or_unfinished_summaries_are_not_done(tmp_path, fake_env):
+    out = tmp_path / SPEC.name
+    out.mkdir(parents=True)
+    (out / "run_spec.json").write_text(json.dumps(asdict(SPEC)))
+    # a legacy summary (no "complete" key) from a run killed at t = 300 of 600
+    (out / "summary.json").write_text(json.dumps({"mean_delay_s": 5.0, "sim_time_s": 300.0}))
+    status, _, reason = run_status(out, expected_end=600.0)
+    assert status == "incomplete" and "300" in reason
+    assert check_resume(SPEC, tmp_path) is None
+    (out / "summary.json").write_text(json.dumps({"mean_delay_s": 5.0, "sim_time_s": 600.0, "complete": False}))
+    assert run_status(out)[0] == "incomplete"
+    (out / "summary.json").write_text("")  # a worker killed mid-write
+    assert run_status(out)[0] == "incomplete"
+    assert run_one(asdict(SPEC), str(tmp_path))["status"] == "ok" and fake_env.calls == 1
+    # the end time comes from the manifest when the spec has none
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "summary.json").write_text(json.dumps({"mean_delay_s": 5.0, "sim_time_s": 2411.0}))
+    (legacy / "manifest.json").write_text(json.dumps({"config": {"end_time": 4500.0}}))
+    assert run_status(legacy)[0] == "incomplete"
+    (legacy / "summary.json").write_text(json.dumps({"mean_delay_s": 5.0, "sim_time_s": 4500.0}))
+    assert run_status(legacy)[0] == "ok"
+
+
+def test_resume_refuses_a_directory_that_holds_another_spec(tmp_path, fake_env):
+    run_one(asdict(SPEC), str(tmp_path))
+    out = tmp_path / SPEC.name
+    saved = json.loads((out / "run_spec.json").read_text())
+    saved["coverage"] = 0.125  # e.g. written under the old lossy name by another coverage
+    (out / "run_spec.json").write_text(json.dumps(saved))
+    res = run_one(asdict(SPEC), str(tmp_path))
+    assert res["status"] == "failed" and res["error"].startswith("spec mismatch: coverage")
+    assert fake_env.calls == 1 and (out / "summary.json").exists()  # the other run is kept
+    assert run_one(asdict(SPEC), str(tmp_path), force=True)["status"] == "ok"
+
+
+def test_spec_mismatch_treats_default_end_as_the_scenario_duration():
+    spec = RunSpec("rush_hour", "fixed_time", 1, 1.0)
+    from teamb.experiments.runner import scenario_end
+
+    duration = scenario_end(spec)
+    assert duration and spec_mismatch({**asdict(spec), "end_time": duration}, spec) == []
+    assert spec_mismatch({**asdict(spec), "end_time": 1200.0}, spec) == ["end_time (saved 1200.0, requested None)"]
+    assert spec_mismatch({"seed": 1, "ev_preemption": True}, spec) == []
+
+
+def test_report_keeps_failed_and_truncated_runs_out_of_the_statistics(tmp_path, fake_env):
+    from teamb.experiments.analysis import build_report, load_runs, render_markdown
+    from teamb.experiments.runner import run_matrix
+
+    specs = [RunSpec("rush_hour", c, s, 1.0, end_time=600.0) for c in ("fixed_time", "coordinated") for s in (1, 2)]
+    run_matrix(specs, tmp_path, workers=1, quiet=True)
+    bad = tmp_path / "runs" / specs[3].name  # coordinated seed 2: truncated legacy summary
+    (bad / "summary.json").write_text(json.dumps({"mean_delay_s": 1.0, "sim_time_s": 300.0}))
+    fake_env.behaviour = "raise"
+    failed = specs[2]
+    run_one(asdict(failed), str(tmp_path / "runs"), force=True)
+    status = {r["name"]: r["status"] for r in load_runs(tmp_path)}
+    assert status[failed.name] == "failed" and status[specs[3].name] == "incomplete"
+    report = build_report(tmp_path)
+    assert [f["name"] for f in report["failed_runs"]] == [failed.name]
+    assert [f["name"] for f in report["incomplete_runs"]] == [specs[3].name]
+    assert all(r["controller"] != "coordinated" for r in report["rows"])
+    assert "## Incomplete runs" in render_markdown(report)
+
+
+def test_audit_rejects_a_truncated_run(tmp_path):
+    from teamb.experiments.accuracy import audit_specs
+
+    for spec in (SPEC, RunSpec("rush_hour", "max_pressure", 1, 1.0, end_time=600.0)):
+        d = tmp_path / "runs" / spec.name
+        d.mkdir(parents=True)
+        (d / "run_spec.json").write_text(json.dumps(asdict(spec)))
+        sim = 300.0 if spec.controller == "fixed_time" else 600.0
+        (d / "summary.json").write_text(json.dumps({"mean_delay_s": 12.0, "sim_time_s": sim}))
+        (d / "manifest.json").write_text(json.dumps({"seed": 1, "code_revision": "a", "sumo_version": "1", "network_hash": "n"}))
+    audit = audit_specs(tmp_path, [SPEC, RunSpec("rush_hour", "max_pressure", 1, 1.0, end_time=600.0)])
+    assert not audit["complete"] and audit["valid_runs"] == 1
+    assert any("did not finish" in p for p in audit["problems"])
