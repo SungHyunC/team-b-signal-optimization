@@ -343,6 +343,51 @@ def test_ai_recommender_rejects_stale_observations_against_the_sim_clock(topo):
     assert ctl.guard.rejected["stale"] == 2 and ctl.t == 115
 
 
+class _StubJob:
+    def __init__(self):
+        self.cancelled = 0
+
+    def cancel(self):
+        self.cancelled += 1
+
+    def poll(self):
+        return []
+
+
+def test_ai_recommender_reports_a_search_cut_off_by_the_end_of_the_run(topo):
+    ctl = ready("ai_recommender", topo)
+    ctl.propose_action(make_state(topo, 600))
+    rec = {"id": "rec1-t600", "status": "searching", "created_t": 600.0, "plan": None, "note": ""}
+    ctl.recommendation = rec
+    ctl.history.append(rec)
+    ctl._job = job = _StubJob()
+    summary = ctl.summary()  # SimEnv asks for the summary before close()
+    row = summary["recommendations"][0]
+    assert row["status"] == "cancelled" and "auto_approve" in row["note"] and row["decided_by"] == "system"
+    assert summary["plan_applied"] is False
+    ctl.close()
+    assert ctl._job is None and job.cancelled == 1
+    assert rec["status"] == "cancelled" and rec["decided_t"] == 600.0
+    assert [e["type"] for e in ctl.drain_events()] == ["recommendation_cancelled"]
+
+
+def test_ai_recommender_auto_approve_applies_the_plan(topo, monkeypatch):
+    from teamb.controllers import optimizer
+
+    plan = {"cycle": 70.0, "splits": {j: 0.6 for j in topo.tls_ids}, "offsets": {j: 0.0 for j in topo.tls_ids}}
+    monkeypatch.setattr(optimizer, "run_search", lambda spec, progress=None: {
+        "plan": plan, "expected": {"mean_delay_s": 30.0, "baseline_mean_delay_s": 40.0, "improvement_pct": 25.0},
+        "note": "", "trials": spec.trials, "wall_s": 0.0})
+    ctl = ready("ai_recommender", topo, auto_approve=True, search_at=10, cache=False)
+    assert ctl.sync, "auto_approve searches synchronously by default"
+    for t in range(0, 12):
+        ctl.observe(make_obs(topo, t))
+        ctl.propose_action(make_state(topo, t))
+        ctl.log(t)
+    assert ctl.recommendation["status"] == "approved" and ctl.plan.cycle == 70.0
+    assert ctl.summary()["plan_applied"] is True
+
+
 # --- RL ------------------------------------------------------------------------------------
 def test_qtable_file_is_checked(tmp_path):
     table = QTable()
