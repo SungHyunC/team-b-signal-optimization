@@ -153,7 +153,8 @@ export function translatePage(root = document) {
 }
 
 /** EN | 한국어 buttons. stateParams() returns URL parameters that bring the viewer back to
- *  the same moment after the reload (scenario, controller, start, speed, ...). */
+ *  the same moment after the reload (scenario, controller, start, speed, ...); a null value
+ *  removes that parameter from the URL. */
 export function mountLanguageSwitch(root, stateParams = () => ({})) {
   for (const [code, label] of Object.entries(LANGS)) {
     const b = document.createElement('button');
@@ -174,7 +175,10 @@ export function switchLanguage(next, params = {}) {
     // the URL parameter below still carries the choice
   }
   const url = new URL(location.href);
-  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === '') url.searchParams.delete(k); // e.g. a demand= left over from an earlier link
+    else url.searchParams.set(k, v);
+  }
   url.searchParams.set('lang', next);
   location.replace(url.toString());
 }
