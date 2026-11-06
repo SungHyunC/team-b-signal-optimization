@@ -6,11 +6,17 @@ Train with `python -m teamb.controllers.rl_train`; it writes models/rl_qtable.js
 Every `interval` (5 s), each junction that has shown green for `min_green` s picks
     action 0 = keep the green        action 1 = switch to the other axis
 
-State, from loop detectors only (2 × 6 × 6 × 4 = 288 states):
+State, from loop detectors only (feature set "v1": 2 × 6 × 6 × 4 = 288 states):
     axis      which axis is green (EW / NS)
     serving   cars on the green axis' detectors (detector.count: still to be served)  6 buckets
     waiting   stopped cars on the red axis (detector.queue)                           6 buckets
     elapsed   seconds of green so far                                                 4 buckets
+Feature set "v2" (576 states) adds one bit:
+    green_blocked  downstream blocked: after 15 s of green at least half of the green axis'
+                   cars (and ≥ 4) are still stopped — spillback or a closed exit, so the
+                   green is not discharging. v1 cannot tell a stuck green from a busy one.
+The model file names its feature set, and the controller encodes states with that set, so
+v1 files (the committed model) keep loading unchanged. Train v2 with `rl_train --features v2`.
 
 Reward every tick (5 s) for each junction:
     r = −(stopped cars on all four approaches) / reward_scale     and −switch_penalty for a switch
@@ -63,25 +69,56 @@ QUEUE_BINS = (1, 3, 6, 10, 15)  # bucket edges in cars: 0 | 1-2 | 3-5 | 6-9 | 10
 GREEN_BINS = (15, 30, 50)  # bucket edges in seconds of green
 FEATURES = {"queue_bins": list(QUEUE_BINS), "green_bins": list(GREEN_BINS), "axes": list(AXES),
             "state": ["axis", "serving_count", "waiting_queue", "green_elapsed"], "actions": ["keep", "switch"]}
+FEATURES_V2 = {**FEATURES, "version": 2, "state": FEATURES["state"] + ["green_blocked"],
+               "green_blocked": {"min_green_s": 15.0, "min_stopped": 4, "stopped_share": 0.5}}
+FEATURE_SETS = {"v1": FEATURES, "v2": FEATURES_V2}  # name → definition stored in the model file
 N_Q, N_G = len(QUEUE_BINS) + 1, len(GREEN_BINS) + 1
-N_STATES = len(AXES) * N_Q * N_Q * N_G
+N_BASE = len(AXES) * N_Q * N_Q * N_G  # states of the four v1 features
+N_STATES = N_BASE  # v1 (the committed model)
 FORMAT = "teamb-rl-qtable/1"
+
+
+def feature_version(features: dict) -> str:
+    """Name of a known feature set ("v1", "v2"); anything else needs retraining."""
+    for name, known in FEATURE_SETS.items():
+        if features == known:
+            return name
+    raise ValueError("Q-table was trained with different features; retrain with rl_train")
+
+
+def n_states(features: dict = FEATURES) -> int:
+    return N_BASE * (2 if "green_blocked" in features["state"] else 1)
 
 
 def bucket(value: float, edges) -> int:
     return sum(value >= e for e in edges)
 
 
-def encode_state(axis: str, serving: float, waiting: float, green_s: float) -> int:
+def encode_state(axis: str, serving: float, waiting: float, green_s: float, blocked: bool = False,
+                 features: dict = FEATURES) -> int:
     a, g, r, d = AXES.index(axis), bucket(serving, QUEUE_BINS), bucket(waiting, QUEUE_BINS), bucket(green_s, GREEN_BINS)
-    return ((a * N_Q + g) * N_Q + r) * N_G + d
+    base = ((a * N_Q + g) * N_Q + r) * N_G + d
+    return base + N_BASE * int(bool(blocked)) if "green_blocked" in features["state"] else base
 
 
-def decode_state(s: int) -> dict:
+def decode_state(s: int, features: dict = FEATURES) -> dict:
+    blocked, s = divmod(s, N_BASE)
     s, d = divmod(s, N_G)
     s, r = divmod(s, N_Q)
     a, g = divmod(s, N_Q)
-    return {"axis": AXES[a], "serving_bucket": g, "waiting_bucket": r, "green_bucket": d}
+    out = {"axis": AXES[a], "serving_bucket": g, "waiting_bucket": r, "green_bucket": d}
+    if "green_blocked" in features["state"]:
+        out["green_blocked"] = bool(blocked)
+    return out
+
+
+def green_blocked(approaches: dict, axis: str, green_s: float, features: dict = FEATURES_V2) -> bool:
+    """v2 feature: the green axis is not discharging (most of its cars still stopped after a while)."""
+    rule = features["green_blocked"]
+    if green_s < rule["min_green_s"]:
+        return False  # a queue needs some seconds of green to start moving
+    stopped = axis_sum(approaches, axis, "queue")
+    return stopped >= rule["min_stopped"] and stopped >= rule["stopped_share"] * axis_sum(approaches, axis, "count")
 
 
 class QTable:
@@ -92,12 +129,15 @@ class QTable:
     sweeps × buffer (30×) more.
     """
 
-    def __init__(self, q=None, visits=None, meta: dict | None = None):
-        self.q = np.zeros((N_STATES, 2)) if q is None else np.asarray(q, dtype=float)
-        self.visits = np.zeros((N_STATES, 2), dtype=int) if visits is None else np.asarray(visits, dtype=int)
+    def __init__(self, q=None, visits=None, meta: dict | None = None, features: dict | None = None):
+        self.features = FEATURES if features is None else features
+        self.version = feature_version(self.features)
+        n = n_states(self.features)
+        self.q = np.zeros((n, 2)) if q is None else np.asarray(q, dtype=float)
+        self.visits = np.zeros((n, 2), dtype=int) if visits is None else np.asarray(visits, dtype=int)
         self.meta = dict(meta or {})
-        if self.q.shape != (N_STATES, 2):
-            raise ValueError(f"Q-table has shape {self.q.shape}, expected {(N_STATES, 2)} — retrain the model")
+        if self.q.shape != (n, 2) or self.visits.shape != (n, 2):
+            raise ValueError(f"Q-table has shape {self.q.shape}, expected {(n, 2)} — retrain the model")
 
     def best(self, s: int) -> int:
         return int(self.q[s, 1] > self.q[s, 0])  # ties keep the green
@@ -114,7 +154,8 @@ class QTable:
 
     # --- file format ------------------------------------------------------------------
     def to_dict(self) -> dict:
-        body = {"format": FORMAT, "features": FEATURES, "q": np.round(self.q, 4).tolist(), "visits": self.visits.tolist()}
+        body = {"format": FORMAT, "features": self.features, "q": np.round(self.q, 4).tolist(),
+                "visits": self.visits.tolist()}
         return {**body, "meta": self.meta, "sha256": _checksum(body)}
 
     @classmethod
@@ -124,9 +165,8 @@ class QTable:
         body = {k: data[k] for k in ("format", "features", "q", "visits")}
         if data.get("sha256") != _checksum(body):
             raise ValueError("Q-table checksum mismatch: the model file was modified or corrupted")
-        if data["features"] != FEATURES:
-            raise ValueError("Q-table was trained with different features; retrain with rl_train")
-        return cls(data["q"], data["visits"], data.get("meta"))
+        feature_version(data["features"])  # a known feature set, or ValueError
+        return cls(data["q"], data["visits"], data.get("meta"), features=data["features"])
 
     def save(self, path: Path | str = MODEL_PATH) -> Path:
         """Write the model atomically (temp file + rename): a crash never leaves a truncated model."""
@@ -201,6 +241,7 @@ class RLController(Controller):
         super().reset(cfg, seed, topology)
         if self.table is None:
             self.table = QTable.load(self.model_path)
+        self._blocked_bit = "green_blocked" in self.table.features["state"]  # feature set v2
         self.rng = np.random.default_rng(seed + 12345)
         self.guard = ObservationGuard(topology, max_age_s=self.max_obs_age)
         self.fallback_plan = TimingPlan(splits={j: 0.5 for j in topology.tls_ids})
@@ -249,7 +290,8 @@ class RLController(Controller):
             if green_s >= self.max_green:
                 action[j] = other  # mask: the other street has waited long enough
                 continue
-            s = encode_state(axis, axis_sum(approaches, axis, "count"), waiting, green_s)
+            blocked = self._blocked_bit and green_blocked(approaches, axis, green_s, self.table.features)
+            s = encode_state(axis, axis_sum(approaches, axis, "count"), waiting, green_s, blocked, self.table.features)
             if mem is not None and self.learn:
                 self.transitions.append((mem["s"], mem["a"], round(mem["R"], 5), mem["k"], s))
             a = self._choose(s)
@@ -266,6 +308,7 @@ class RLController(Controller):
         meta = self.table.meta if self.table else {}
         model = {k: meta.get(k) for k in ("episodes", "trained_unix", "wall_minutes", "scenario")}
         model["visit_unit"] = meta.get("visit_unit", "replay_updates")
+        model["features"] = self.table.version if self.table else None
         return {"decisions": self.decisions, "low_confidence_decisions": self.low_confidence,
                 "low_confidence_share": round(self.low_confidence / self.decisions, 4) if self.decisions else 0.0,
                 "fallback_min_visits": self.fallback_min_visits,

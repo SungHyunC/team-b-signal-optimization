@@ -558,6 +558,32 @@ def test_first_rl_model_stays_loadable_by_path(topo, tmp_path, monkeypatch):
     assert ctl.model_path == V1_MODEL_PATH and (ctl.table.q == v1.q).all()
 
 
+def test_rl_feature_sets_are_versioned_by_the_model_file(topo, tmp_path):
+    from teamb.controllers.rl import FEATURES_V2, _checksum, decode_state, n_states
+
+    assert n_states() == N_STATES == 288 and n_states(FEATURES_V2) == 576
+    s1 = encode_state("NS", 7, 12, 40)
+    s2 = encode_state("NS", 7, 12, 40, True, FEATURES_V2)
+    assert s2 == s1 + 288 and decode_state(s2, FEATURES_V2) == {**decode_state(s1), "green_blocked": True}
+    assert encode_state("NS", 7, 12, 40, True) == s1, "v1 ignores the extra bit"
+    v2 = QTable(features=FEATURES_V2)
+    v2.q[encode_state("EW", 10, 2, 20, True, FEATURES_V2)] = [-3.0, -1.0]  # blocked: switch
+    v2.visits[:] = 50
+    loaded = QTable.load(v2.save(tmp_path / "v2.json"))
+    assert loaded.version == "v2" and loaded.q.shape == (576, 2)
+    ctl = _rl_with(topo, loaded)
+    ctl.observe(make_obs(topo, 100, count={("J1", "W"): 10}, queue={("J1", "W"): 8, ("J1", "N"): 2}))
+    assert ctl.propose_action(make_state(topo, 100, green_s=20)) == {"J1": "NS"}, "8 of 10 cars stuck on green"
+    ctl.observe(make_obs(topo, 105, count={("J1", "W"): 10}, queue={("J1", "W"): 1, ("J1", "N"): 2}))
+    assert ctl.propose_action(make_state(topo, 105, green_s=25)) == {}, "discharging: the unblocked row keeps"
+    assert ctl.summary()["model"]["features"] == "v2"
+    data = json.loads((tmp_path / "v2.json").read_text())
+    data["features"] = {**FEATURES_V2, "version": 3}  # an unknown future feature set, correctly checksummed
+    data["sha256"] = _checksum({k: data[k] for k in ("format", "features", "q", "visits")})
+    with pytest.raises(ValueError, match="different features"):
+        QTable.from_dict(data)
+
+
 def test_rl_masks_and_trained_table(topo):
     if not MODEL_PATH.exists():
         pytest.skip("models/rl_qtable.json not trained yet: python -m teamb.controllers.rl_train")
