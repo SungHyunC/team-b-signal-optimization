@@ -130,11 +130,12 @@ ASSUMPTIONS: list[Assumption] = [
     # --- how the simulation maps to a year --------------------------------------------------
     Assumption(
         "unfinished_trip_delay_s", 300, "s of delay per stranded trip", "assumption",
-        "Each trip that was never inserted or that teleported in the measurement window is charged SUMO's "
-        "teleport threshold of delay, so a controller can never gain by stranding vehicles (PERF-01). Trips "
-        "still driving at the end are charged the delay they accrued (the runs have no drain period, so most "
-        "of them are ordinary in-flight traffic, not stranded); summaries without that detail charge every "
-        "unfinished trip.",
+        "Each trip that was never inserted is charged the wait it accrued from its planned depart to the run "
+        "end, and at least SUMO's teleport threshold of delay; an inserted trip's entry wait (departDelay) is at "
+        "most that, so a controller can never gain by stranding vehicles at a blocked entry (PERF-01). Each "
+        "teleport in the measurement window is charged this flat amount. Trips still driving at the end are "
+        "charged the delay they accrued (the runs have no drain period, so most of them are ordinary in-flight "
+        "traffic, not stranded); summaries without that detail charge every unfinished trip.",
     ),
     Assumption(
         "unfinished_tolerance_pp", 1.0, "percentage points", "assumption",

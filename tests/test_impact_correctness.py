@@ -99,6 +99,28 @@ def test_in_flight_trips_are_charged_their_accrued_delay_not_300_s():
     assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(50 * 300 / 3600)
 
 
+def test_stranding_a_blocked_entry_is_never_cheaper_than_inserting_late():
+    # baseline: all 3600 window trips inserted, 30 of them after a 900-s wait at a blocked entry
+    # (planned 900 s before the end, so they accrued no timeLoss); the strander never inserts
+    # those 30: same traffic otherwise, inside the 1-pp PERF-01 tolerance
+    p = impact.ImpactParams()
+    accrued_total = 60.0 * 3600
+    base = S(completed=3600, unfinished=0, unfinished_pct=0.0, in_network_at_end=0, never_inserted=0,
+             never_inserted_wait_s=0.0, teleports=0, inserted_in_window=3600,
+             mean_delay_incl_unfinished_s=accrued_total / 3600, mean_depart_delay_s=30 * 900 / 3600)
+    strander = S(controller="strander", completed=3570, unfinished=30, unfinished_pct=0.83, in_network_at_end=0,
+                 never_inserted=30, never_inserted_wait_s=30 * 900.0, teleports=0, inserted_in_window=3570,
+                 mean_delay_incl_unfinished_s=accrued_total / 3570, mean_depart_delay_s=0.0)
+    row = impact.analyze([base, strander], params=p)["rows"][0]
+    assert row["claimed"]  # within the unfinished tolerance: only the delay formula protects the baseline
+    assert row["stats"]["delay_saved_veh_h_per_h"]["mean"] <= 1e-9
+    assert row["stats"]["time_value_usd_per_h"]["mean"] <= 1e-6
+    # a short wait still costs the flat penalty per never-inserted trip
+    q = impact.run_quantities(impact._normalize(dict(strander, never_inserted_wait_s=30 * 10.0)), p)
+    q0 = impact.run_quantities(impact._normalize(dict(strander, never_inserted=0, never_inserted_wait_s=0.0)), p)
+    assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(30 * 300 / 3600)
+
+
 def test_entry_waits_count_as_delay():
     base, cand = _seed1_pair()
     base = dict(base, mean_delay_incl_unfinished_s=31.37, mean_depart_delay_s=30.0)  # same timeLoss, more waiting

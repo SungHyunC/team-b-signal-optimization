@@ -319,6 +319,39 @@ def test_depart_delay_metrics_leave_the_primary_endpoint_unchanged(tmp_path):
     assert s["completed"] == 2 and s["in_network_at_end"] == 1 and s["never_inserted"] == 1
 
 
+def test_never_inserted_trips_report_the_wait_they_accrued(tmp_path):
+    from types import SimpleNamespace
+
+    from teamb.evaluation.metrics import MetricsCollector
+
+    (tmp_path / "tripinfo.xml").write_text(
+        '<tripinfos>'
+        '<tripinfo id="a" depart="1000" arrival="1400" duration="400" timeLoss="100" departDelay="0"/>'
+        '<tripinfo id="b" depart="1500" arrival="-1" duration="100" timeLoss="20" departDelay="300"/>'
+        '</tripinfos>'
+    )
+    (tmp_path / "routes.rou.xml").write_text(
+        '<routes><vType id="car"/>'
+        '<trip id="a" type="car" depart="1000.00" from="x" to="y"/>'
+        '<trip id="b" type="car" depart="1200.00" from="x" to="y"/>'  # inserted late: in tripinfo
+        '<trip id="c" type="car" depart="1100.00" from="x" to="y"/>'  # never inserted: waited 500 s
+        '<trip id="d" type="car" depart="1550.50" from="x" to="y"/>'  # never inserted: waited 49.5 s
+        '<trip id="e" type="car" depart="800.00" from="x" to="y"/>'   # before the warm-up
+        '<trip id="f" type="car" depart="1600.00" from="x" to="y"/>'  # at the end: outside the window
+        '</routes>'
+    )
+    m = object.__new__(MetricsCollector)
+    m.warmup, m.end_time, m._t_last = 900.0, 1600.0, 1600.0
+    m.queue_samples, m.spillback_steps, m.queue_warning_seconds, m.teleports = [], 0, 0.0, 0
+    m._approaches, m.timeseries = [], []
+    m.feed = SimpleNamespace(sensors=None, events=[])
+    m.spill = SimpleNamespace(summary=lambda: {})
+    s = m.finalize(tmp_path / "tripinfo.xml", planned_in_window=4, events=[])
+    assert s["never_inserted"] == 2 and s["never_inserted_wait_s"] == pytest.approx(549.5)
+    (tmp_path / "routes.rou.xml").unlink()
+    assert m.finalize(tmp_path / "tripinfo.xml", planned_in_window=4, events=[])["never_inserted_wait_s"] is None
+
+
 def test_spillback_needs_upstream_blocking_evidence():
     from teamb.network.topology import load_topology
 
@@ -401,9 +434,11 @@ def test_metrics_summary_perf01_and_new_fields(attack_run):
         "planned_in_window", "inserted_in_window", "in_network_at_end", "never_inserted", "arterial_mean_delay_s",
         "cross_mean_delay_s", "queue_p95_veh", "spillback_duration_s", "spillback_events", "recovery_time_s",
         "excess_delay_veh_h", "est_queue_mae", "est_queue_bias", "est_flow_mae", "det_queue_mae", "probe_share",
-        "mean_depart_delay_s", "mean_delay_incl_depart_s", "mean_delay_incl_unfinished_s",
+        "mean_depart_delay_s", "mean_delay_incl_depart_s", "mean_delay_incl_unfinished_s", "never_inserted_wait_s",
     }
     assert baseline_keys | new_keys <= set(s)
+    assert isinstance(s["never_inserted_wait_s"], float)  # SimEnv writes routes.rou.xml next to tripinfo.xml
+    assert s["never_inserted_wait_s"] >= 0
     assert s["completed"] > 0 and s["unfinished"] >= 0
     assert s["completed"] + s["unfinished"] == max(s["planned_in_window"], s["inserted_in_window"])
     assert s["unfinished_pct"] == pytest.approx(100 * s["unfinished"] / (s["completed"] + s["unfinished"]), abs=0.01)

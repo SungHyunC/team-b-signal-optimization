@@ -27,6 +27,13 @@ trip, finished or not. Trips still driving have only part of their delay, and ne
 trips are left out, so it is a LOWER bound and usually below mean_delay_s; it is not an upper
 bound on the selection bias.
 
+    never_inserted_wait_s     the wait the never-inserted trips accrued: for every trip of the
+                              routes file (routes.rou.xml next to tripinfo.xml) planned to depart
+                              in [warmup, end) that has no tripinfo, end - its planned depart.
+                              None without a routes file. The impact analysis charges it, so
+                              leaving a blocked entry's trips out is never cheaper than
+                              inserting them late.
+
 Other formulas are in the docstrings of the helpers (spillback.py, recovery.py,
 estimation.py) and in docs/roles/data-evaluation.md.
 
@@ -252,11 +259,14 @@ class MetricsCollector:
         return dict(self._live)
 
     # --- end of run -------------------------------------------------------------
-    def finalize(self, tripinfo_path: Path, *, planned_in_window: int | None = None, events: list[dict] | None = None) -> dict:
+    def finalize(self, tripinfo_path: Path, *, planned_in_window: int | None = None, events: list[dict] | None = None,
+                 routes_path: Path | None = None) -> dict:
         """Parse SUMO's tripinfo output into the run summary (and write the extra files).
 
         `events`: the env's event log, if the caller has it; otherwise the events the
-        feed observed itself (closures from lane permissions, attacks from the sensors)."""
+        feed observed itself (closures from lane permissions, attacks from the sensors).
+        `routes_path`: the planned trips (default: routes.rou.xml next to tripinfo.xml), for
+        never_inserted_wait_s."""
         rows = parse_tripinfo(Path(tripinfo_path))
         window = [r for r in rows if r["depart"] >= self.warmup]
         done = [r for r in window if r["finished"]]
@@ -286,6 +296,8 @@ class MetricsCollector:
             "inserted_in_window": written,
             "in_network_at_end": in_network,
             "never_inserted": never_inserted,
+            "never_inserted_wait_s": self._never_inserted_wait(
+                rows, Path(routes_path) if routes_path is not None else Path(tripinfo_path).parent / "routes.rou.xml"),
             "mean_delay_incl_unfinished_s": _r(_mean(r["time_loss"] for r in window)),  # lower bound, see above
             "mean_depart_delay_s": _r(_mean(r["depart_delay"] for r in window)),
             "mean_delay_incl_depart_s": _r(_mean(r["time_loss"] + r["depart_delay"] for r in done)),
@@ -323,6 +335,29 @@ class MetricsCollector:
         return summary
 
     # --- pieces of the summary ------------------------------------------------------
+    def _never_inserted_wait(self, rows: list[dict], routes_path: Path) -> float | None:
+        """Summed wait (s) of the planned window trips that were never inserted: end - planned
+        depart for every trip of the routes file departing in [warmup, end) without a tripinfo.
+        None if the routes file is missing or unreadable."""
+        if not routes_path.exists():
+            return None
+        end = self.end_time if self.end_time is not None else self._t_last
+        written = {r["id"] for r in rows}
+        total = 0.0
+        try:
+            for _, el in ET.iterparse(str(routes_path)):
+                if el.tag in ("trip", "vehicle") and el.get("id") not in written:
+                    try:
+                        depart = float(el.get("depart", ""))
+                    except ValueError:  # "triggered", "now", ...: no planned time to wait from
+                        depart = None
+                    if depart is not None and self.warmup <= depart < end:
+                        total += end - depart
+                el.clear()
+        except (OSError, ET.ParseError):
+            return None
+        return round(total, 1)
+
     @staticmethod
     def _delay_by(done: list[dict], key: str) -> dict:
         groups: dict[str, list] = {}

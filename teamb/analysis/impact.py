@@ -14,15 +14,19 @@ Method (paired by seed, so every controller sees the identical demand)
   For every run:
     window_h        = (sim_time_s − warmup) / 3600                (measurement window, hours)
     delay_s         = (mean_delay_incl_unfinished_s + mean_depart_delay_s) × inserted_in_window
-                      + (never_inserted + teleports) × unfinished_trip_delay_s
+                      + max(never_inserted × unfinished_trip_delay_s, never_inserted_wait_s)
+                      + teleports × unfinished_trip_delay_s
                       i.e. the timeLoss every inserted window trip accrued in the run (trips still
                       driving at the end are charged what they accrued, not a flat penalty, since
                       the run has no drain period), plus the time spent waiting to enter
-                      (departDelay, not part of timeLoss), plus a flat penalty for trips that were
-                      never inserted or teleported (stranded). In-flight trips' delay is slightly
-                      understated (accrued, not final). Summaries without these PERF-01 fields
-                      (older runs, hand-made CSVs) fall back to
-                      mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
+                      (departDelay, not part of timeLoss), plus for the trips never inserted the
+                      wait they accrued from their planned depart to the run end, at least a flat
+                      penalty each: an inserted trip's departDelay is at most that wait, so leaving
+                      a blocked entry's trips out is never cheaper than inserting them late
+                      (PERF-01). Summaries without never_inserted_wait_s (older runs) charge the
+                      flat penalty only. In-flight trips' delay is slightly understated (accrued,
+                      not final). Summaries without the PERF-01 fields (older runs, hand-made CSVs)
+                      fall back to mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
     delay_veh_h/h   = delay_s / 3600 / window_h
     stops/h         = stops_per_veh × completed / window_h
   For every candidate run vs the baseline run with the same scenario, seed, coverage, sampling,
@@ -72,7 +76,7 @@ from teamb.fsutil import atomic_write_json, atomic_write_text
 NUMERIC_FIELDS = ("seed", "coverage", "sim_time_s", "completed", "unfinished", "unfinished_pct", "mean_delay_s",
                   "stops_per_veh", "throughput_veh_h", "ev_count", "ev_mean_travel_time_s", "teleports", "warmup",
                   "end_time", "inserted_in_window", "in_network_at_end", "never_inserted", "mean_delay_incl_unfinished_s",
-                  "mean_depart_delay_s", "mean_delay_incl_depart_s", "others_mean_delay_s")
+                  "mean_depart_delay_s", "mean_delay_incl_depart_s", "others_mean_delay_s", "never_inserted_wait_s")
 
 
 # --- loading -------------------------------------------------------------------------
@@ -198,8 +202,11 @@ def run_quantities(run: dict, p: ImpactParams) -> dict | None:
     if inserted is not None and never is not None and (accrued is not None or not inserted):
         # accrued timeLoss of every inserted window trip + entry waits + stranded trips (evaluation-5/6)
         per_trip = float(accrued or 0.0) + float(run.get("mean_depart_delay_s") or 0.0)
-        stranded = float(never) + float(run.get("teleports") or 0)
-        delay_s = per_trip * float(inserted) + stranded * p.unfinished_trip_delay_s
+        never_s = float(never) * p.unfinished_trip_delay_s
+        if run.get("never_inserted_wait_s") is not None:  # the wait they accrued, at least the flat penalty
+            never_s = max(never_s, float(run["never_inserted_wait_s"]))
+        teleports_s = float(run.get("teleports") or 0) * p.unfinished_trip_delay_s
+        delay_s = per_trip * float(inserted) + never_s + teleports_s
         method = "accrued"
     else:
         delay_s = (float(mean_delay) * completed if mean_delay is not None else 0.0) + unfinished * p.unfinished_trip_delay_s
