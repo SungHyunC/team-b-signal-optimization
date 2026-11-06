@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 from teamb import config
 from teamb.controllers.base import Controller, register
 
+# shortest cycle that fits two minimum greens and two yellow + all-red changes (26 s)
+MIN_CYCLE_S = 2 * config.MIN_GREEN_S + 2 * config.LOST_TIME_PER_SWITCH_S
+
 
 @dataclass
 class TimingPlan:
@@ -18,17 +21,27 @@ class TimingPlan:
     splits: dict[str, float] = field(default_factory=dict)  # EW share of the usable green, 0..1
     offsets: dict[str, float] = field(default_factory=dict)  # seconds
 
+    def __post_init__(self):
+        if not float(self.cycle) >= MIN_CYCLE_S:
+            raise ValueError(f"cycle must be at least {MIN_CYCLE_S} s (two {config.MIN_GREEN_S} s greens + lost time), "
+                             f"not {self.cycle!r}")
+
     def greens(self, junction: str) -> tuple[float, float]:
+        """(EW green, NS green) in seconds; both ≥ MIN_GREEN_S and together always cycle − lost time.
+
+        Raising one green to the minimum takes the time from the other one, so every junction
+        runs exactly `cycle` seconds and coordinated offsets cannot drift apart.
+        """
         usable = self.cycle - 2 * config.LOST_TIME_PER_SWITCH_S
         share = min(0.85, max(0.15, self.splits.get(junction, 0.5)))
-        ew = max(config.MIN_GREEN_S, usable * share)
-        ns = max(config.MIN_GREEN_S, usable - ew)
+        ew = min(max(config.MIN_GREEN_S, usable * share), usable - config.MIN_GREEN_S)
+        ns = usable - ew
         return ew, ns
 
     def axis_at(self, junction: str, t: float) -> str:
         """Axis to request at time t so greens start at offset (EW) and offset+EW+lost (NS)."""
         ew, ns = self.greens(junction)
-        cycle = ew + ns + 2 * config.LOST_TIME_PER_SWITCH_S
+        cycle = ew + ns + 2 * config.LOST_TIME_PER_SWITCH_S  # == self.cycle (greens() keeps the sum)
         tau = (t - self.offsets.get(junction, 0.0)) % cycle
         # Ask for EW during its green and while NS is clearing at the end of the cycle.
         if tau < ew or tau >= cycle - config.LOST_TIME_PER_SWITCH_S:

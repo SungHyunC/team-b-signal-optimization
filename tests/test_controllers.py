@@ -134,6 +134,47 @@ def test_stale_or_replayed_observations_fall_back_to_fixed_time(topo):
         assert ctl.guard.rejected["stale"] == 1 and ctl.guard.rejected["replayed"] == 1
 
 
+# --- timing plans (fixed-time / coordinated / AI plans) ------------------------------------
+def test_timing_plan_greens_always_fill_exactly_one_cycle():
+    from teamb import config
+
+    for cycle in range(60, 151, 5):
+        for split in (0.15, 0.25, 0.5, 0.84, 0.85, 0.95):
+            plan = TimingPlan(cycle=cycle, splits={"J1": split})
+            ew, ns = plan.greens("J1")
+            assert ew >= config.MIN_GREEN_S and ns >= config.MIN_GREEN_S, (cycle, split, ew, ns)
+            assert ew + ns + 2 * config.LOST_TIME_PER_SWITCH_S == pytest.approx(cycle, abs=1e-9), (cycle, split)
+    with pytest.raises(ValueError, match="cycle"):
+        TimingPlan(cycle=20)
+
+
+def _ew_request_starts(plan, junction, t_end, dt=0.5):
+    """Times at which the plan starts asking for EW (= NS yellow begins)."""
+    starts, prev = [], None
+    for i in range(int(t_end / dt)):
+        t = i * dt
+        axis = plan.axis_at(junction, t)
+        if axis == "EW" and prev == "NS":
+            starts.append(t)
+        prev = axis
+    return starts
+
+
+def test_timing_plan_greens_start_at_the_offset_without_drift():
+    from teamb import config
+
+    lost = config.LOST_TIME_PER_SWITCH_S
+    # J2's 0.85 share at a 60 s cycle needs the NS minimum green: it used to stretch J2 to 60.5 s
+    plan = TimingPlan(cycle=60, splits={"J1": 0.5, "J2": 0.85}, offsets={"J1": 0.0, "J2": 24.0})
+    for j in ("J1", "J2"):
+        starts = _ew_request_starts(plan, j, 3600)
+        assert len(starts) >= 55
+        assert all(b - a == pytest.approx(60.0) for a, b in zip(starts, starts[1:])), j
+        # EW green starts `lost` seconds after the request, exactly at the offset (mod cycle)
+        assert all((t + lost - plan.offsets[j]) % 60 == pytest.approx(0.0, abs=1e-6) or
+                   (t + lost - plan.offsets[j]) % 60 == pytest.approx(60.0, abs=1e-6) for t in starts), j
+
+
 # --- AI recommender: demand model, Webster, cache, commands -------------------------------
 def _approach_volumes(topo, flows):
     by_edge = {e: (j, s) for j, sides in topo.approach_edges.items() for s, e in sides.items()}
