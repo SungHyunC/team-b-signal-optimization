@@ -40,3 +40,18 @@ def test_network_rebuilds_when_build_inputs_change(tmp_path, monkeypatch):
     assert network_hash(paths.net) != before
     assert not [p for p in tmp_path.iterdir() if p.name.startswith(".build-")]  # temp build folder removed
     assert build.build_digest() == (tmp_path / "VERSION").read_text()
+
+
+def test_build_digest_covers_the_detector_writer(monkeypatch):
+    """dx-26: editing _write_detectors (e.g. its e2 length formula or freq) must rebuild the
+    detectors, like any other build input, without a manual NETWORK_VERSION bump."""
+    before = build.build_digest()
+    original = build._write_detectors
+
+    def edited(net_path, out):  # same signature, different code
+        return original(net_path, out)
+
+    monkeypatch.setattr(build, "_write_detectors", edited)
+    assert build.build_digest() != before
+    monkeypatch.setattr(build, "_write_detectors", original)
+    assert build.build_digest() == before
