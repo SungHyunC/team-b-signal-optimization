@@ -20,6 +20,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from teamb.evaluation.stats import mean_ci
+from teamb.fsutil import atomic_write_text
 
 METRICS = (
     "mean_delay_s", "mean_delay_incl_unfinished_s", "unfinished_pct",
@@ -211,8 +212,7 @@ def main(argv=None):
     report = diagnose(args.experiment, baseline=args.baseline, candidate=args.candidate)
     body = json.dumps(report, indent=2, sort_keys=True)
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(body + "\n")
+        atomic_write_text(args.output, body + "\n")
     print(body)
     return 0 if report["run_count"] else 2
 

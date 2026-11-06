@@ -24,13 +24,14 @@ report.json schema (read by the twin; extra keys may be added, never removed)
 from __future__ import annotations
 
 import csv
+import io
 import json
 import time
 from pathlib import Path
 
 from teamb.evaluation.stats import holm, mean_ci, paired
 from teamb.experiments.runner import run_status
-from teamb.fsutil import read_json
+from teamb.fsutil import atomic_write_json, atomic_write_text, read_json
 
 ROW_METRICS = ("mean_delay_s", "p95_travel_time_s", "stops_per_veh", "unfinished_pct", "ev_mean_travel_time_s")
 EXTRA_METRICS = (
@@ -133,11 +134,12 @@ def write_summary_csv(runs: list[dict], path: Path) -> None:
             if k not in cols and _scalar(v) and k not in ("error", "run_dir"):
                 cols.append(k)
     cols.append("error")
-    with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
-        w.writeheader()
-        for r in runs:
-            w.writerow({k: r.get(k) for k in cols})
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore", lineterminator="\n")  # text mode adds the OS newline
+    w.writeheader()
+    for r in runs:
+        w.writerow({k: r.get(k) for k in cols})
+    atomic_write_text(path, buf.getvalue())
 
 
 def _group_key(r: dict) -> tuple:
@@ -233,8 +235,8 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
         for i, p in zip(idx, adj):
             rows[i]["p_holm"] = _round(p, 4)
 
-    meta_path = exp_dir / "experiment.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta = read_json(exp_dir / "experiment.json", {})
+    meta = meta if isinstance(meta, dict) else {}
     report = {
         "name": exp_dir.name,
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -722,6 +724,6 @@ def write_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
     runs = load_runs(exp_dir)
     write_summary_csv(runs, exp_dir / "summary.csv")
     report = build_report(exp_dir, baseline)
-    (exp_dir / "report.json").write_text(json.dumps(report, indent=2, default=str))
-    (exp_dir / "report.md").write_text(render_markdown(report))
+    atomic_write_json(exp_dir / "report.json", report, default=str)
+    atomic_write_text(exp_dir / "report.md", render_markdown(report))
     return report

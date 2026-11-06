@@ -63,6 +63,7 @@ from statistics import mean
 from teamb import config
 from teamb.analysis.assumptions import ASSUMPTIONS, ImpactParams
 from teamb.evaluation.stats import mean_ci
+from teamb.fsutil import atomic_write_json, atomic_write_text
 NUMERIC_FIELDS = ("seed", "coverage", "sim_time_s", "completed", "unfinished", "unfinished_pct", "mean_delay_s",
                   "stops_per_veh", "throughput_veh_h", "ev_count", "ev_mean_travel_time_s", "teleports", "warmup",
                   "end_time", "inserted_in_window", "in_network_at_end", "never_inserted", "mean_delay_incl_unfinished_s",
@@ -643,11 +644,11 @@ def main(argv=None) -> int:
         src = Path(args.source)
         out = Path(args.out) if args.out else (src / "impact.md" if src.is_dir() else None)
         if out is not None:
-            out.write_text(text)
+            atomic_write_text(out, text)
             print(f"wrote {out}", file=sys.stderr)
         json_out = Path(args.json_out) if args.json_out else (src / "impact.json" if src.is_dir() and not args.out else None)
         if json_out is not None:
-            json_out.write_text(json.dumps(result, indent=2, default=str))
+            atomic_write_json(json_out, result, default=str)
             print(f"wrote {json_out}", file=sys.stderr)
     if not result["rows"]:
         print(f"no runs could be paired with the baseline '{args.baseline}'", file=sys.stderr)

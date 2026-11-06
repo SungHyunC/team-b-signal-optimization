@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 from teamb.experiments.analysis import write_report
+from teamb.fsutil import atomic_write_json
 from teamb.experiments.accuracy import audit_specs
 from teamb.experiments.runner import (
     EXPERIMENTS_DIR, build_matrix, default_workers, parse_coverages, parse_seeds, run_matrix, run_status, validate_matrix,
@@ -150,7 +151,7 @@ def main(argv=None) -> int:
     print(f"done in {record['wall_time_s']} s: {record['ok']} ok, {record['skipped']} skipped, {len(record['failed'])} failed")
     if args.strict_validation:
         audit = audit_specs(exp_dir, specs)
-        (exp_dir / "validation.json").write_text(json.dumps(audit, indent=2))
+        atomic_write_json(exp_dir / "validation.json", audit)
         print(f"validation: {audit['valid_runs']}/{audit['expected_runs']} valid runs")
         if not audit["complete"]:
             for issue in audit["problems"][:30]:
