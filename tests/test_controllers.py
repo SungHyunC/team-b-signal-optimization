@@ -496,6 +496,58 @@ def test_rl_train_epsilon_reaches_eps_end_whatever_the_batch_size():
     assert epsilon_at(70, 60, 0.3, 0.02) == pytest.approx(0.02) and epsilon_at(0, 1, 0.3, 0.02) == 0.3
 
 
+def _rl_with(topo, table, **params):
+    ctl = make_controller("rl", **params)
+    ctl.table = table  # reset() loads the model file only when no table is set
+    ctl.reset({}, 1, topo)
+    return ctl
+
+
+def test_rl_never_acts_on_an_untrained_action(topo):
+    s = encode_state("EW", 9, 2, 20)  # J1: 9 cars on the green axis, 2 waiting on the red one
+    table = QTable()
+    table.q[s] = [-1.0, 0.0]  # 'switch' was never tried, so its Q stayed 0 and beats every learned value
+    table.visits[s] = [5, 0]
+    obs = make_obs(topo, 100, count={("J1", "W"): 9}, queue={("J1", "N"): 2})
+    old = _rl_with(topo, table, fallback_min_visits=0)
+    old.observe(obs)
+    assert old.propose_action(make_state(topo, 100)) == {"J1": "NS"}, "the original bug: the untried action wins"
+    ctl = _rl_with(topo, table)
+    ctl.observe(obs)
+    assert ctl.propose_action(make_state(topo, 100)) == {}, "max-pressure: 9 cars served vs 2 waiting, keep"
+    summary = ctl.summary()
+    assert summary["low_confidence_decisions"] == 1 and summary["low_confidence_share"] == 1.0
+    assert summary["model"]["visit_unit"] == "replay_updates"  # no meta: a file from before visit counting
+
+
+def test_rl_follows_the_table_where_it_was_trained(topo):
+    s = encode_state("EW", 9, 2, 20)
+    table = QTable()
+    table.q[s] = [-1.0, -0.5]
+    table.visits[s] = [50, 50]
+    ctl = _rl_with(topo, table)
+    ctl.observe(make_obs(topo, 100, count={("J1", "W"): 9}, queue={("J1", "N"): 2}))
+    assert ctl.propose_action(make_state(topo, 100)) == {"J1": "NS"}, "trusted table beats the rule"
+    assert ctl.summary()["low_confidence_decisions"] == 0
+
+
+def test_rl_unvisited_flood_state_switches_like_max_pressure(topo):
+    ctl = _rl_with(topo, QTable())  # nothing visited: every row is a 0 / 0 tie that used to mean 'keep'
+    ctl.observe(make_obs(topo, 100, count={("J1", "W"): 2}, queue={("J1", "N"): 15}))
+    assert ctl.propose_action(make_state(topo, 100, green_s=35)) == {"J1": "NS"}
+    assert ctl.summary()["low_confidence_decisions"] == 1
+
+
+def test_committed_rl_model_never_picks_a_zero_visit_action_in_deploy_mode():
+    if not MODEL_PATH.exists():
+        pytest.skip("RL model not trained yet")
+    table = QTable.load(MODEL_PATH)
+    ctl = make_controller("rl")
+    untrusted = [s for s in range(N_STATES) if table.visits[s, table.best(s)] < ctl.fallback_min_visits]
+    zero = [s for s in range(N_STATES) if table.visits[s, table.best(s)] == 0]
+    assert zero and set(zero) <= set(untrusted), "every zero-visit pick goes to the fallback"
+
+
 def test_rl_masks_and_trained_table(topo):
     if not MODEL_PATH.exists():
         pytest.skip("models/rl_qtable.json not trained yet: python -m teamb.controllers.rl_train")

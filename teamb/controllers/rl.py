@@ -22,10 +22,19 @@ Rules around the policy (an action mask, not learned): never switch to an empty 
 always switch after `max_green` if the other street waits. Safety (min green, yellow,
 all-red) stays with the supervisor. Stale / replayed observations → fixed-time fallback.
 
+Low-confidence fallback (deploy mode only, `fallback_min_visits`, default 20): every reward
+is negative, so every learned Q-value is below 0 while an action never tried keeps Q = 0 and
+would win — the policy picked untrained actions out of distribution (special_event, the
+flood). When the chosen action was seen fewer than `fallback_min_visits` times in training,
+the junction follows the max-pressure rule (MaxPressureController defaults) instead. These
+decisions are counted as `low_confidence_decisions` in the summary. 0 turns the fallback off
+(the original behaviour). Training (learn=True) never falls back: it has to explore.
+
 Model file: JSON with the Q-values, the feature definition and a SHA-256 checksum; loading
 refuses a file whose checksum or features do not match (tampering / version drift).
 
-Tunable: interval, min_green, max_green, model_path; training knobs live in rl_train.py.
+Tunable: interval, min_green, max_green, model_path, fallback_min_visits; training knobs live
+in rl_train.py.
 Changing the bins (QUEUE_BINS, GREEN_BINS) changes the state space → retrain.
 Upgrade path: SUMO-RL + DQN/PPO with richer state (docs/roles/ai-security.md).
 """
@@ -38,11 +47,12 @@ from pathlib import Path
 import numpy as np
 
 from teamb import config
-from teamb.fsutil import atomic_write_text
 from teamb.controllers.base import Controller, register
 from teamb.controllers.common import axis_sum, detector, num
 from teamb.controllers.defense import ObservationGuard
 from teamb.controllers.fixed_time import TimingPlan
+from teamb.controllers.max_pressure import MaxPressureController
+from teamb.fsutil import atomic_write_text
 from teamb.sim.phases import AXES, other_axis
 
 MODEL_PATH = config.MODELS / "rl_qtable.json"
@@ -156,11 +166,13 @@ class RLController(Controller):
         reward_scale: float = 10.0,
         switch_penalty: float = 0.2,
         max_obs_age: float = 10.0,
+        fallback_min_visits: int = 20,
         **params,
     ):
         super().__init__(model_path=model_path, interval=interval, min_green=min_green, max_green=max_green,
                          epsilon=epsilon, learn=learn, gamma=gamma, reward_scale=reward_scale,
-                         switch_penalty=switch_penalty, max_obs_age=max_obs_age, **params)
+                         switch_penalty=switch_penalty, max_obs_age=max_obs_age,
+                         fallback_min_visits=fallback_min_visits, **params)
         self.model_path = Path(model_path) if model_path else MODEL_PATH
         self.interval = float(interval)
         self.min_green = max(float(min_green), float(config.MIN_GREEN_S))
@@ -171,6 +183,7 @@ class RLController(Controller):
         self.reward_scale = float(reward_scale)
         self.switch_penalty = float(switch_penalty)
         self.max_obs_age = float(max_obs_age)
+        self.fallback_min_visits = int(fallback_min_visits)
         self.table: QTable | None = None  # loaded in reset(); the trainer may set it before
 
     def reset(self, cfg, seed, topology) -> None:
@@ -184,6 +197,9 @@ class RLController(Controller):
         self.transitions: list[tuple] = []  # (s, a, R, k, s') when learn=True
         self.episode_reward = 0.0
         self.decisions = 0
+        self.low_confidence = 0  # decisions handed to the max-pressure rule (too little training data)
+        self.rule = MaxPressureController()  # the low-confidence fallback
+        self.rule.reset(cfg, seed, topology)
         self._degraded: str | None = None
 
     # --- the step -----------------------------------------------------------------
@@ -226,6 +242,9 @@ class RLController(Controller):
             if mem is not None and self.learn:
                 self.transitions.append((mem["s"], mem["a"], round(mem["R"], 5), mem["k"], s))
             a = self._choose(s)
+            if not self.learn and self.table.visits[s, a] < self.fallback_min_visits:
+                a = self._rule_action(j, axis, green_s)  # too little training data for this choice
+                self.low_confidence += 1
             self.decisions += 1
             self.memory[j] = {"s": s, "a": a, "R": -self.switch_penalty if a else 0.0, "k": 0}
             if a == 1:
@@ -234,10 +253,19 @@ class RLController(Controller):
 
     def summary(self) -> dict:
         meta = self.table.meta if self.table else {}
-        return {"decisions": self.decisions, "guard_rejected": dict(self.guard.rejected),
-                "model": {k: meta.get(k) for k in ("episodes", "trained_unix", "wall_minutes", "scenario")}}
+        model = {k: meta.get(k) for k in ("episodes", "trained_unix", "wall_minutes", "scenario")}
+        model["visit_unit"] = meta.get("visit_unit", "replay_updates")
+        return {"decisions": self.decisions, "low_confidence_decisions": self.low_confidence,
+                "low_confidence_share": round(self.low_confidence / self.decisions, 4) if self.decisions else 0.0,
+                "fallback_min_visits": self.fallback_min_visits,
+                "guard_rejected": dict(self.guard.rejected), "model": model}
 
     def _choose(self, s: int) -> int:
         if self.learn and self.rng.random() < self.epsilon:
             return int(self.rng.integers(2))
         return self.table.best(s)
+
+    def _rule_action(self, junction: str, axis: str, green_s: float) -> int:
+        """The max-pressure decision for this junction, as an action (0 keep / 1 switch)."""
+        self.rule.observation = self.observation
+        return int(self.rule.decide(junction, axis, green_s) == other_axis(axis))
