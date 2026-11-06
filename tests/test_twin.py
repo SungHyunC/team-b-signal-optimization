@@ -128,7 +128,12 @@ def test_web_app_is_served(client):
     assert three.status_code in (200, 307)  # local copy, or the pinned CDN
     if three.status_code == 307:
         assert three.headers["location"].startswith("https://cdn.jsdelivr.net/npm/three@0.160.0/")
-    assert client.get("/vendor/three/../../server.py", follow_redirects=False).status_code == 404
+    # httpx collapses a literal "../" before sending, so send the dots percent-encoded: Starlette
+    # decodes them into the path parameter and the handler itself must refuse the traversal.
+    for bad in ("/vendor/three/%2e%2e/%2e%2e/%2e%2e/server.py", "/vendor/three/build/%2e%2e/%2e%2e/%2e%2e/server.py"):
+        r = client.get(bad, follow_redirects=False)
+        assert r.status_code == 404, bad
+        assert "location" not in r.headers  # refused, not forwarded to the CDN
 
 
 def test_results(client):
