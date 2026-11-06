@@ -47,3 +47,23 @@ def test_rejects_mixed_code_revisions(tmp_path):
     save(tmp_path, a)
     save(tmp_path, b, revision="different")
     assert "mixed code revisions" in " ".join(audit_specs(tmp_path, [a,b])["problems"])
+
+
+def test_audit_agrees_with_resume_on_the_default_end(tmp_path):
+    # an experiment from before end_time was in the run name: saved end_time 4500 (rush_hour's
+    # duration) in the folder of the default spec. Resume reuses it, so the audit must accept it.
+    from teamb.experiments.runner import check_resume
+
+    spec = RunSpec("rush_hour", "fixed_time", 1, 1.0)
+    d = save(tmp_path, spec)
+    (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "end_time": 4500.0}))
+    (d / "summary.json").write_text(json.dumps({"mean_delay_s": 12.0, "sim_time_s": 4500.0}))
+    assert check_resume(spec, tmp_path / "runs")["status"] == "skipped"
+    result = audit_specs(tmp_path, [spec])
+    assert result["complete"], result["problems"]
+    # another end is still a different run, and a saved spec without the field is still rejected
+    (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "end_time": 1200.0}))
+    problems = audit_specs(tmp_path, [spec])["problems"]
+    assert len(problems) == 1 and "run specification mismatch: end_time" in problems[0]
+    (d / "run_spec.json").write_text(json.dumps({k: v for k, v in asdict(spec).items() if k != "end_time"}))
+    assert "end_time (missing)" in audit_specs(tmp_path, [spec])["problems"][0]
