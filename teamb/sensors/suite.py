@@ -39,6 +39,7 @@ PHANTOM_FRONT_M = 4.0  # ... starting 4 m before the stop line
 FLOW_WINDOW_S = 300.0  # flows are counted over the last 5 minutes
 PENETRATION_WINDOW_S = 900.0  # penetration is estimated over the last 15 minutes
 PENETRATION_PRIOR = 10.0  # pseudo-vehicles that pull a thin estimate toward the nominal coverage
+PENETRATION_BAND = 2.0  # the per-approach estimate stays within [c / 2, 2c] (wider for approach_biased:r > 2)
 
 
 def _clamp_coverage(value: float) -> float:
@@ -99,6 +100,8 @@ class SensorSuite:
         self.rng = random.Random(seed * 7919 + 17)  # who is a probe (same stream as the first version)
         self.report_rng = random.Random(seed * 104729 + 3)  # when a stopped probe reports (speed_biased)
         self.selector = ProbeSelector(self.spec, self.rng)
+        band = max(PENETRATION_BAND, self.spec.arterial_ratio if self.spec.mechanism == "approach_biased" else 0.0)
+        self._band_low, self._band_high = 1.0 / band, band
         self.probes: dict[str, float] = {}  # probe vehicle id -> coverage when it departed (its cohort)
         self._cohorts: dict[float, int] = {}  # cohort coverage -> probes of it in the network
         self.fake: dict[tuple[str, str], int] = {}  # (junction, approach) -> phantom reports
@@ -256,7 +259,7 @@ class SensorSuite:
                         "since": st.since,
                     }
                 )
-            fused = self._fuse(det, probe, zone_full, trusted)
+            fused = self._fuse(det, probe, zone_full, trusted, self.check.approach_storage[key])
             entry = {"detector": det, "probe": probe, "fused": fused}
             if source == "oracle":
                 entry["oracle"] = {"queue": truth[0], "count": truth[1]}
@@ -347,7 +350,10 @@ class SensorSuite:
         # penetration = probe crossings (in current-coverage units) / loop counts, shrunk toward c
         crossings = sum((rc.total * (c / cohort) for cohort, rc in self._pen_probe[key].items()), 0.0)
         pen = (crossings + PENETRATION_PRIOR * c) / (self._pen_loop[key].total + PENETRATION_PRIOR)
-        pen = min(1.0, max(0.01, pen))
+        # The crossers of one approach are not a random sample right after a closure: navigation
+        # users were re-routed away, so the first 30 vehicles back can all be non-probes. Keep the
+        # estimate in a band around the coverage (it only has to absorb sampling bias).
+        pen = min(1.0, max(0.01, self._band_low * c, min(self._band_high * c, pen)))
         n = reported + fake
         halted_all = halted + fake
         halted_eff = sum((k * (c / cohort) for cohort, k in halted_by.items()), 0.0)
@@ -369,11 +375,13 @@ class SensorSuite:
         return block, truth, {"p_test": round(p_test, 3)}
 
     @staticmethod
-    def _fuse(det: dict, probe: dict, zone_full: bool, trusted: bool) -> dict:
+    def _fuse(det: dict, probe: dict, zone_full: bool, trusted: bool, storage: float = float("inf")) -> dict:
         """Detector queue; when the detector zone is (or was, in the last minute) full the queue
-        may be longer than the detector can see, so trusted probes may extend it."""
+        may be longer than the detector can see, so trusted probes may extend it, but never past
+        what fits on the approach (`storage`, cars)."""
         if zone_full and trusted:
-            return {"queue": round(max(det["queue"], probe["queue_est_adj"]), 2), "flow_vph": det["flow_vph"], "source": "detector+probe"}
+            queue = max(det["queue"], min(probe["queue_est_adj"], storage))
+            return {"queue": round(queue, 2), "flow_vph": det["flow_vph"], "source": "detector+probe"}
         return {"queue": det["queue"], "flow_vph": det["flow_vph"], "source": "detector"}
 
     # --- fake-data attack (security test) ---------------------------------
