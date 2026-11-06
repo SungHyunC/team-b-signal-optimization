@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 
 import anyio
@@ -191,6 +192,68 @@ def test_slow_client_backlog_is_bounded():
 
     ws = asyncio.run(scenario())
     assert ws.closed_with == 1013 and len(ws.sent) <= 11
+
+
+# --- retention of twin run folders (twin-security-7) -----------------------------------------
+def _fake_run_dir(root, i):
+    d = root / f"rush_hour__fixed_time__s{i}__c100__uniform__{i:06x}"
+    d.mkdir(parents=True)
+    (d / "routes.rou.xml").write_text("<routes/>")
+    os.utime(d, (1_000_000 + i, 1_000_000 + i))
+    return d
+
+
+def test_prune_runs_keeps_newest_and_ignores_other_files(tmp_path):
+    from teamb.twin.session import prune_runs
+
+    dirs = [_fake_run_dir(tmp_path, i) for i in range(8)]
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "README.txt").write_text("keep me")
+    removed = prune_runs(tmp_path, 3)
+    assert sorted(removed) == sorted(dirs[:5])
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([d.name for d in dirs[5:]] + ["notes", "README.txt"])
+    assert prune_runs(tmp_path / "missing", 3) == []
+
+
+def test_restart_prunes_old_twin_runs(tmp_path, monkeypatch):
+    """_restart leaves at most TWIN_KEEP_RUNS folders, the new run included (fake env: no SUMO)."""
+    from types import SimpleNamespace
+
+    import teamb.sim.env
+    from teamb.twin.session import Hub, TwinSession
+
+    counter = iter(range(100, 200))
+
+    class FakeEnv:
+        def __init__(self, *args, **kwargs):
+            n = next(counter)
+            self.run_id = f"rush_hour__fixed_time__s{n}__c100__uniform__{n:06x}"
+            self.output_dir = None
+            self.t, self.end_time, self.step_length = 0.0, 60.0, 1.0
+            self.scenario = SimpleNamespace(warmup=0, describe=lambda: {})
+            self.controller = SimpleNamespace(describe=lambda: {})
+
+        def start(self):
+            self.output_dir.mkdir(parents=True)
+
+        def frame(self):
+            return {"t": self.t, "events": [], "kpi": {}}
+
+        def close(self):
+            return {}
+
+    monkeypatch.setattr(teamb.sim.env, "SimEnv", FakeEnv)
+    monkeypatch.setenv("TWIN_KEEP_RUNS", "3")
+    old = [_fake_run_dir(tmp_path, i) for i in range(5)]
+    session = TwinSession(Hub(), runs_dir=tmp_path)
+    for _ in range(4):
+        assert session._restart(SessionConfig(autoplay=False))["ok"]
+    left = sorted(p.name for p in tmp_path.iterdir())
+    assert len(left) == 3 and session.env.run_id in left
+    assert not any(d.name in left for d in old)
+    monkeypatch.setenv("TWIN_KEEP_RUNS", "0")  # 0 = keep everything
+    session._restart(SessionConfig(autoplay=False))
+    assert len(list(tmp_path.iterdir())) == 4
 
 
 # --- REST -------------------------------------------------------------------------------

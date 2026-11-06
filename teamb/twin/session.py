@@ -32,7 +32,10 @@ import concurrent.futures
 import json
 import logging
 import math
+import os
 import queue
+import re
+import shutil
 import threading
 import time
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
@@ -54,6 +57,43 @@ CALL_TIMEOUT_S = 10.0
 MAX_QUEUED_REQUESTS = 64  # pending sim-thread requests; more -> SessionBusy (HTTP 503 / "busy" reply)
 MAX_CLIENT_BACKLOG = 256  # unsent status/reply messages per browser; more -> the socket is closed (1013)
 MAX_LIVE_EVS = 50  # emergency vehicles dispatched or en route at the same time in the twin
+
+
+KEEP_RUNS_DEFAULT = 10  # twin run folders kept under runs_dir (TWIN_KEEP_RUNS; 0 = keep all)
+# SimEnv.run_id: <scenario>__<controller>__s<seed>__c<coverage>__<sampling>__<6 hex>
+_RUN_DIR = re.compile(r"[^/]+__[^/]+__s-?\d+__c\d+__.+__[0-9a-f]{6}")
+
+
+def keep_runs() -> int:
+    try:
+        return max(0, int(os.environ.get("TWIN_KEEP_RUNS", KEEP_RUNS_DEFAULT)))
+    except ValueError:
+        return KEEP_RUNS_DEFAULT
+
+
+def prune_runs(runs_dir: str | Path, keep: int) -> list[Path]:
+    """Delete all but the newest `keep` twin run folders in runs_dir; returns what was deleted.
+
+    Every restart writes a new folder (0.5 MB for an abandoned run, ~4 MB for a finished rush
+    hour), and nothing else cleans results/twin. Only folders named like a SimEnv run id are
+    touched, so other files in runs_dir are safe.
+    """
+    root = Path(runs_dir)
+    if keep < 0 or not root.is_dir():
+        return []
+    runs = []
+    for d in root.iterdir():
+        if d.is_dir() and not d.is_symlink() and _RUN_DIR.fullmatch(d.name):
+            try:
+                runs.append((d.stat().st_mtime, d.name, d))
+            except OSError:
+                continue
+    runs.sort(reverse=True)
+    removed = []
+    for _, _, d in runs[keep:]:
+        shutil.rmtree(d, ignore_errors=True)
+        removed.append(d)
+    return removed
 
 
 class SessionBusy(RuntimeError):
@@ -572,6 +612,7 @@ class TwinSession:
                 frames=True,
             )
             env.output_dir = self.runs_dir / env.run_id  # keep twin runs apart from experiment runs
+            self._prune_runs()
             self.env = env  # set before start() so a failed start still gets closed
             env.start()
         except Exception as exc:
@@ -727,6 +768,19 @@ class TwinSession:
             _safe_close(env)
         self.playing, self.ff_target, self.state = False, None, "error"
         self._publish_status(message=self.error)
+
+    def _prune_runs(self) -> None:
+        """Make room for the run about to start: keep the newest TWIN_KEEP_RUNS - 1 old ones."""
+        keep = keep_runs()
+        if keep <= 0:
+            return
+        try:
+            removed = prune_runs(self.runs_dir, keep - 1)
+        except Exception:  # housekeeping must never stop a run from starting
+            log.warning("could not prune old twin runs in %s", self.runs_dir, exc_info=True)
+            return
+        if removed:
+            log.info("removed %d old twin run folder(s) from %s", len(removed), self.runs_dir)
 
     def _close_env(self) -> None:
         env, self.env = self.env, None
