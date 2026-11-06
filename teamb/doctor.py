@@ -90,10 +90,13 @@ def run_checks(simulate: bool = True) -> int:
             _line(FAIL, "smoke simulation", f"{type(exc).__name__}: {exc}")
 
     print("\noptional")
-    from teamb.twin.server import VENDOR_DIR
-
-    vendored = (Path(VENDOR_DIR) / "build" / "three.module.js").exists()
-    _line(OK if vendored else WARN, "offline three.js", "saved" if vendored else "not saved - `teamb vendor` before an offline demo")
+    try:  # the twin server imports fastapi, numpy, ...: a broken install must still reach the summary
+        from teamb.twin.server import VENDOR_DIR
+    except Exception as exc:  # noqa: BLE001 - the required checks above already name the missing module
+        _line(WARN, "offline three.js", f"not checked: the twin server does not import ({type(exc).__name__}: {exc})")
+    else:
+        vendored = (Path(VENDOR_DIR) / "build" / "three.module.js").exists()
+        _line(OK if vendored else WARN, "offline three.js", "saved" if vendored else "not saved - `teamb vendor` before an offline demo")
     modal_version = _version("modal")
     if modal_version:
         token = (Path.home() / ".modal.toml").exists()
