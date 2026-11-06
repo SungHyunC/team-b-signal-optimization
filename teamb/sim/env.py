@@ -190,7 +190,12 @@ class SimEnv:
         observation = self.sensors.observe(t, self.controller.observation_source)
         state = self.supervisor.state(t)
         action = self._ask(observation, state)
-        safe = self.supervisor.validate(action, t)
+        try:
+            safe = self.supervisor.validate(action, t)
+        except Exception as exc:  # backstop: an action validate() cannot even inspect counts as a controller error
+            self.controller_errors += 1
+            self.supervisor.record(t, None, "controller_error", detail=f"invalid action: {type(exc).__name__}: {exc}")
+            safe = self.supervisor.validate(self._fallback(observation, state), t)
         preempt = self._ev_requests() if self.ev_preemption else {}
         self._apply(self.supervisor.apply_safe_action(safe, t, preempt))
         self.conn.simulationStep()
