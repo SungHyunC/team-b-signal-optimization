@@ -28,7 +28,6 @@ dependencies = [
     "sumolib==1.28.0",
     # Data, AI and evaluation
     "numpy>=1.26,<3",
-    "pandas>=2.1,<4",  # not imported by teamb itself; `teamb doctor` still requires it
     "optuna>=3.6,<6",
     # Digital twin server
     "fastapi>=0.110,<1",

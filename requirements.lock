@@ -54,12 +54,10 @@ numpy==2.4.6 ; python_full_version < '3.12'
     # via
     #   teamb-signal-twin (pyproject.toml)
     #   optuna
-    #   pandas
 numpy==2.5.4 ; python_full_version >= '3.12'
     # via
     #   teamb-signal-twin (pyproject.toml)
     #   optuna
-    #   pandas
 opentelemetry-api==1.45.2
     # via fastapi
 optuna==5.0.0
@@ -68,8 +66,6 @@ packaging==26.3
     # via
     #   optuna
     #   pytest
-pandas==3.1.1
-    # via teamb-signal-twin (pyproject.toml)
 pluggy==1.7.0
     # via pytest
 pydantic==2.14.3
@@ -80,8 +76,6 @@ pygments==2.21.0
     # via pytest
 pytest==9.2.0
     # via teamb-signal-twin (pyproject.toml)
-python-dateutil==4.0.0
-    # via pandas
 python-dotenv==1.2.4
     # via uvicorn
 python-multipart==0.0.33
@@ -125,10 +119,6 @@ typing-inspection==0.4.5
     # via
     #   fastapi
     #   pydantic
-tzdata==2026.6
-    # via
-    #   pandas
-    #   python-dateutil
 uvicorn==0.54.0
     # via teamb-signal-twin (pyproject.toml)
 uvloop==0.23.0 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'

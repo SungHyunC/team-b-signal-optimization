@@ -12,7 +12,6 @@ traci==1.28.0
 sumolib==1.28.0
 # Data, AI and evaluation
 numpy>=1.26,<3
-pandas>=2.1,<4
 optuna>=3.6,<6
 # Digital twin server
 fastapi>=0.110,<1

@@ -37,7 +37,7 @@ def run_checks(simulate: bool = True) -> int:
     failures += status == FAIL
     _line(status, "python", f"{platform.python_version()} ({sys.executable})" + ("" if status == OK else " - need 3.10+"))
 
-    for module, dist in (("traci", "traci"), ("sumolib", "sumolib"), ("numpy", "numpy"), ("pandas", "pandas"),
+    for module, dist in (("traci", "traci"), ("sumolib", "sumolib"), ("numpy", "numpy"),
                          ("optuna", "optuna"), ("fastapi", "fastapi"), ("uvicorn", "uvicorn")):
         try:
             importlib.import_module(module)

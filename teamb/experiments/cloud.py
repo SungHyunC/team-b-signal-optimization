@@ -52,7 +52,7 @@ APP_NAME = "teamb-experiments"
 # the SUMO Linux binary needs these shared libraries (same list as the Dockerfile)
 APT_PACKAGES = ("libgl1", "libglib2.0-0", "libgomp1", "libxrender1")
 # libsumo runs SUMO in-process: byte-identical outputs to traci, about 2x faster (tests/test_sim_backend.py)
-RUNTIME_PACKAGES = ("eclipse-sumo", "traci", "sumolib", "libsumo", "numpy", "optuna", "pyyaml")
+RUNTIME_PACKAGES = ("eclipse-sumo", "traci", "sumolib", "libsumo", "numpy", "optuna")
 CPU_PER_RUN = 1.0
 MEMORY_MB = 2048
 RUN_TIMEOUT_S = 3600
