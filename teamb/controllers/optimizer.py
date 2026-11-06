@@ -268,14 +268,20 @@ class SearchJob:
 
     def poll(self) -> list[tuple]:
         """All messages that arrived since the last poll (never blocks)."""
+        # Check liveness *before* draining: a worker that was already dead has flushed everything
+        # it sent into the pipe, so an empty drain really means "no result". Checking after the
+        # drain could miss a result put just before the worker exited.
+        alive = self.process.is_alive()
         messages = []
         while True:
             try:
                 messages.append(self.queue.get_nowait())
             except queue_mod.Empty:
                 break
-        if not messages and not self.process.is_alive():  # a finished worker has flushed its queue
-            messages.append(("error", f"search process ended without a result (exit code {self.process.exitcode})"))
+        if not alive:
+            self.process.join(timeout=0)  # reap it, no zombie
+            if not messages:
+                messages.append(("error", f"search process ended without a result (exit code {self.process.exitcode})"))
         return messages
 
     def cancel(self) -> None:

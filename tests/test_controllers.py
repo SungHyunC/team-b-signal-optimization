@@ -257,6 +257,52 @@ def test_search_cache_round_trip(tmp_path):
     assert load_cache(other, tmp_path) is None
 
 
+class _FakeProcess:
+    def __init__(self, alive=True):
+        self.alive, self.exitcode, self.joined = alive, None if alive else 1, 0
+
+    def is_alive(self):
+        return self.alive
+
+    def join(self, timeout=None):
+        self.joined += 1
+
+
+class _RacyQueue:
+    """Empty on the first read; right after it the worker puts its result and exits."""
+
+    def __init__(self, process, result=("result", {"plan": {"cycle": 70.0}})):
+        self.items, self.process, self.result = [], process, result
+
+    def get_nowait(self):
+        import queue
+
+        if self.items:
+            return self.items.pop(0)
+        if self.result is not None:
+            self.items.append(self.result)
+            self.result = None
+            self.process.alive, self.process.exitcode = False, 0
+        raise queue.Empty
+
+
+def _fake_job(process, q):
+    job = SearchJob.__new__(SearchJob)  # no real process
+    job.process, job.queue = process, q
+    return job
+
+
+def test_search_job_poll_never_loses_a_result_put_just_before_exit():
+    process = _FakeProcess()
+    job = _fake_job(process, _RacyQueue(process))
+    messages = job.poll() + job.poll()
+    assert [m[0] for m in messages] == ["result"], messages
+    assert process.joined >= 1, "a finished worker is reaped"
+    dead = _FakeProcess(alive=False)
+    lost = _fake_job(dead, _RacyQueue(dead, result=None)).poll()
+    assert [m[0] for m in lost] == ["error"] and "without a result" in lost[0][1]
+
+
 def test_ai_recommender_commands(topo):
     ctl = ready("ai_recommender", topo, approval_token="s3cret")
     assert ctl.pending_recommendation() is None
