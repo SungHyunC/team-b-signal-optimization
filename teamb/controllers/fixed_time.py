@@ -60,7 +60,8 @@ class FixedTimeController(Controller):
     owner = "Software & integration (Seong Hyeon)"
 
     def __init__(self, cycle: float = config.BASE_CYCLE_S, split: float = 0.5, offsets: dict | None = None, **params):
-        super().__init__(**params)
+        # every timing parameter goes into self.params, so the run manifest can reproduce the run
+        super().__init__(cycle=cycle, split=split, offsets=dict(offsets or {}), **params)
         self.plan = TimingPlan(cycle=cycle, offsets=dict(offsets or {}))
         self.default_split = split
 
@@ -79,14 +80,18 @@ class CoordinatedController(FixedTimeController):
     name = "coordinated"
     label = "Coordinated (green wave)"
     description = "Fixed-time with offsets so eastbound platoons meet green at each junction."
+    # Offsets follow the eastbound green wave at `progression_speed` m/s; a junction listed in
+    # `offsets` (seconds) keeps that value instead.
     owner = "Software & integration (Seong Hyeon)"
 
     def __init__(self, progression_speed: float = 12.5, split: float = 0.6, **params):
-        super().__init__(split=split, **params)
+        super().__init__(split=split, progression_speed=progression_speed, **params)
         self.progression_speed = progression_speed
+        self.user_offsets = dict(self.params["offsets"])  # explicit offsets win over the green wave
 
     def reset(self, cfg, seed, topology) -> None:
         super().reset(cfg, seed, topology)
         x0 = min(config.JUNCTION_X.values())
         for j in topology.tls_ids:
-            self.plan.offsets[j] = (config.JUNCTION_X[j] - x0) / self.progression_speed
+            wave = (config.JUNCTION_X[j] - x0) / self.progression_speed
+            self.plan.offsets[j] = float(self.user_offsets.get(j, wave))

@@ -175,6 +175,19 @@ def test_timing_plan_greens_start_at_the_offset_without_drift():
                    (t + lost - plan.offsets[j]) % 60 == pytest.approx(60.0, abs=1e-6) for t in starts), j
 
 
+def test_fixed_time_and_coordinated_record_every_parameter(topo):
+    kw = {"cycle": 120, "split": 0.7, "offsets": {"J2": 10.0}}
+    assert make_controller("fixed_time", **kw).params == kw
+    coord = make_controller("coordinated", progression_speed=10.0, split=0.7)
+    assert coord.params == {"cycle": 90, "split": 0.7, "offsets": {}, "progression_speed": 10.0}
+    coord.reset({}, 1, topo)
+    assert coord.plan.offsets["J1"] == 0.0 and coord.plan.offsets["J2"] == pytest.approx(30.0)  # 300 m / 10 m/s
+    # an explicit offset wins over the computed green wave for that junction only
+    mixed = ready("coordinated", topo, offsets={"J3": 5.0})
+    assert mixed.plan.offsets["J3"] == 5.0 and mixed.plan.offsets["J2"] == pytest.approx(24.0)
+    assert mixed.params["offsets"] == {"J3": 5.0}
+
+
 # --- AI recommender: demand model, Webster, cache, commands -------------------------------
 def _approach_volumes(topo, flows):
     by_edge = {e: (j, s) for j, sides in topo.approach_edges.items() for s, e in sides.items()}
