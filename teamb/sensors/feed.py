@@ -15,12 +15,17 @@ every step (cheap)
       with a radius that covers the whole network),
     * every E2 lane-area detector: halting number, vehicle number, occupancy, mean speed,
     * every E1 induction loop: seconds since the last detection, vehicles on the loop,
-    * lane 0 of every edge: disallowed vehicle classes (a closed road disallows all),
-    * the simulation: number of vehicles that started teleporting.
+    * lane 0 of every edge: disallowed vehicle classes (a closed road disallows all), only
+      when no closure provider is attached (SimEnv passes its ScenarioRuntime's closures,
+      the only place roads are closed, and saves decoding 40 lanes every step),
+    * the simulation: time, departed and arrived vehicle ids, number of vehicles that
+      started teleporting (``step_values`` gives SimEnv the first three without getters).
 on request, at most once per step (``snapshot_at``)
     * all vehicles: position on the lane (m) and SUMO time loss (s). Taken by a one-shot
       context subscription (subscribe, read, unsubscribe = 2 round trips). The metrics
       ask for it every 5 s.
+on request (``vehicle_values``)
+    * any vehicle variables, the same way; SimEnv.frame() uses it for drawing.
 
 Who uses it
 -----------
@@ -30,8 +35,10 @@ would report about itself. It never reaches a controller, except in the explicit
 labeled ``oracle`` benchmark.
 
 The feed is attached to the connection object (``conn._teamb_feed``) so the sensors
-and the metrics share it without any change to ``SimEnv``. The SensorSuite registers
-itself as ``feed.sensors`` so the metrics can read its logs at the end of the run.
+and the metrics share it. SimEnv creates a fresh one with ``attach_feed`` at every start
+(with libsumo the connection is the module itself and outlives a run); other callers get
+one on first use from ``get_feed``. The SensorSuite registers itself as ``feed.sensors``
+so the metrics can read its logs at the end of the run.
 """
 from __future__ import annotations
 
@@ -52,7 +59,13 @@ E2_VARS = (
 E1_VARS = (tc.LAST_STEP_TIME_SINCE_DETECTION, tc.LAST_STEP_VEHICLE_ID_LIST)
 STEP_VEHICLE_VARS = (tc.VAR_LANE_ID, tc.VAR_SPEED)
 SNAPSHOT_VEHICLE_VARS = (tc.VAR_LANEPOSITION, tc.VAR_TIMELOSS)
-SIM_VARS = (tc.VAR_TELEPORT_STARTING_VEHICLES_NUMBER,)
+# simulation.subscribe() replaces the variable list, so everything per step goes into this one call
+SIM_VARS = (
+    tc.VAR_TELEPORT_STARTING_VEHICLES_NUMBER,
+    tc.VAR_TIME,
+    tc.VAR_DEPARTED_VEHICLES_IDS,
+    tc.VAR_ARRIVED_VEHICLES_IDS,
+)
 
 # Direct getters used when a subscription value is missing (for example because some
 # other code re-subscribed the same object with different variables).
@@ -93,6 +106,19 @@ def get_feed(conn, topology) -> "TrafficFeed":
     return feed
 
 
+def attach_feed(conn, topology, *, closures=None) -> "TrafficFeed":
+    """A fresh feed for this connection, replacing any feed cached on it by an earlier run.
+
+    `closures`: optional callable returning the ids of the closed edges right now. With it the
+    feed takes closures from there instead of subscribing every edge's lane permissions."""
+    feed = TrafficFeed(conn, topology, closures=closures)
+    try:
+        conn._teamb_feed = feed
+    except AttributeError:  # see get_feed
+        pass
+    return feed
+
+
 def _radius_covering(net, x0: float, y0: float) -> float:
     xmin, ymin, xmax, ymax = net.getBoundary()
     corners = [(xmin, ymin), (xmin, ymax), (xmax, ymin), (xmax, ymax)]
@@ -100,9 +126,10 @@ def _radius_covering(net, x0: float, y0: float) -> float:
 
 
 class TrafficFeed:
-    def __init__(self, conn, topology):
+    def __init__(self, conn, topology, closures=None):
         self.conn = conn
         self.topo = topology
+        self._closures = closures  # callable -> closed edge ids; None: watch lane permissions
         self.sensors = None  # the SensorSuite registers itself here
         self.events: list[dict] = []  # road_closed / road_reopened (seen here), attack_* (logged by sensors)
         self.t: float | None = None
@@ -132,11 +159,30 @@ class TrafficFeed:
         for lane in self.detector_lanes:
             c.lanearea.subscribe(f"e2_{lane}", list(E2_VARS))
             c.inductionloop.subscribe(f"e1_{lane}", list(E1_VARS))
-        for lane in self._closure_lanes:
-            c.lane.subscribe(lane, [tc.LANE_DISALLOWED])
+        if self._closures is None:
+            for lane in self._closure_lanes:
+                c.lane.subscribe(lane, [tc.LANE_DISALLOWED])
         c.simulation.subscribe(list(SIM_VARS))
 
     # --- every step -------------------------------------------------------------
+    def step_values(self) -> tuple[float, tuple, tuple]:
+        """(simulation time, departed ids, arrived ids) after the last simulationStep.
+
+        Read from the simulation subscription (no round trip); a missing value falls back to
+        its getter, like `e1`/`e2`."""
+        c = self.conn
+        sim = c.simulation.getSubscriptionResults() or {}
+        t = sim.get(tc.VAR_TIME)
+        departed = sim.get(tc.VAR_DEPARTED_VEHICLES_IDS)
+        arrived = sim.get(tc.VAR_ARRIVED_VEHICLES_IDS)
+        if t is None:
+            t = c.simulation.getTime()
+        if departed is None:
+            departed = c.simulation.getDepartedIDList()
+        if arrived is None:
+            arrived = c.simulation.getArrivedIDList()
+        return t, departed, arrived
+
     def update(self, t: float) -> None:
         """Index this step's subscription results. Cheap; repeated calls for the same t are free."""
         if t == self.t:
@@ -157,12 +203,19 @@ class TrafficFeed:
         sim = c.simulation.getSubscriptionResults() or {}
         n = sim.get(tc.VAR_TELEPORT_STARTING_VEHICLES_NUMBER)
         self.teleports_started = int(n) if n is not None else c.simulation.getStartingTeleportNumber()
-        self._detect_closures(t, c.lane.getAllSubscriptionResults())
+        if self._closures is None:
+            lanes = c.lane.getAllSubscriptionResults()
+            closed_now = {
+                edge for lane, edge in self._closure_lanes.items()
+                if "passenger" in (lanes.get(lane) or {}).get(tc.LANE_DISALLOWED, ())
+            }
+        else:
+            closed_now = set(self._closures())
+        self._detect_closures(t, closed_now)
 
-    def _detect_closures(self, t: float, lanes: dict) -> None:
-        for lane, edge in self._closure_lanes.items():
-            disallowed = (lanes.get(lane) or {}).get(tc.LANE_DISALLOWED, ())
-            closed = "passenger" in disallowed
+    def _detect_closures(self, t: float, closed_now: set[str]) -> None:
+        for edge in self._closure_lanes.values():
+            closed = edge in closed_now
             if closed and edge not in self._closed:
                 self._closed.add(edge)
                 self.events.append({"t": t, "type": "road_closed", "edge": edge})
@@ -209,6 +262,17 @@ class TrafficFeed:
         c.junction.unsubscribeContext(self._snap_ego, tc.CMD_GET_VEHICLE_VARIABLE, self._snap_radius)
         self.snapshot_t = t
         return self.snapshot
+
+    def vehicle_values(self, variables) -> dict[str, dict]:
+        """{vehicle id: {variable: value}} for every vehicle on the network now.
+
+        One-shot context subscription like `snapshot_at` (2 round trips, decoded once), for
+        callers that need values only now and then, e.g. the twin's frames."""
+        c = self.conn
+        c.junction.subscribeContext(self._snap_ego, tc.CMD_GET_VEHICLE_VARIABLE, self._snap_radius, list(variables))
+        res = dict(c.junction.getContextSubscriptionResults(self._snap_ego) or {})
+        c.junction.unsubscribeContext(self._snap_ego, tc.CMD_GET_VEHICLE_VARIABLE, self._snap_radius)
+        return res
 
     def closed_edges(self) -> set[str]:
         return set(self._closed)
