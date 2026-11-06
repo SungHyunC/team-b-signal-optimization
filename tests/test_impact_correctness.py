@@ -336,15 +336,69 @@ def test_runs_with_another_end_are_neither_merged_nor_paired(tmp_path):
     assert set(rows) == {2700.0, 4500.0} and all(r["n"] == 2 for r in rows.values())
     assert rows[2700.0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(10.0 - 20.0)
     assert rows[4500.0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(31.8 - 76.0)
-    # each run end is annualized on its own, never summed into one controller total
-    annual = {a["end_time"]: a for a in result["annual"] if a["controller"] == "max_pressure"}
-    assert set(annual) == {2700.0, 4500.0}
-    for end, a in annual.items():
-        assert rows[end]["annual_hours"] == 500.0
-        assert a["annual_benefit_usd"] == pytest.approx(rows[end]["stats"]["total_value_usd_per_h"]["mean"] * 500.0)
-    assert any("different times" in n for n in result["notes"])
+    # one annual total per controller: rush_hour counts once, at its own duration (the run without --end)
+    (annual,) = [a for a in result["annual"] if a["controller"] == "max_pressure"]
+    assert rows[4500.0]["annual_hours"] == 500.0 and rows[2700.0]["annual_hours"] == 0
+    assert any("run end 2700 s: not annualized" in f for f in rows[2700.0]["flags"])
+    assert annual["annual_benefit_usd"] == pytest.approx(rows[4500.0]["stats"]["total_value_usd_per_h"]["mean"] * 500.0)
+    assert annual["run_ends"] == [4500.0] and annual["scenarios_used"] == ["rush_hour"]
+    assert any("different times" in n and "rush_hour: 2700 s, 4500 s" in n for n in result["notes"])
     md = impact.render_markdown(result)
     assert "end 2700 s" in md and "end 4500 s" in md
+
+
+def test_scenarios_with_different_default_durations_add_up_to_one_annual_row(tmp_path):
+    # the team's standard matrix: road_closure lasts 5400 s, the others 4500 s, all at default ends
+    from teamb.experiments.runner import RunSpec
+
+    p = impact.ImpactParams()
+    for scenario, end in (("rush_hour", 4500.0), ("emergency", 4500.0), ("road_closure", 5400.0)):
+        for seed in (1, 2):
+            for controller, delay, ev in (("fixed_time", 76.0, 200.0), ("max_pressure", 32.0, 180.0)):
+                _run_folder(tmp_path, RunSpec(scenario, controller, seed, 1.0),
+                            S(scenario=scenario, controller=controller, seed=seed, sim_time_s=end,
+                              mean_delay_s=delay + seed, ev_mean_travel_time_s=ev), end)
+    result = impact.analyze(tmp_path, params=p)
+    rows = {r["scenario"]: r for r in result["rows"]}
+    assert {r["end_time"] for r in rows.values()} == {4500.0, 5400.0}
+    (annual,) = result["annual"]  # one row per controller, its deployment cost charged once
+    assert annual["controller"] == "max_pressure" and annual["scenarios_used"] == ["road_closure", "rush_hour"]
+    expected = sum(rows[s]["stats"]["total_value_usd_per_h"]["mean"] * p.annual_hours[s] for s in ("road_closure", "rush_hour"))
+    assert annual["annual_benefit_usd"] == pytest.approx(expected)
+    assert annual["capex_usd"] == p.cost_of("max_pressure")[0] and annual["run_ends"] == [4500.0, 5400.0]
+    assert annual["ev_scenarios_used"] == ["emergency"]
+    assert annual["ev_hours_saved_per_year"] == pytest.approx(20.0 * p.ev_trips_per_year / 3600.0)
+    assert not any("different times" in n for n in result["notes"])
+    assert all(not r["flags"] for r in rows.values())
+    md = impact.render_markdown(result)
+    assert "(end " not in md and "EV hours per year from: max_pressure: emergency." in md
+
+
+def test_an_emergency_stress_variant_is_left_out_of_the_ev_hours():
+    p = impact.ImpactParams()
+    runs = []
+    for seed in (1, 2, 3):
+        runs.append(S(scenario="emergency", seed=seed, ev_mean_travel_time_s=200.0))
+        runs.append(S(scenario="emergency", seed=seed, controller="cand", ev_mean_travel_time_s=190.0))
+    stress = []
+    for seed in (1, 2, 3):
+        stress.append(_variant({"demand_scale": 2.0}, scenario="emergency", seed=seed, ev_mean_travel_time_s=600.0))
+        stress.append(_variant({"demand_scale": 2.0}, scenario="emergency", seed=seed, controller="cand",
+                               ev_mean_travel_time_s=300.0))
+    result = impact.analyze(runs + stress, params=p)
+    a = _annual(result, "cand")
+    assert a["ev_scenarios_used"] == ["emergency"]
+    assert a["ev_hours_saved_per_year"] == pytest.approx(10.0 * p.ev_trips_per_year / 3600.0)  # not (10 + 300) / 2
+    var = next(r for r in result["rows"] if r["scenario"] != "emergency")
+    assert any("not used for EV hours" in f for f in var["flags"])
+    # the only emergency run (a variant) still carries the EV trips; a variant chosen in annual_hours too
+    alone = _annual(impact.analyze(stress, params=p), "cand")
+    assert alone["ev_scenarios_used"] == [stress[0]["scenario_variant"]]
+    other = [dict(r, scenario_variant=r["scenario_variant"] + "x") for r in stress]
+    two = impact.analyze(stress + other, params=p)
+    assert _annual(two, "cand")["ev_scenarios_used"] == [] and _annual(two, "cand")["ev_hours_saved_per_year"] is None
+    picked = impact.analyze(stress + other, params={"annual_hours": {stress[0]["scenario_variant"]: 0}})
+    assert _annual(picked, "cand")["ev_scenarios_used"] == [stress[0]["scenario_variant"]]
 
 
 def test_preemption_pairs_stay_within_one_run_end(tmp_path):

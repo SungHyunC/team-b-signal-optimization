@@ -143,9 +143,9 @@ ASSUMPTIONS: list[Assumption] = [
     ),
     Assumption(
         "ev_trips_per_year", 1100, "emergency runs per year through the corridor", "assumption",
-        "About three ambulance or fire runs a day. Multiplies the paired EV time saved in the claimed 'emergency' "
-        "scenario rows (seed-weighted); PERF-01 rows and other EV scenarios (earthquake) are excluded. Emergency "
-        "time saved is reported in hours, not dollars.",
+        "About three ambulance or fire runs a day. Multiplies the paired EV time saved in the claimed plain "
+        "'emergency' row (else its only variant); stress variants (e.g. doubled demand), PERF-01 rows and other EV "
+        "scenarios (earthquake) are excluded. Emergency time saved is reported in hours, not dollars.",
     ),
 ]
 
