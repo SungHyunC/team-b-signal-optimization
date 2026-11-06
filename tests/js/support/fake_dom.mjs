@@ -138,7 +138,7 @@ export class FakeElement extends FakeNode {
 /** Elements that are <select> or <input> in index.html / sandbox.html. */
 const SELECTS = new Set(['f-scenario', 'f-controller', 'f-start', 'scenario', 'controller']);
 
-export function installDom() {
+export function installDom({ ids = [] } = {}) {
   const byId = new Map();
   const get = (id) => {
     if (!byId.has(id)) {
@@ -158,6 +158,7 @@ export function installDom() {
     querySelectorAll: () => [],
     getElementById: (id) => byId.get(id) || null, // toasts: no host, so toast() is a no-op
   };
+  for (const id of ids) get(id); // elements getElementById() should find (page markup)
   globalThis.document = document;
   globalThis.Node = FakeNode;
   globalThis.window = { matchMedia: () => ({ matches: false }) };

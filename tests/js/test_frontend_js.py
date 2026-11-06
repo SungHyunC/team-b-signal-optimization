@@ -8,10 +8,13 @@ Shared fixtures, checked from both languages:
 - fixtures/vehicles.json: frames encoded by teamb.twin.site.encode_vehicles. replay.test.mjs
   decodes them with replay.js decodeVehicles; here they must still match the encoder and the
   Python decoder. Regenerate after an intended encoder change:  python tests/js/test_frontend_js.py
+- fixtures/sandbox_cases.json: Scenario Sandbox files and the verdict, plus `teamb exp run`
+  commands. sandbox_schema.test.mjs checks the browser validator; here teamb.sandbox.
 """
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -55,6 +58,53 @@ def test_vehicle_fixture_matches_the_python_encoder():
         assert [v[0] for v in decoded["vehicles"]] == [v[0] for v in frame]
         for (vid, x, y, a, s, kind), (_, dx, dy, da, ds, dkind) in zip(frame, decoded["vehicles"]):
             assert (dx, dy, da, ds, dkind) == (round(x * 10) / 10, round(y * 10) / 10, round(a) % 360, round(s * 10) / 10, kind)
+
+
+SANDBOX = json.loads((FIXTURES / "sandbox_cases.json").read_text())
+STATIC_JS = ROOT / "teamb" / "twin" / "static" / "js"
+
+
+def _python_accepts(text: str) -> bool:
+    from teamb.sandbox import parse_sandbox_config
+
+    try:
+        parse_sandbox_config(text)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def _python_has_contract5() -> bool:
+    """teamb/sandbox.py rejects durations under 1200 s (contract 5; stream E1 owns that file)."""
+    return not _python_accepts('{"duration_s": 600}')
+
+
+@pytest.mark.parametrize("case", SANDBOX["cases"], ids=lambda c: c["name"])
+def test_sandbox_fixture_verdict_matches_python(case):
+    if case.get("contract5") and not _python_has_contract5():
+        pytest.skip("teamb/sandbox.py still allows durations under 1200 s (contract 5 pending)")
+    assert _python_accepts(case["text"]) is case["ok"]
+
+
+@pytest.mark.parametrize("item", SANDBOX["commands"], ids=lambda c: c["config"]["scenario"])
+def test_sandbox_fixture_command_matches_python(item):
+    from teamb.sandbox import experiment_command, parse_sandbox_config
+
+    assert experiment_command(parse_sandbox_config(item["config"])) == item["exp_run"]
+
+
+def _js_list(name: str) -> set[str]:
+    text = (STATIC_JS / "sandbox_schema.js").read_text()
+    body = re.search(rf"{name}: Object\.freeze\(\[([^\]]*)\]\)", text).group(1)
+    return set(re.findall(r"'([^']+)'", body))
+
+
+def test_sandbox_page_built_in_lists_match_python():
+    """Static GitHub Pages has no /api/sandbox/schema: its built-in lists must be what teamb.sandbox accepts."""
+    from teamb import sandbox
+
+    assert _js_list("scenarios") == set(sandbox.SCENARIOS)
+    assert _js_list("controllers") == set(sandbox.CONTROLLERS)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
