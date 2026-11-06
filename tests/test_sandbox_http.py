@@ -110,9 +110,11 @@ def test_displayed_commands_build_the_contract_specs(scenario, demand, duration,
 
 
 def test_js_command_template_matches_the_tested_flags():
-    """If sandbox.js changes its command, _js_argv (and this contract) must change with it."""
+    """If the page's command builder changes, _js_argv (and this contract) must change with it.
+
+    The builder lives in sandbox_schema.js (a DOM-free module the sandbox page imports)."""
     client = TestClient(create_app())
-    script = client.get("/static/js/sandbox.js").text
-    for flag in ("--scenarios ", "--controllers ", "--seeds ", "--ev-preemption ", "--scenario-params ", "--end "):
-        assert flag in script, flag
+    script = client.get("/static/js/sandbox_schema.js").text
+    for flag in ("--scenarios", "--controllers", "--seeds", "--ev-preemption", "--scenario-params", "--end"):
+        assert f"'{flag}'" in script, flag
     assert "--coverages" not in script  # coverage = the scenario default on both sides
