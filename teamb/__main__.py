@@ -52,12 +52,9 @@ def _site(argv: list[str]) -> int:
 
 
 def _vendor(argv: list[str]) -> int:
-    if argv and argv[0] in ("-h", "--help"):
-        print("usage: teamb vendor\n\nDownload the pinned three.js files into teamb/twin/static/vendor/ for offline demos.")
-        return 0
     from teamb.twin.vendor import main
 
-    return main()
+    return main(argv)
 
 
 def _train_rl(argv: list[str]) -> int:
@@ -104,11 +101,14 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--scenario", default="rush_hour")
     run.add_argument("--controller", default="fixed_time")
     run.add_argument("--seed", type=int, default=1)
-    run.add_argument("--coverage", type=float, default=None, help="share of vehicles reporting navigation data (0-1)")
+    run.add_argument("--coverage", type=_coverage, default=None, help="share of vehicles reporting navigation data, in (0, 1]")
     run.add_argument("--end", type=float, default=None, help="stop at this simulation time (s)")
     run.add_argument("--no-preemption", action="store_true", help="disable emergency-vehicle preemption")
     run.add_argument("--controller-params", default=None, help='JSON object, e.g. \'{"interval": 5}\'')
     run.add_argument("--scenario-params", default=None, help='JSON object, e.g. \'{"demand_scale": 1.25}\'')
+    run.add_argument("--traci-backend", choices=("traci", "libsumo", "auto"), default=None,
+                     help="how Python talks to SUMO: traci (socket, default), libsumo (in-process, ~2x faster, "
+                          "pip install -e \".[fast]\") or auto; default: $TEAMB_TRACI_BACKEND or traci")
     sub.add_parser("list", help="list controllers and scenarios")
     doctor = sub.add_parser("doctor", help="check the installation")
     doctor.add_argument("--skip-sim", action="store_true", help="do not run the 60 s smoke simulation")
@@ -117,6 +117,16 @@ def _parser() -> argparse.ArgumentParser:
         if help_text:
             sub.add_parser(name, help=help_text, add_help=False)
     return parser
+
+
+def _coverage(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
+    if not (0.0 < value <= 1.0):  # also rejects nan/inf
+        raise argparse.ArgumentTypeError(f"coverage must be in (0, 1], e.g. 0.25 for 25 % (got {text})")
+    return value
 
 
 def _json_arg(text: str | None, flag: str) -> dict | None:
@@ -152,8 +162,18 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_checks(simulate=not args.skip_sim)
     elif args.command == "run":
+        from teamb.scenarios import get_scenario
         from teamb.sim.env import SimEnv
 
+        controller_params = _json_arg(args.controller_params, "--controller-params")
+        scenario_params = _json_arg(args.scenario_params, "--scenario-params")
+        if args.controller == "ai_recommender" and not (controller_params or {}).get("auto_approve"):
+            # a headless run has no engineer to approve the plan, so it would stay fixed-time
+            controller_params = {**(controller_params or {}), "auto_approve": True}
+            print("note: headless ai_recommender run -> auto_approve=true (nobody can approve the plan here)")
+        warmup = get_scenario(args.scenario, **(scenario_params or {})).warmup
+        if args.end is not None and args.end <= warmup:
+            raise SystemExit(f"--end {args.end:g} is inside the {warmup:g} s warm-up: nothing would be measured")
         env = SimEnv(
             args.scenario,
             args.controller,
@@ -161,8 +181,9 @@ def main(argv: list[str] | None = None) -> int:
             coverage=args.coverage,
             end_time=args.end,
             ev_preemption=not args.no_preemption,
-            controller_params=_json_arg(args.controller_params, "--controller-params"),
-            scenario_params=_json_arg(args.scenario_params, "--scenario-params"),
+            controller_params=controller_params,
+            scenario_params=scenario_params,
+            traci_backend=args.traci_backend,
         )
         summary = env.run()
         print(json.dumps(summary, indent=2))
