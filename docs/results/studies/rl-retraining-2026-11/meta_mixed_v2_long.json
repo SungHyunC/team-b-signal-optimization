@@ -1,0 +1,51 @@
+{
+ "trained_unix": 1793954200,
+ "episodes": 5760,
+ "next_episode_index": 5760,
+ "failed_episodes": 0,
+ "wall_minutes": 47.5,
+ "scenario": "rush_hour,special_event,emergency,emergency,road_closure,road_closure,sinkhole_cross,earthquake,earthquake,off_peak",
+ "scenarios": [
+  "rush_hour",
+  "special_event",
+  "emergency",
+  "emergency",
+  "road_closure",
+  "road_closure",
+  "sinkhole_cross",
+  "earthquake",
+  "earthquake",
+  "off_peak"
+ ],
+ "demand_range": [
+  0.75,
+  1.4
+ ],
+ "episode_s": "full",
+ "features": "v2",
+ "visit_unit": "transitions",
+ "backend": "modal",
+ "seed_ranges": [
+  [
+   4001000,
+   4006759
+  ]
+ ],
+ "held_out": "training seeds >= 1000; evaluate on seeds below 1000",
+ "hyper": {
+  "alpha": 0.1,
+  "gamma": 0.9,
+  "eps_start": 0.3,
+  "eps_end": 0.02,
+  "sweeps": 3,
+  "buffer": 192,
+  "jitter": 0.15,
+  "switch_penalty": 0.2,
+  "coverage": 0.05,
+  "workers": 96,
+  "seed": 4,
+  "round_size": 96
+ },
+ "curve_unit": "round",
+ "note": "tabular Q-learning, shared policy over J1-J4; see teamb/controllers/rl.py"
+}

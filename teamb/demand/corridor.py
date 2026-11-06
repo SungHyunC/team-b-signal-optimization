@@ -47,7 +47,7 @@ class CorridorDemand:
     wb_left: float | JunctionValues = 0.0  # E → S
     truck_share: float = 0.0  # share of trucks in the arterial through flows
     bus_per_hour: float = 0.0  # buses each way along the whole arterial
-    junctions: tuple[str, ...] = field(default=config.JUNCTIONS)
+    junctions: tuple[str, ...] = field(default=config.JUNCTIONS)  # cross streets to load (a subset is fine)
 
     def flows(self, profile: Profile | None = None, *, begin: float = 0.0, end: float | None = None) -> list[Flow]:
         """All flows, sharing one time-of-day profile."""
@@ -65,7 +65,13 @@ class CorridorDemand:
                 flow("W0_J1", "J4_E5", self.bus_per_hour, "EB bus", vtype="bus"),
                 flow("E5_J4", "J1_W0", self.bus_per_hour, "WB bus", vtype="bus"),
             ]
-        for i, j in enumerate(self.junctions, start=1):
+        unknown = [j for j in self.junctions if j not in config.JUNCTIONS]
+        if unknown:
+            raise ValueError(f"unknown junctions {unknown} (the network has {config.JUNCTIONS})")
+        for j in self.junctions:
+            # cross-street nodes are numbered by the junction's place in the network (build.py),
+            # not by its place in self.junctions, so a subset such as ('J2', 'J4') stays right
+            i = config.JUNCTIONS.index(j) + 1
             north_in, north_out = f"NN{i}_N{i}", f"N{i}_NN{i}"
             south_in, south_out = f"S{i}_{j}", f"{j}_S{i}"
             movements = [

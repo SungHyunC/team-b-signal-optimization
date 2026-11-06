@@ -56,6 +56,8 @@ addKo({
   Legend: '범례',
 });
 
+const ALERT_HOLD_MS = 4000; // alerts flicker per step: hold the banner a bit (like the 3D label)
+
 /** 'N' -> 'north' in English, '북쪽' in Korean (APPROACH_NAMES holds the English words). */
 const approachWord = (a) => t(APPROACH_NAMES[a] || a);
 
@@ -150,10 +152,19 @@ export class ViewportChrome {
       this.frame = f;
       const alerts = (f.alerts || []).filter((a) => a.type === 'probe_detector_mismatch');
       if (alerts.length) {
-        this.alertUntil = performance.now() + 4000; // alerts flicker per step: hold the banner a bit
+        this.alertUntil = performance.now() + ALERT_HOLD_MS;
         this.lastAlert = alerts[0];
+        // Paused, no frame or status comes to take the banner down: re-render when it expires.
+        clearTimeout(this.alertTimer);
+        this.alertTimer = setTimeout(() => this.renderBanners(), ALERT_HOLD_MS + 50);
       }
       this.renderBanners();
+    });
+    ctx.bus.on('session', () => {
+      // A new run: the previous run's alert does not carry over.
+      clearTimeout(this.alertTimer);
+      this.alertUntil = 0;
+      this.lastAlert = null;
     });
     ctx.bus.on('connection', (ok) => {
       this.connected = ok;
@@ -245,8 +256,10 @@ export class ViewportChrome {
         const message = s.message && (lang === 'en' || this.ctx.static) ? s.message : t('Starting SUMO…');
         return show([h('div', { class: 'spinner' }), h('div', {}, message)], true);
       }
-      case 'error':
-        return show([h('div', { style: { maxWidth: '560px', color: '#ffd0d0' } }, s.error || t('Something went wrong.'))], false, [btn(t('Try again'), 'primary', () => this.ctx.topbar.start())]);
+      case 'error': {
+        // TopBar.retry, like Play / Space: a recording carries on where its download failed.
+        return show([h('div', { style: { maxWidth: '560px', color: '#ffd0d0' } }, s.error || t('Something went wrong.'))], false, [btn(t('Try again'), 'primary', () => this.ctx.topbar.retry())]);
+      }
       case 'finished': {
         const sum = s.summary || {};
         const items = [

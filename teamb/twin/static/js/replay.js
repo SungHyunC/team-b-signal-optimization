@@ -16,6 +16,7 @@ addKo({
   'Loading the recorded run…': '녹화된 실행을 불러오는 중…',
   'Could not load the recording ({error}). Reload the page to try again.': '녹화를 불러오지 못했어요 ({error}). 페이지를 새로고침해 주세요.',
   'Could not load the next part of the recording ({error}).': '녹화의 다음 부분을 불러오지 못했어요 ({error}).',
+  'Could not load this part of the recording ({error}).': '녹화의 이 부분을 불러오지 못했어요 ({error}).',
   'no recorded run is loaded yet': '아직 불러온 녹화가 없어요',
 });
 
@@ -94,6 +95,7 @@ export class ReplaySocket {
     this.clock = null; // {wall, t}: sim time t was on screen at performance.now() = wall
     this.timer = null;
     this.waiting = false; // playback holds while a chunk downloads
+    this.retryAt = null; // sim time to load again after a failed download (state 'error')
     this.loads = new Map(); // chunk index -> Promise of decoded frames
     this.ready = new Map(); // chunk index -> decoded frames
   }
@@ -134,15 +136,21 @@ export class ReplaySocket {
       case 'speed':
         break;
       case 'play':
-        if (this.state === 'finished') await this.seek(this.config.start_at, true);
+        if (this.state === 'error') await this.seek(this.retryAt ?? this.t, true); // try the download again
+        else if (this.state === 'finished' || this.t >= this.run.end_t) await this.seek(this.config.start_at, true);
         else this.resume();
         break;
       case 'pause':
         this.pause();
         break;
       case 'step':
+        if (this.state === 'finished') break; // nothing after the end ('.' must not turn it into 'paused')
         this.pause();
-        await this.advanceTo(this.t + (this.run.status.step_length || 1));
+        try {
+          await this.advanceTo(this.t + (this.run.status.step_length || 1));
+        } catch (err) {
+          this.fail(err, this.t);
+        }
         break;
       case 'reset':
         await this.seek(this.config.start_at, true);
@@ -154,6 +162,7 @@ export class ReplaySocket {
         return { ok: false, error: `unknown control action '${action}'` };
     }
     this.publishStatus();
+    if (this.state === 'error') return { ok: false, error: this.error, state: this.state, t: this.t };
     return { ok: true, state: this.state, speed: this.speed, t: this.t };
   }
 
@@ -189,7 +198,7 @@ export class ReplaySocket {
     const startAt = Math.max(0, Math.min(Number(cfg.start_at) || 0, run.end_t));
     this.config = { ...run.status.config, speed: this.speed, start_at: startAt };
     this.message = null;
-    await this.seek(startAt, cfg.autoplay !== false);
+    if (!(await this.seek(startAt, cfg.autoplay !== false)) && this.state === 'error') throw new Error(this.error);
     return { ok: true, sid: this.sid, run_id: run.status.run_id };
   }
 
@@ -232,12 +241,17 @@ export class ReplaySocket {
   }
 
   // --- playback -------------------------------------------------------------------------
+  /** Wall clock in ms (a method so tests can drive playback without waiting). */
+  now() {
+    return performance.now();
+  }
+
   setSpeed(speed) {
     const value = speed === 'max' ? 'max' : Number(speed);
     if (value !== 'max' && !(value > 0)) return;
     this.speed = value;
     if (this.config) this.config.speed = value;
-    if (this.clock) this.clock = { wall: performance.now(), t: this.t }; // keep the picture where it is
+    if (this.clock) this.clock = { wall: this.now(), t: this.t }; // keep the picture where it is
   }
 
   rate() {
@@ -247,6 +261,7 @@ export class ReplaySocket {
   resume() {
     this.playing = true;
     this.state = 'running';
+    this.error = null;
     this.startClock();
   }
 
@@ -258,7 +273,7 @@ export class ReplaySocket {
 
   startClock() {
     clearInterval(this.timer);
-    this.clock = { wall: performance.now(), t: this.t };
+    this.clock = { wall: this.now(), t: this.t };
     this.timer = setInterval(() => this.tick(), 1000 / FPS);
   }
 
@@ -270,20 +285,31 @@ export class ReplaySocket {
   }
 
   /** Show the run at sim time t: a new session for the panels (like the live "jump"), with the
-   *  event log and KPI history up to t. Unlike SUMO, a recording can also go back in time. */
+   *  event log and KPI history up to t. Unlike SUMO, a recording can also go back in time.
+   *  Resolves true when the frame is on screen; a failed download sets state 'error' instead
+   *  of rejecting (control('play') then tries again). */
   async seek(t, play) {
     const run = this.run;
     t = Math.max(0, Math.min(Number(t) || 0, run.end_t));
     this.stopClock();
     const sid = ++this.sid;
     const i = this.chunkIndex(t);
-    const frames = await this.loadChunk(i);
-    if (sid !== this.sid) return;
+    let frames;
+    try {
+      frames = await this.loadChunk(i);
+    } catch (err) {
+      if (sid === this.sid) this.fail(err, t, 'Could not load this part of the recording ({error}).');
+      return false;
+    }
+    if (sid !== this.sid) return false;
     let frame = frames[0];
     for (const f of frames) if (f.t <= t) frame = f;
     this.t = frame.t;
-    this.playing = play;
-    this.state = play ? 'running' : 'paused';
+    this.error = null;
+    this.retryAt = null;
+    const atEnd = play && this.t >= run.end_t; // e.g. a click at the right end of the timeline
+    this.playing = play && !atEnd;
+    this.state = atEnd ? 'finished' : play ? 'running' : 'paused';
     this.emit('hello', {
       type: 'hello',
       status: this.status(),
@@ -291,13 +317,25 @@ export class ReplaySocket {
       kpi_history: run.kpi_history.filter((k) => k.t <= this.t),
     });
     this.emitFrame(frame, []);
-    if (play) this.startClock();
+    if (this.playing) this.startClock();
+    return true;
+  }
+
+  /** A download failed: stop and say so (the overlay offers "Try again" = control('play')). */
+  fail(err, at, message = 'Could not load the next part of the recording ({error}).') {
+    this.stopClock();
+    this.playing = false;
+    this.state = 'error';
+    this.retryAt = at;
+    this.error = t(message, { error: err && err.message ? err.message : String(err) });
+    this.publishStatus();
   }
 
   tick() {
     if (!this.playing || this.waiting || !this.clock) return;
     const run = this.run;
-    const target = Math.min(run.end_t, this.clock.t + ((performance.now() - this.clock.wall) / 1000) * this.rate());
+    if (this.t >= run.end_t) return this.finish(); // the clock never runs past the last frame
+    const target = Math.min(run.end_t, this.clock.t + ((this.now() - this.clock.wall) / 1000) * this.rate());
     const missing = [];
     for (let i = this.chunkIndex(this.t); i <= this.chunkIndex(target); i++) if (!this.ready.has(i)) missing.push(i);
     if (missing.length) {
@@ -308,13 +346,11 @@ export class ReplaySocket {
         () => {
           if (sid !== this.sid || !this.playing) return;
           this.waiting = false;
-          this.clock = { wall: performance.now(), t: this.t };
+          this.clock = { wall: this.now(), t: this.t };
         },
         (err) => {
           if (sid !== this.sid) return;
-          this.pause();
-          this.error = t('Could not load the next part of the recording ({error}).', { error: err.message });
-          this.publishStatus();
+          this.fail(err, this.t);
         },
       );
       return;

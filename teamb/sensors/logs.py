@@ -46,7 +46,7 @@ DETECTOR_INTERVAL_COLUMNS = (
 
 
 class RollingCount:
-    """Number of events in the last `window_s` seconds, kept with a running total.
+    """Number of events in the last `window_s` seconds, (t - window_s, t], with a running total.
 
     rate_vph(t) = total * 3600 / span, where span = min(window, t) but at least 60 s, so the
     first minutes of a run do not produce huge rates from a handful of vehicles."""
@@ -62,7 +62,7 @@ class RollingCount:
             self.total += n
         limit = t - self.window_s
         items = self.items
-        while items and items[0][0] < limit:
+        while items and items[0][0] <= limit:  # keep exactly window_s one-second steps
             self.total -= items.popleft()[1]
 
     def rate_vph(self, t: float) -> float:

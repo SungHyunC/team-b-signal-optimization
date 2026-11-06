@@ -11,6 +11,7 @@ HTTP
     POST /api/control      {"action": "play"|"pause"|"step"|"reset"|"speed"|"jump", "speed": 5, "t": 1200}
     POST /api/command      a SimEnv command, e.g. {"type": "dispatch_ev", "origin": "W0_J1", "destination": "J4_E5"}
     GET  /api/results      experiment reports (results/experiments/*/report.json)
+    GET  /api/sandbox/schema  allowed scenarios, controllers and limits of the Scenario Sandbox JSON
     GET  /api/v1/...       signal data for navigation apps (teamb/api/signal_data.py)
 
 WebSocket /ws
@@ -39,8 +40,11 @@ from fastapi.responses import FileResponse, RedirectResponse, Response, HTMLResp
 from fastapi.staticfiles import StaticFiles
 
 from teamb import config
+from teamb import sandbox as sandbox_contract
 from teamb.twin import meta, access
-from teamb.twin.session import CALL_TIMEOUT_S, Client, Hub, SessionConfig, TwinSession, dumps
+from teamb.twin.session import (
+    CALL_TIMEOUT_S, Client, Hub, SessionBusy, SessionConfig, TwinSession, dumps, parse_control,
+)
 
 log = logging.getLogger("teamb.twin")
 
@@ -48,6 +52,46 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 THREE_VERSION = "0.160.0"  # keep in sync with the importmap in static/index.html
 THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{THREE_VERSION}/"
 VENDOR_DIR = STATIC_DIR / "vendor" / f"three@{THREE_VERSION}"  # optional offline copy (python -m teamb.twin.vendor)
+# A relative path below VENDOR_DIR: no leading "/" (pathlib would make it absolute), no "..".
+_VENDOR_PATH = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_./-]*")
+MAX_WS_INFLIGHT = 16  # unanswered requests per WebSocket; more get a "busy" reply instead of a task
+
+
+def vendor_file(path: str, base: Path | None = None) -> Path | None:
+    """Where /vendor/three/<path> may be served from, or None if the path must be refused.
+
+    The path must be relative and stay inside the vendor folder even after symlinks are
+    resolved; otherwise ``VENDOR_DIR / "/etc/passwd"`` would serve any file the server can read.
+    """
+    if not _VENDOR_PATH.fullmatch(path) or ".." in path:
+        return None
+    base = (base or VENDOR_DIR).resolve()
+    local = (base / path).resolve()
+    if not local.is_relative_to(base):
+        return None
+    return local
+
+
+class Superseded(Exception):
+    """The queued request was cancelled before it ran (a newer restart replaced it)."""
+
+
+async def await_future(fut, timeout: float):
+    """Wait for a sim-thread future. Superseded if a newer restart cancelled it while it was
+    queued (session.Request.superseded); the waiter's own cancellation stays a CancelledError."""
+    try:
+        return await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+    except asyncio.CancelledError:
+        if fut.cancelled() and getattr(fut, "superseded", False) and not _cancelling(asyncio.current_task()):
+            raise Superseded("superseded by a newer restart request") from None
+        raise
+
+
+def _cancelling(task) -> bool:
+    """Whether `task` itself is being cancelled. Task.cancelling() is new in 3.11; on 3.10 the
+    request's superseded flag alone decides."""
+    cancelling = getattr(task, "cancelling", None)
+    return bool(cancelling and cancelling())
 
 
 def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | None = None) -> FastAPI:
@@ -72,15 +116,26 @@ def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | 
 
     async def wait_for(fut, timeout: float = CALL_TIMEOUT_S) -> dict:
         try:
-            result = await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+            result = await await_future(fut, timeout)
         except asyncio.TimeoutError:
             raise HTTPException(504, "timed out waiting for the simulation thread") from None
+        except Superseded as exc:
+            raise HTTPException(409, str(exc)) from None
         except ValueError as exc:  # bad parameters, e.g. an invalid speed
             raise HTTPException(400, str(exc)) from None
         return result if isinstance(result, dict) else {"ok": True, "result": result}
 
+    @app.exception_handler(SessionBusy)
+    async def session_busy(request: Request, exc: SessionBusy):
+        return JSONResponse({"detail": str(exc)}, status_code=503, headers={"Retry-After": "2"})
+
     @app.get("/healthz", include_in_schema=False)
     def healthz():
+        # If the sim thread died, every request would queue forever: report it so the platform
+        # (Render's health check) restarts the instance.
+        if session.thread_alive() is False:
+            return JSONResponse({"ok": False, "service": "team-b-live-sumo", "error": "simulation thread stopped"},
+                                status_code=503)
         return {"ok": True, "service": "team-b-live-sumo"}
 
     @app.get("/login", include_in_schema=False)
@@ -109,10 +164,14 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         if not next_path.startswith("/") or next_path.startswith("//") or "\\\\" in next_path:
             next_path = "/"
         response = RedirectResponse(next_path, status_code=303)
+        # Lax, not Strict: the GitHub Pages sandbox (and shared links) open the twin with a
+        # cross-site top-level navigation, which Strict would answer with a fresh login every time.
+        # Lax still keeps the cookie off cross-site POSTs, fetches and WebSocket handshakes, and
+        # every state-changing endpoint here is a POST or the WebSocket.
         response.set_cookie(
             access.COOKIE, access.expected_cookie(access.configured_secret()),
             httponly=True, secure=os.getenv("TWIN_COOKIE_INSECURE") != "1",
-            samesite="strict", max_age=60 * 60 * 12, path="/",
+            samesite="lax", max_age=60 * 60 * 12, path="/",
         )
         return response
 
@@ -141,10 +200,11 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
     @app.get("/vendor/three/{path:path}", include_in_schema=False)
     def vendor_three(path: str):
         """three.js for the importmap: a local copy if one was downloaded, else the pinned CDN."""
-        if not re.fullmatch(r"[A-Za-z0-9_./-]+", path) or ".." in path:
+        local = vendor_file(path)
+        if local is None:
             raise HTTPException(404)
-        local = VENDOR_DIR / path
-        if local.is_file():
+        # A copy the server cannot read (vendored by another user) would fail mid-response: use the CDN.
+        if local.is_file() and os.access(local, os.R_OK):
             return FileResponse(local, media_type="text/javascript")
         return RedirectResponse(THREE_CDN + path, status_code=307)
 
@@ -192,6 +252,10 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
 
     @app.post("/api/control")
     async def post_control(body: dict = Body(...)):
+        try:
+            parse_control(body.get("action"), body.get("speed"), body.get("t"))  # 400 before queueing
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
         return await wait_for(session.control(body.get("action"), body.get("speed"), body.get("t")), timeout=120)
 
     @app.post("/api/command")
@@ -204,6 +268,11 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
     def get_results():
         return meta.list_reports(reports_dir)
 
+    @app.get("/api/sandbox/schema")
+    def get_sandbox_schema():
+        """The Scenario Sandbox contract (teamb/sandbox.py): what the builder may export."""
+        return sandbox_contract.schema()
+
     # --- signal data for navigation apps (owned by teamb/api) ---------------------------
     try:
         from teamb.api.signal_data import build_router
@@ -215,6 +284,10 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
     # --- WebSocket ------------------------------------------------------------------
     @app.websocket("/ws")
     async def websocket(ws: WebSocket):
+        if not access.origin_allowed(ws.headers.get("origin"), (ws.headers.get("host"), ws.headers.get("x-forwarded-host"))):
+            # Another website trying to drive this twin from a visitor's browser (no CORS for WebSockets).
+            await ws.close(code=1008, reason="origin not allowed")
+            return
         if not access.authenticated(ws.cookies.get(access.COOKIE)):
             await ws.close(code=1008, reason="login required")
             return
@@ -228,7 +301,18 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         tasks: set[asyncio.Task] = set()
         try:
             while True:
-                text = await ws.receive_text()
+                message = await ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                text = message.get("text")
+                if text is None:  # a binary frame: answer it instead of crashing the handler (KeyError)
+                    client.offer(dumps({"type": "reply", "id": None, "ok": False,
+                                        "error": "binary frames are not supported; send JSON text"}), droppable=False)
+                    continue
+                if len(tasks) >= MAX_WS_INFLIGHT:
+                    client.offer(dumps({"type": "reply", "id": _message_id(text), "ok": False,
+                                        "error": "busy: too many requests in flight on this connection"}), droppable=False)
+                    continue
                 task = asyncio.create_task(_handle(client, text))
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)
@@ -270,7 +354,7 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
                 fut = None
             else:
                 raise ValueError(f"unknown message type '{kind}' (expected 'control' or 'command')")
-            result = {"ok": True} if fut is None else await asyncio.wait_for(asyncio.wrap_future(fut), 120)
+            result = {"ok": True} if fut is None else await await_future(fut, 120)
         except asyncio.TimeoutError:
             result = {"ok": False, "error": "timed out waiting for the simulation thread"}
         except Exception as exc:
@@ -280,6 +364,17 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         client.offer(dumps({**result, "type": "reply", "id": msg.get("id"), "request": kind}), droppable=False)
 
     return app
+
+
+def _message_id(text: str):
+    """The "id" of a client message, for a reply to a message that is not processed."""
+    import json
+
+    try:
+        msg = json.loads(text)
+    except ValueError:
+        return None
+    return msg.get("id") if isinstance(msg, dict) else None
 
 
 def main(host: str = "127.0.0.1", port: int = 8000) -> None:

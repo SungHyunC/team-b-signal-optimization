@@ -59,9 +59,13 @@ class SafetySupervisor:
             return {}
         safe = {}
         for j, phase in action.items():
-            if j not in self.junctions:
-                self._reject(t, j, phase, "unknown junction")
-            elif phase is None or phase == "keep":
+            if not isinstance(j, str) or j not in self.junctions:
+                self._reject(t, j if isinstance(j, str) else repr(j)[:40], phase, "unknown junction")
+            elif phase is None:
+                continue
+            elif not isinstance(phase, str):  # e.g. a numpy array from a learned policy: never truth-test it
+                self._reject(t, j, repr(phase)[:40], "invalid phase type (expected 'EW', 'NS' or None)")
+            elif phase == "keep":
                 continue
             elif phase not in AXES:
                 self._reject(t, j, phase, "invalid phase (expected 'EW' or 'NS')")
@@ -129,14 +133,19 @@ class SafetySupervisor:
         }
 
     def min_time_to_change(self, j: str) -> float:
-        """Earliest time (s) until this junction's current state can end — used by the signal-data API."""
+        """Earliest time (s) until this junction's current state can end — used by the signal-data API.
+
+        A green that an emergency vehicle preempts toward the other axis can end after
+        preempt_min_green, the same rule `_advance` applies."""
         js = self.junctions[j]
         part = js.signal[3:]
         if part == "Y":
             return max(0.0, self.yellow - js.t_in)
         if part == "AR":
             return max(0.0, self.all_red - js.t_in)
-        return max(0.0, self.min_green - js.t_in)
+        preempted_away = js.preempted_by is not None and js.preempted_by != axis_of(js.signal)
+        hold = self.preempt_min_green if preempted_away else self.min_green
+        return max(0.0, hold - js.t_in)
 
     def initial(self, axis: str = "EW") -> None:
         for js in self.junctions.values():

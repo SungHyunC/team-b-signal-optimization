@@ -1,0 +1,662 @@
+{
+  "name": "confirm_emergency_100",
+  "created": "2026-11-05T04:59:22",
+  "baseline": "max_pressure",
+  "rows": [
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "n_seeds": 30,
+      "mean_delay_s": {
+        "mean": 29.877,
+        "ci95": 0.373
+      },
+      "p95_travel_time_s": {
+        "mean": 168.162,
+        "ci95": 0.903
+      },
+      "stops_per_veh": {
+        "mean": 1.027,
+        "ci95": 0.014
+      },
+      "unfinished_pct": {
+        "mean": 2.611,
+        "ci95": 0.126
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 100.46,
+        "ci95": 1.272
+      },
+      "delta_vs_baseline_pct": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_diff_s": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "p_value": null,
+      "n_paired": 30,
+      "variant": "max_pressure",
+      "controller_params": {},
+      "scenario_variant": "emergency",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60
+      ],
+      "is_baseline": true,
+      "baseline_match": "self",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 119.74,
+          "ci95": 0.555
+        },
+        "throughput_veh_h": {
+          "mean": 3278.967,
+          "ci95": 21.417
+        },
+        "arterial_mean_delay_s": {
+          "mean": 29.742,
+          "ci95": 0.455
+        },
+        "cross_mean_delay_s": {
+          "mean": 30.051,
+          "ci95": 0.435
+        },
+        "queue_p95_veh": {
+          "mean": 3.167,
+          "ci95": 0.142
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 29.898,
+          "ci95": 0.373
+        },
+        "ev_mean_delay_s": {
+          "mean": 22.725,
+          "ci95": 1.263
+        },
+        "ev_extra_delay_others_s": {
+          "mean": 6.32,
+          "ci95": 0.642
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 3278.967,
+          "ci95": 21.417
+        },
+        "unfinished": {
+          "mean": 87.9,
+          "ci95": 4.319
+        },
+        "never_inserted": {
+          "mean": 0.333,
+          "ci95": 0.266
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 29.496,
+          "ci95": 0.367
+        },
+        "wall_time_s": {
+          "mean": 9.273,
+          "ci95": 0.088
+        }
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure_spillback",
+      "coverage": 1.0,
+      "n_seeds": 30,
+      "mean_delay_s": {
+        "mean": 30.628,
+        "ci95": 0.377
+      },
+      "p95_travel_time_s": {
+        "mean": 170.468,
+        "ci95": 1.144
+      },
+      "stops_per_veh": {
+        "mean": 1.061,
+        "ci95": 0.015
+      },
+      "unfinished_pct": {
+        "mean": 2.652,
+        "ci95": 0.135
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 101.45,
+        "ci95": 1.551
+      },
+      "delta_vs_baseline_pct": {
+        "mean": -2.556,
+        "ci95": 1.077
+      },
+      "mean_delay_diff_s": {
+        "mean": 0.752,
+        "ci95": 0.32
+      },
+      "p_value": 0.0,
+      "n_paired": 30,
+      "improvement_of_means_pct": -2.516,
+      "variant": "max_pressure_spillback-44ec25",
+      "controller_params": {
+        "congestion_threshold": 8,
+        "downstream_penalty": 1.25
+      },
+      "scenario_variant": "emergency",
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "seeds": [
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60
+      ],
+      "is_baseline": false,
+      "baseline_match": "exact",
+      "metrics": {
+        "mean_travel_time_s": {
+          "mean": 120.501,
+          "ci95": 0.505
+        },
+        "throughput_veh_h": {
+          "mean": 3277.533,
+          "ci95": 20.797
+        },
+        "arterial_mean_delay_s": {
+          "mean": 31.055,
+          "ci95": 0.529
+        },
+        "cross_mean_delay_s": {
+          "mean": 30.126,
+          "ci95": 0.396
+        },
+        "queue_p95_veh": {
+          "mean": 3.4,
+          "ci95": 0.186
+        },
+        "spillback_duration_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "queue_warning_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "others_mean_delay_s": {
+          "mean": 30.649,
+          "ci95": 0.378
+        },
+        "ev_mean_delay_s": {
+          "mean": 23.682,
+          "ci95": 1.551
+        },
+        "ev_extra_delay_others_s": {
+          "mean": 6.511,
+          "ci95": 0.674
+        },
+        "recovery_time_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "excess_delay_veh_h": {
+          "mean": null,
+          "ci95": null
+        },
+        "est_queue_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_queue_bias": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "est_flow_mae": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "alert_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "false_alarm_s": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "detection_delay_s": {
+          "mean": null,
+          "ci95": null
+        },
+        "completed": {
+          "mean": 3277.533,
+          "ci95": 20.797
+        },
+        "unfinished": {
+          "mean": 89.333,
+          "ci95": 4.677
+        },
+        "never_inserted": {
+          "mean": 0.333,
+          "ci95": 0.266
+        },
+        "teleports": {
+          "mean": 0.0,
+          "ci95": 0.0
+        },
+        "mean_delay_incl_unfinished_s": {
+          "mean": 30.235,
+          "ci95": 0.371
+        },
+        "wall_time_s": {
+          "mean": 9.277,
+          "ci95": 0.206
+        }
+      },
+      "p_holm": 0.0
+    }
+  ],
+  "definitions": {
+    "mean_delay_s": "Mean SUMO timeLoss (s/veh) of trips that depart in [warmup, end) and finish (primary endpoint).",
+    "ci95": "Half-width of the 95 % t confidence interval over seeds (mean \u00b1 ci95); null with one seed.",
+    "delta_vs_baseline_pct": "Paired improvement in mean delay vs the baseline on matched seeds: mean over seeds of 100 \u00d7 (baseline \u2212 candidate) / baseline. Positive = better (less delay) than the baseline.",
+    "mean_delay_diff_s": "Paired difference candidate \u2212 baseline in mean delay (s/veh); negative = better.",
+    "p_value": "Two-sided paired t-test on the per-seed delay differences.",
+    "p_holm": "p_value after Holm\u2013Bonferroni correction over the candidates of the same scenario.",
+    "unfinished_pct": "100 \u00d7 (trips still in the network at the end + trips never inserted) / (completed + unfinished) (PERF-01).",
+    "ev_mean_travel_time_s": "Mean travel time of emergency vehicles that finished.",
+    "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage."
+  },
+  "matrix": {
+    "scenarios": [
+      "emergency"
+    ],
+    "controllers": [
+      "max_pressure",
+      "max_pressure_spillback-44ec25"
+    ],
+    "scenario_params": {},
+    "controller_params": {
+      "max_pressure_spillback-44ec25": {
+        "congestion_threshold": 8,
+        "downstream_penalty": 1.25
+      }
+    },
+    "seeds": [
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60
+    ],
+    "coverages": [
+      1.0
+    ],
+    "samplings": [
+      "uniform"
+    ],
+    "ev_preemption": [
+      true
+    ],
+    "end_time": [],
+    "warmup_s": 900
+  },
+  "coverage_sweep": [],
+  "estimation": [
+    {
+      "sampling": "uniform",
+      "coverage": 1.0,
+      "n_runs": 60,
+      "probe_share": {
+        "mean": 1.0,
+        "ci95": 0.0
+      },
+      "probe_share_arterial": {
+        "mean": 1.0,
+        "ci95": 0.0
+      },
+      "probe_share_cross": {
+        "mean": 1.0,
+        "ci95": 0.0
+      },
+      "est_queue_mae": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_bias": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_bias_arterial": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_bias_cross": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_queue_adj_mae": {
+        "mean": 0.023,
+        "ci95": 0.0
+      },
+      "est_queue_adj_bias": {
+        "mean": 0.023,
+        "ci95": 0.0
+      },
+      "det_queue_mae": {
+        "mean": 0.15,
+        "ci95": 0.003
+      },
+      "fused_queue_mae": {
+        "mean": 0.15,
+        "ci95": 0.003
+      },
+      "est_flow_mae": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "est_flow_bias": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "false_alarm_s": {
+        "mean": 0.0,
+        "ci95": 0.0
+      }
+    }
+  ],
+  "security": [],
+  "recovery": [],
+  "emergency": [
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 30,
+      "ev_count": {
+        "mean": 10.0,
+        "ci95": 0.0
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 100.46,
+        "ci95": 1.272
+      },
+      "ev_mean_delay_s": {
+        "mean": 22.725,
+        "ci95": 1.263
+      },
+      "others_mean_delay_s": {
+        "mean": 29.898,
+        "ci95": 0.373
+      },
+      "ev_extra_delay_others_s": {
+        "mean": 6.32,
+        "ci95": 0.642
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure_spillback-44ec25",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 30,
+      "ev_count": {
+        "mean": 10.0,
+        "ci95": 0.0
+      },
+      "ev_mean_travel_time_s": {
+        "mean": 101.45,
+        "ci95": 1.551
+      },
+      "ev_mean_delay_s": {
+        "mean": 23.682,
+        "ci95": 1.551
+      },
+      "others_mean_delay_s": {
+        "mean": 30.649,
+        "ci95": 0.378
+      },
+      "ev_extra_delay_others_s": {
+        "mean": 6.511,
+        "ci95": 0.674
+      }
+    }
+  ],
+  "perf01": [
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 30,
+      "completed": {
+        "mean": 3278.97,
+        "ci95": 21.42
+      },
+      "unfinished": {
+        "mean": 87.9,
+        "ci95": 4.32
+      },
+      "unfinished_pct": {
+        "mean": 2.61,
+        "ci95": 0.13
+      },
+      "in_network_at_end": {
+        "mean": 87.57,
+        "ci95": 4.27
+      },
+      "never_inserted": {
+        "mean": 0.33,
+        "ci95": 0.27
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 29.88,
+        "ci95": 0.37
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 29.5,
+        "ci95": 0.37
+      }
+    },
+    {
+      "scenario": "emergency",
+      "controller": "max_pressure_spillback-44ec25",
+      "coverage": 1.0,
+      "sampling": "uniform",
+      "ev_preemption": true,
+      "n_seeds": 30,
+      "completed": {
+        "mean": 3277.53,
+        "ci95": 20.8
+      },
+      "unfinished": {
+        "mean": 89.33,
+        "ci95": 4.68
+      },
+      "unfinished_pct": {
+        "mean": 2.65,
+        "ci95": 0.13
+      },
+      "in_network_at_end": {
+        "mean": 89.0,
+        "ci95": 4.65
+      },
+      "never_inserted": {
+        "mean": 0.33,
+        "ci95": 0.27
+      },
+      "teleports": {
+        "mean": 0.0,
+        "ci95": 0.0
+      },
+      "mean_delay_s": {
+        "mean": 30.63,
+        "ci95": 0.38
+      },
+      "mean_delay_incl_unfinished_s": {
+        "mean": 30.23,
+        "ci95": 0.37
+      }
+    }
+  ],
+  "compute": {
+    "runs_ok": 60,
+    "runs_failed": 0,
+    "experiment_wall_time_s": 310.9,
+    "sum_run_wall_time_s": 619.7,
+    "workers": [
+      2
+    ],
+    "simulated_s": 270000.0,
+    "sim_speedup": 435.7,
+    "mean_run_wall_by_controller_s": {
+      "max_pressure": 10.3,
+      "max_pressure_spillback-44ec25": 10.3
+    },
+    "mean_step_ms_by_controller": {
+      "max_pressure": 2.06,
+      "max_pressure_spillback-44ec25": 2.06
+    },
+    "data_bytes": 226222903,
+    "data_mb_per_run": 3.77,
+    "data_mb_per_sim_hour": 3.02
+  },
+  "failed_runs": [],
+  "code_revision": "cd556b8",
+  "sumo_version": "SUMO 1.28.0",
+  "commands": [
+    "python -m teamb.experiments run --name confirm_emergency_100 --scenarios emergency --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --controller-params '{\"max_pressure_spillback\":{\"congestion_threshold\":8,\"downstream_penalty\":1.25}}' --baseline max_pressure --strict-validation"
+  ]
+}

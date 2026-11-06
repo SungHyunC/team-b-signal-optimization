@@ -22,6 +22,13 @@ Definition (all parameters below are arguments with these defaults)
     in vehicle-hours: the extra delay the disruption caused, a single number to compare
     controllers on.
 
+Overlapping disruptions (e.g. two closures that start together and reopen at different
+times) are one disruption: `event_windows` merges overlapping or touching windows into their
+union, because every window is scored against the same network-wide delay rate and separate
+windows would count the same excess delay twice. Recovery is measured from the union's end.
+Separate disruptions whose recovery periods still overlap (one never recovers before the next
+starts) are totalled with `union_excess`, which counts each second once.
+
 Limitation and the better reference: the scenarios use time-of-day demand profiles, so the
 demand after an event can be higher than before it and the pre-event level may never come back
 even when the network is fine (censored). `recovery_vs_reference` compares with a
@@ -54,6 +61,14 @@ def centered_mean(times: list[float], values: list[float], window_s: float) -> l
             lo += 1
         out[i] = total / max(1, hi - lo)
     return out
+
+
+def _measurable(n_samples: int, recovered_at: float | None) -> bool:
+    """Can the excess of a window with `n_samples` samples be measured? It integrates over sample
+    intervals, so it needs two samples; one sample is a real 0 only when the window recovered
+    there (a short event). A censored window with one sample or none is unknown (None), as in
+    `union_excess`, never 0."""
+    return n_samples > 1 or (n_samples == 1 and recovered_at is not None)
 
 
 def recovery_time(
@@ -111,6 +126,7 @@ def recovery_time(
     during = [(t, v, s) for t, v, s in zip(times, values, smooth) if start <= t <= stop]
     if during:
         out["peak_level"] = round(max(s for _, _, s in during), 3)
+    if _measurable(len(during), recovered_at):
         excess = 0.0
         for k in range(1, len(during)):
             dt = during[k][0] - during[k - 1][0]
@@ -167,15 +183,75 @@ def recovery_vs_reference(
                 candidate = None
     stop = recovered_at if recovered_at is not None else pairs[-1][0]
     during = [(t, v) for t, v, _ in pairs if start <= t <= stop]
-    excess = sum(max(0.0, during[k][1] - ref_raw[during[k][0]]) * (during[k][0] - during[k - 1][0]) for k in range(1, len(during)))
-    out["excess_veh_h"] = round(excess / 3600.0, 3)
+    if _measurable(len(during), recovered_at):  # e.g. a shorter twin run: unknown, not 0
+        excess = sum(max(0.0, during[k][1] - ref_raw[during[k][0]]) * (during[k][0] - during[k - 1][0]) for k in range(1, len(during)))
+        out["excess_veh_h"] = round(excess / 3600.0, 3)
     if recovered_at is not None:
         out.update(recovered_at=recovered_at, recovery_s=round(recovered_at - end, 1), censored=False)
     return out
 
 
+def union_excess(times: list[float], values: list[float], spans: list[tuple]) -> float | None:
+    """Excess delay (veh·h) of several windows together, each second counted once.
+
+    spans = [(start, stop, level)]: a window integrates over [start, stop] against `level`, either
+    a pre-event level (float) or a reference series {t: value} (the counterfactual run). For every
+    sample interval (t[k-1], t[k]] inside at least one window, the largest excess
+    max(0, values[k] - level) among those windows is counted, times the interval length. With one
+    window this is that window's excess (same discretization as `recovery_time` and
+    `recovery_vs_reference`); summing per-window excesses would count overlapping seconds twice.
+    None if no interval lies inside a window."""
+    total, counted = 0.0, False
+    for k in range(1, len(times)):
+        a, b = times[k - 1], times[k]
+        best = None
+        for start, stop, level in spans:
+            if level is None or stop is None or not (start <= a and b <= stop):
+                continue
+            if isinstance(level, dict):
+                if a not in level or b not in level:
+                    continue
+                level_b = level[b]
+            else:
+                level_b = level
+            e = max(0.0, values[k] - level_b)
+            best = e if best is None else max(best, e)
+        if best is not None:
+            total += best * (b - a)
+            counted = True
+    return round(total / 3600.0, 3) if counted else None
+
+
+def merge_windows(windows: list[dict]) -> list[dict]:
+    """Union of overlapping or touching windows ({"kind", "what", "start", "end"}; end None = still
+    active at the run end). The merged window keeps start = min, end = max, the causes joined
+    with '+' in "what", kind "mixed" if the kinds differ, and the original windows in "parts"
+    (detail only; never summed)."""
+    inf = float("inf")
+    merged: list[dict] = []
+    for w in sorted(windows, key=lambda w: (w["start"], str(w["what"]))):
+        end = inf if w.get("end") is None else w["end"]
+        part = {k: w.get(k) for k in ("kind", "what", "start", "end")}
+        cur = merged[-1] if merged else None
+        if cur is not None and w["start"] <= cur["_end"]:
+            cur["_end"] = max(cur["_end"], end)
+            for what in str(w["what"]).split("+"):
+                if what not in cur["what"].split("+"):
+                    cur["what"] += f"+{what}"
+            if cur["kind"] != w["kind"]:
+                cur["kind"] = "mixed"
+            cur["parts"] += w.get("parts") or [part]
+        else:
+            merged.append({**w, "what": str(w["what"]), "_end": end, "parts": list(w.get("parts") or [part])})
+    for cur in merged:
+        end = cur.pop("_end")
+        cur["end"] = None if end == inf else end
+    return merged
+
+
 def event_windows(events: list[dict], run_end: float | None) -> list[dict]:
-    """Pair start/stop events into windows: closures (per edge) and attacks (per approach).
+    """Pair start/stop events into windows: closures (per edge) and attacks (per approach), then
+    merge overlapping or touching windows into one disruption (see `merge_windows`).
 
     Accepts the env's event log (`SimEnv.events`) or the feed's own event list; both use
     {"t", "type", ...} with types road_closed / road_reopened / attack_started / attack_stopped."""
@@ -203,12 +279,6 @@ def event_windows(events: list[dict], run_end: float | None) -> list[dict]:
                 w["end"] = e["t"]
                 windows.append(w)
     windows.extend(open_.values())  # still active when the run ended
-    # one disruption that closed several edges at once (e.g. both directions) is one window
-    merged: dict[tuple, dict] = {}
-    for w in sorted(windows, key=lambda w: (w["start"], str(w["what"]))):
-        key = (w["kind"], w["start"], w["end"])
-        if key in merged:
-            merged[key]["what"] += f"+{w['what']}"
-        else:
-            merged[key] = dict(w)
-    return sorted(merged.values(), key=lambda w: w["start"])
+    # one disruption that closed several edges (both directions, or two closures that overlap in
+    # time) is one window: scoring each against the network delay rate would double-count
+    return merge_windows(windows)

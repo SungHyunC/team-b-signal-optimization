@@ -106,7 +106,8 @@ export class Recorder {
     const panel = (x, y, w, h) => {
       g.fillStyle = 'rgba(6,10,18,0.74)';
       g.beginPath();
-      g.roundRect(x, y, w, h, 10 * s);
+      if (typeof g.roundRect === 'function') g.roundRect(x, y, w, h, 10 * s);
+      else g.rect(x, y, w, h); // Chrome < 99, Firefox < 112: square corners
       g.fill();
     };
     g.textBaseline = 'top';

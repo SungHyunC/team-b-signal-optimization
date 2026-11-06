@@ -5,7 +5,7 @@ Examples
 Sample experiment (the one in docs/results/sample-report.md)::
 
     python -m teamb.experiments run --name sample --scenarios rush_hour,emergency \\
-        --controllers fixed_time,coordinated --seeds 1-3 --end 2700 --workers 2
+        --controllers fixed_time,coordinated --seeds 1-3 --end 2700
 
 Coverage sweep with biased sampling (probe-based controller vs fixed-time)::
 
@@ -27,14 +27,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import shutil
 import sys
 from pathlib import Path
 
 from teamb.experiments.analysis import write_report
+from teamb.fsutil import atomic_write_json
 from teamb.experiments.accuracy import audit_specs
-from teamb.experiments.runner import EXPERIMENTS_DIR, build_matrix, parse_coverages, parse_seeds, run_matrix, validate_matrix
+from teamb.experiments.runner import (
+    EXPERIMENTS_DIR, build_matrix, default_workers, parse_coverages, parse_seeds, run_matrix, run_status, validate_matrix,
+)
 
 
 def _csv(text: str) -> list[str]:
@@ -64,6 +68,11 @@ def _json(text: str | None) -> dict:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["screen"]:  # own argument parser (teamb/experiments/screen.py)
+        from teamb.experiments.screen import main as screen_main
+
+        return screen_main(argv[1:])
     parser = argparse.ArgumentParser(prog="python -m teamb.experiments", description="Team B batch experiments")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -73,7 +82,8 @@ def main(argv=None) -> int:
     run.add_argument("--controllers", default="fixed_time,coordinated", help="comma-separated controller names")
     run.add_argument("--seeds", default="1-3", help="e.g. 1-20 or 1,2,5")
     run.add_argument("--coverages", default="default",
-                     help="probe coverage(s), 0-1 or percent: 10,25,50,75,100; 'default' = the scenario's default")
+                     help="probe coverage(s), 0-1 or percent: 10,25,50,75,100 or 1%%,5%% ('%%' always means percent); "
+                          "'default' = the scenario's default")
     run.add_argument("--sampling", default="uniform", help="uniform, approach_biased[:ratio], speed_biased[:p] (comma-separated)")
     run.add_argument("--ev-preemption", default="on", type=_onoff, help="on, off or on,off")
     run.add_argument("--end", type=float, default=None, help="simulation end time in s (default: the scenario's duration)")
@@ -82,7 +92,15 @@ def main(argv=None) -> int:
     run.add_argument("--scenario-params", type=_json, default=None, help='JSON, e.g. {"demand_scale": 1.2} or {"warmup": 300}')
     run.add_argument("--counterfactual", action="store_true",
                      help="also run every scenario that has events without them (reference for recovery time)")
-    run.add_argument("--workers", type=int, default=2, help="parallel simulations (each is one SUMO process)")
+    run.add_argument("--workers", type=int, default=None,
+                     help="parallel simulations, each one SUMO process (default: CPU cores - 1, at most one per run); "
+                          "with --backend modal: cloud containers (default 2)")
+    run.add_argument("--backend", choices=("local", "modal"), default="local",
+                     help="where runs execute: this machine, or Modal cloud containers (pip install modal; modal setup)")
+    run.add_argument("--traci-backend", choices=("traci", "libsumo", "auto"), default=None,
+                     help="how each local run talks to SUMO (default: $TEAMB_TRACI_BACKEND, else auto = libsumo when installed; "
+                          "outputs are identical, libsumo is about 2x faster). Modal containers always use libsumo, "
+                          "so traci is refused with --backend modal")
     run.add_argument("--baseline", default="fixed_time", help="controller the others are compared with")
     run.add_argument("--force", action="store_true", help="re-run runs that already have results")
     run.add_argument("--no-report", action="store_true", help="only run, do not write the report")
@@ -95,12 +113,15 @@ def main(argv=None) -> int:
     rep.add_argument("--copy-to", default=None, help="also copy report.md here (e.g. docs/results/sample-report.md)")
 
     sub.add_parser("list", help="list experiments in results/experiments/")
+    sub.add_parser("screen", help="prespecified regression screen: candidate vs baseline controller", add_help=False)
     args = parser.parse_args(argv)
 
     if args.command == "list":
         for d in sorted(EXPERIMENTS_DIR.glob("*/")):
-            n = len(list((d / "runs").glob("*/summary.json")))
-            print(f"{d.name}: {n} finished runs" + (" · report.md" if (d / "report.md").exists() else ""))
+            runs = [r for r in (d / "runs").glob("*/") if r.is_dir()]
+            n = sum(run_status(r)[0] == "ok" for r in runs)
+            rest = f", {len(runs) - n} failed or incomplete" if len(runs) > n else ""
+            print(f"{d.name}: {n} finished runs{rest}" + (" · report.md" if (d / "report.md").exists() else ""))
         return 0
 
     exp_dir = EXPERIMENTS_DIR / args.name
@@ -115,12 +136,26 @@ def main(argv=None) -> int:
             print(f"copied to {args.copy_to}")
         return 0
 
-    specs = build_matrix(
-        _csv(args.scenarios), _csv(args.controllers), parse_seeds(args.seeds), parse_coverages(args.coverages),
-        _csv(args.sampling), args.ev_preemption, args.end, args.controller_params, args.scenario_params,
-        counterfactual=args.counterfactual,
-    )
-    problems = validate_matrix(specs)
+    if args.backend == "modal":
+        # the containers set TEAMB_TRACI_BACKEND=auto themselves (libsumo is in the image) and
+        # never see this process's environment: a request for traci would be silently ignored
+        if args.traci_backend == "traci":
+            print("cannot run:\n  --traci-backend traci applies to local runs only: Modal containers always use "
+                  "libsumo (the outputs are identical); drop the flag or use --backend local", file=sys.stderr)
+            return 2
+        if not args.traci_backend and os.environ.get("TEAMB_TRACI_BACKEND", "auto") not in ("auto", "libsumo"):
+            print(f"note: TEAMB_TRACI_BACKEND={os.environ['TEAMB_TRACI_BACKEND']} does not reach Modal containers; "
+                  "they use libsumo", file=sys.stderr)
+    try:
+        specs = build_matrix(
+            _csv(args.scenarios), _csv(args.controllers), parse_seeds(args.seeds), parse_coverages(args.coverages),
+            _csv(args.sampling), args.ev_preemption, args.end, args.controller_params, args.scenario_params,
+            counterfactual=args.counterfactual,
+        )
+    except ValueError as exc:  # e.g. a reversed seed range or mixed --controller-params forms
+        print(f"cannot run:\n  {exc}", file=sys.stderr)
+        return 2
+    problems = validate_matrix(specs) if specs else ["the matrix is empty (check --scenarios, --controllers, --seeds)"]
     if problems:
         print("cannot run:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 2
@@ -129,13 +164,17 @@ def main(argv=None) -> int:
             print(s.name)
         print(f"{len(specs)} runs")
         return 0
-    print(f"{len(specs)} runs -> {exp_dir} ({args.workers} workers)")
+    where = "Modal containers" if args.backend == "modal" else "workers"
+    workers = args.workers if args.workers is not None else default_workers(len(specs), args.backend)
+    print(f"{len(specs)} runs -> {exp_dir} ({workers} {where})")
     command = "python -m teamb.experiments " + " ".join(shlex.quote(a) for a in (argv if argv is not None else sys.argv[1:]))
-    record = run_matrix(specs, exp_dir, workers=args.workers, force=args.force, command=command)
+    if args.traci_backend:
+        os.environ["TEAMB_TRACI_BACKEND"] = args.traci_backend  # read by every (spawned) worker
+    record = run_matrix(specs, exp_dir, workers=workers, force=args.force, command=command, backend=args.backend)
     print(f"done in {record['wall_time_s']} s: {record['ok']} ok, {record['skipped']} skipped, {len(record['failed'])} failed")
     if args.strict_validation:
         audit = audit_specs(exp_dir, specs)
-        (exp_dir / "validation.json").write_text(json.dumps(audit, indent=2))
+        atomic_write_json(exp_dir / "validation.json", audit)
         print(f"validation: {audit['valid_runs']}/{audit['expected_runs']} valid runs")
         if not audit["complete"]:
             for issue in audit["problems"][:30]:

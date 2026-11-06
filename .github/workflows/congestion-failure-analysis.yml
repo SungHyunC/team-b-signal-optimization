@@ -1,17 +1,20 @@
 name: Congestion Failure Analysis
+# Research analysis (manual only): read-only diagnosis of the two 180-run matrices of a
+# "Robustness and Sensitivity Testing" run made with run_full_matrix. Pass that run's id; its
+# artifact must not have expired. The original diagnosis (run 41958378469 of robustness run
+# 41946810451) is archived in docs/results/studies/congestion-diagnosis/.
 on:
-  push:
-    branches:
-      - feature/validation-sandbox-explainability
-    paths:
-      - '.github/workflows/congestion-failure-analysis.yml'
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run id of a completed full robustness run (artifact robustness-results-<run_id>)'
+        required: true
+        type: string
 permissions:
   contents: read
   actions: read
 jobs:
   diagnose:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-congestion-diagnosis]')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -19,18 +22,15 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - name: Install test dependencies
-        run: python -m pip install pytest
-      - name: Test diagnosis logic
-        run: python -m pytest tests/test_congestion_diagnosis.py -q
-      - name: Download completed 360-run experiment
+      - name: Download the robustness experiment
         uses: actions/download-artifact@v8
         with:
-          name: robustness-results-41946810451
-          run-id: 41946810451
+          name: robustness-results-${{ inputs.run_id }}
+          run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
           path: results/experiments
       - name: Compare high-demand controller metrics and bottlenecks
+        # teamb.experiments.diagnose needs only the standard library, so no install step
         run: |
           python -m teamb.experiments.diagnose results/experiments/robustness_high --output results/diagnostics/high_demand.json > /tmp/high_demand.txt
           python -m teamb.experiments.diagnose results/experiments/robustness_low --output results/diagnostics/light_demand.json > /tmp/light_demand.txt
@@ -58,4 +58,4 @@ jobs:
           name: congestion-diagnosis-${{ github.run_id }}
           path: results/diagnostics/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 90

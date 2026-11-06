@@ -4,7 +4,7 @@
 //   server --hello/status/frame--> socket --> layers (vehicles, signals, overlays) + bus --> panels
 //   panels --control/command--> socket --> server (runs them on the sim thread)
 //
-// URL parameters start a specific demo, e.g.
+// URL parameters start a specific demo (parsed in launch.js), e.g.
 //   /?scenario=emergency&controller=coordinated&start=1170&speed=2&camera=J2&present=1
 //
 // The online demo (python -m teamb.twin.site) sets window.TWIN_STATIC: the same app then
@@ -24,6 +24,7 @@ import { OVERLAYS } from './overlays.js';
 import { Recorder } from './recorder.js';
 import { ResultsView } from './results.js';
 import { fmtClock, fmtNum, indexGeometry } from './util.js';
+import { configDiffers, stateParams, stripLaunchParams, urlConfig } from './launch.js';
 import { $, Bus, toast } from './ui/dom.js';
 import { TopBar } from './ui/topbar.js';
 import { KpiPanel } from './ui/kpis.js';
@@ -38,6 +39,8 @@ import { CameraControl, ViewportChrome } from './ui/viewport.js';
 addKo({
   'Signal Twin · Team B': 'Signal Twin · B팀',
   'Team B · 4-junction corridor': 'B팀 · 교차로 4개 구간',
+  'Scenario Sandbox': '시나리오 샌드박스',
+  'Create and export a reproducible scenario': '재현 가능한 시나리오를 만들고 내보내요',
   Scenario: '시나리오',
   Controller: '신호 제어 방식',
   Seed: '시드',
@@ -82,24 +85,6 @@ addKo({
   'Could not start the twin: {error}': '트윈을 시작하지 못했어요: {error}',
 });
 
-/** Session settings from the URL (?scenario=...&controller=...&seed=...&coverage=0.25&start=1170&speed=5&ev=0). */
-function urlConfig(params) {
-  const cfg = {};
-  if (params.get('scenario')) cfg.scenario = params.get('scenario');
-  if (params.get('controller')) cfg.controller = params.get('controller');
-  if (params.get('seed')) cfg.seed = Number(params.get('seed'));
-  if (params.get('coverage')) {
-    const c = Number(params.get('coverage'));
-    cfg.coverage = c > 1 ? c / 100 : c; // accept 25 or 0.25
-  }
-  if (params.get('start')) cfg.start_at = Number(params.get('start'));
-  if (params.get('speed')) cfg.speed = params.get('speed') === 'max' ? 'max' : Number(params.get('speed'));
-  if (params.get('ev')) cfg.ev_preemption = params.get('ev') !== '0';
-  if (params.has('demand')) cfg.scenario_params = { demand_scale: Number(params.get('demand')) };
-  if (params.has('end')) cfg.end_time = Number(params.get('end'));
-  return cfg;
-}
-
 const STATIC = window.TWIN_STATIC || null;
 
 async function boot() {
@@ -127,14 +112,9 @@ async function boot() {
   const overlays = OVERLAYS.map((Overlay) => new Overlay(ctx));
   ctx.layers.overlays = overlays;
 
-  // --- EN | 한국어: the page reloads in the other language at the same run and moment
-  mountLanguageSwitch($('#lang-switch'), () => {
-    const s = ctx.state.status;
-    const f = ctx.state.frame;
-    if (!s || !s.config || !['running', 'paused', 'finished'].includes(s.state)) return {};
-    const start = s.state === 'finished' || !f ? s.config.start_at : Math.floor(f.t);
-    return { scenario: s.config.scenario, controller: s.config.controller, seed: s.config.seed, start, speed: s.speed };
-  });
+  // --- EN | 한국어: the page reloads in the other language at the same run and moment. The URL
+  // then names exactly the running run, so the live twin attaches to it instead of restarting.
+  mountLanguageSwitch($('#lang-switch'), () => stateParams(ctx.state.status, ctx.state.frame));
 
   // --- panels (each subscribes to the bus itself)
   ctx.camera = new CameraControl(ctx);
@@ -176,14 +156,19 @@ async function boot() {
   }
 
   function autostart(s) {
-    // Open the page -> something is moving. A URL config restarts the run if it differs.
+    // Open the page -> something is moving. A URL config restarts the run only if it asks for
+    // another run than the one running (compared by value: see launch.js).
     if (params.get('autostart') === '0') return;
     let want = urlConfig(params);
     if (STATIC && !want.scenario) want = { ...meta.demo.default, ...want }; // the demo opens on its best moment
-    const differs = s.config && Object.entries(want).some(([k, v]) => k !== 'speed' && k !== 'start_at' && s.config[k] !== v);
-    if (Object.keys(want).length) ctx.topbar.setForm(want);
-    if (['idle', 'error', 'finished'].includes(s.state) || differs) ctx.topbar.start(want);
-    else if (want.speed != null && String(want.speed) !== String(s.speed)) ctx.topbar.setSpeed(want.speed);
+    if (['idle', 'error', 'finished'].includes(s.state) || configDiffers(want, s.config, meta)) {
+      if (Object.keys(want).length) ctx.topbar.setForm(want);
+      ctx.topbar.start(want);
+    } else if (want.speed != null && String(want.speed) !== String(s.speed)) ctx.topbar.setSpeed(want.speed);
+    // (Attached to the running run: the form already shows its settings, see TopBar.onStatus.)
+    // The live twin runs one simulation for everybody: once the link has been applied, drop its
+    // run parameters so a reload (phones reload background tabs) attaches instead of restarting.
+    if (!STATIC) history.replaceState(history.state, '', stripLaunchParams(location.href));
   }
 
   socket.on('open', () => bus.emit('connection', true));

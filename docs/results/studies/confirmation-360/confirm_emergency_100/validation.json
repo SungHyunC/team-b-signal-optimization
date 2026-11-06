@@ -1,0 +1,17 @@
+{
+  "complete": true,
+  "expected_runs": 60,
+  "valid_runs": 60,
+  "invalid_or_missing": [],
+  "problems": [],
+  "code_revisions": [
+    "cd556b8"
+  ],
+  "sumo_versions": [
+    "SUMO 1.28.0"
+  ],
+  "network_hashes": [
+    "0659fc5f6b9fead0"
+  ],
+  "metric": "mean_delay_s"
+}

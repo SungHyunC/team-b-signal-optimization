@@ -29,8 +29,8 @@ At heavy 125% road-closure demand, original max-pressure vs fixed-time delay was
 ## Slide 6 — Proposed spillback policy and independent confirmation (~90 seconds)
 Experimental controller: apply 1.25× downstream pressure penalty after eight stopped downstream vehicles. Calibrated on three exploratory seeds, then evaluated on **30 fresh independent paired seeds** for six conditions (360 runs). Heavy 125% closure: general delay **120.81 → 107.01 s/veh**, confirmed spillback **307.5 → 94.3 s**. BUT heavy rush-hour delay **44.02 → 50.17 s** (+14.0%) and heavy emergency delay **46.56 → 51.99 s** (+11.7%); both fail the predetermined 5% delay regression guard. Declare experimental controller **rejected as a general default**. Preserve the original max-pressure implementation.
 
-## Slide 7 — Sandbox live demonstration (~60 seconds)
-Launch local twin: `py -3.11 -m teamb twin`. Open `http://127.0.0.1:8000/static/sandbox.html`; choose road_closure, max_pressure, seed 33, demand 1.25, export config and show the reproducible CLI command. Then open main twin for live view if SUMO is running. Clearly state sandbox **builds configurations but does not execute custom SUMO in the browser**; GitHub Pages demo is prerecorded.
+## Slide 7 — Recorded demos + attendee QR interaction (~60 seconds)
+Team projects the **13 prerecorded GitHub Pages runs** at https://sunghyunc.github.io/team-b-signal-optimization/ and narrates emergency, rush-hour and road-closure examples. Attendees can use the QR to independently explore the **static configuration sandbox** at https://sunghyunc.github.io/team-b-signal-optimization/static/sandbox.html (scenario, controller, seed, demand, JSON export). The separate Render cloud site https://team-b-signal-optimization.onrender.com/ executes real SUMO and shows live frames over WebSocket, but supports **only one shared session**; audience members must not be told they each receive a private instance. Do not expose the operator's `TWIN_ACCESS_TOKEN`; see [event demo runbook](presentation-day-demo-runbook.md) for QR choice, role assignments and preflight.
 
 ## Slide 8 — Conclusions, limitations and next steps (~60 seconds)
 Strong synthetic evidence for max-pressure compared with fixed-time in typical scenarios, but heavy closures reveal operational tradeoffs. Independent testing caught a seemingly promising optimization that did not generalize. No field calibration or verified city-wide gains. Future research: conditional scenario-aware spillback control, more complex networks, real traffic calibration, multi-objective guardrails and independent follow-up.
@@ -41,7 +41,7 @@ Strong synthetic evidence for max-pressure compared with fixed-time in typical s
 
 **Q: How was evaluation made credible?** Fixed scenario parameters and paired seeds, independent holdout seed range, strict run audits, reported intervals and completion/spillback metrics.
 
-**Q: Does the public website run SUMO?** No; recorded playback. Local FastAPI twin can run SUMO, whereas scenario sandbox only generates configurations.
+**Q: Does the public website run SUMO?** GitHub Pages does not: its twin replays recorded runs and its sandbox only generates configurations. The separately deployed Render backend runs real SUMO in one shared, access-controlled session.
 
 **Q: Why reject a controller that lowered road closure delay?** It violates high-demand regression safeguards; maximizing one event's performance is not a safe general default.
 
@@ -50,7 +50,9 @@ Strong synthetic evidence for max-pressure compared with fixed-time in typical s
 - [Full engineering review](final-engineering-review.md)
 - [Independent 360-run decision and outcome table](independent-controller-confirmation-review.md)
 - [Final handoff and Windows reproduction](final-project-handoff.md)
-- [Baseline statistical study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299)
-- [Demand robustness study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451)
-- [Independent holdout study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840)
+- [Baseline statistical study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41929708299) ([data](results/studies/baseline-180/README.md))
+- [Demand robustness study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41946810451) ([data](results/studies/robustness-360/README.md))
+- [Independent holdout study](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840) ([data](results/studies/confirmation-360/README.md))
 - [Sandbox CI after release branch](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41973492051)
+
+- [Presentation-day runbook and attendee safety checklist](presentation-day-demo-runbook.md)

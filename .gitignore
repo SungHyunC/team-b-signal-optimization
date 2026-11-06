@@ -5,17 +5,21 @@ __pycache__/
 .ipynb_checkpoints/
 .pytest_cache/
 
+# packaging (pip install -e . / python -m build)
+build/
+dist/
+*.egg-info/
+
 # SUMO outputs (regenerated on demand)
 teamb/network/generated/
-# offline three.js copy (python -m teamb.twin.vendor)
+# offline three.js copy (teamb vendor)
 teamb/twin/static/vendor/
 results/*
 !results/README.md
-# online demo build (python -m teamb.twin.site build; published on the gh-pages branch)
+# online demo build (teamb site build; published on the gh-pages branch)
 site/
 
 # OS / editor
-.DS_Store
 .idea/
 .vscode/
 

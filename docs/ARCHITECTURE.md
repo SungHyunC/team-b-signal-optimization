@@ -61,9 +61,10 @@ Every simulation step is 1 s. Runs are 900 s warm-up + 3600 s measurement by def
           "oracle":   {"queue": 5, "count": 8}      // ONLY if controller.observation_source == "oracle"
         }
       },
-      "exits": {"E": {"edge": "J1_J2", "detector": {...} | null}}   // downstream, for max-pressure
+      "exits": {"E": {"edge": "J1_J2", "detector": {...} | null, "closed": false}}   // downstream, for max-pressure
     }
   },
+  "closed_edges": ["J2_J3"],        // official closure notices (flood, sinkhole, ...), sorted
   "alerts": [{"type": "probe_detector_mismatch", "junction": "J2", "approach": "N", "probe_queue": 120.0, "detector_queue": 2}]
 }
 ```
@@ -177,5 +178,6 @@ evaluation only), `detector_intervals.csv`, `evaluation.json` (spillback, recove
 1. Stay inside your package. Core files (`config.py`, `network/`, `sim/`, `safety/`, `controllers/base.py`,
    `controllers/fixed_time.py`) change only through the integrator.
 2. Keep the contracts above. Adding fields is fine; renaming or removing them breaks other parts.
-3. Every module gets tests in `tests/`; `python -m pytest` must pass before you push.
+3. Every module gets tests in `tests/`; `pytest` must pass before you push. [CI](../.github/workflows/ci.yml) runs the whole
+   suite on every pull request and push to `main`; `pytest -m "not sumo"` is a quick check without SUMO runs.
 4. Short test runs (`end_time` ≤ 1200 s) keep the suite fast.

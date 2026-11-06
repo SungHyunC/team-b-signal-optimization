@@ -1,0 +1,40 @@
+{
+  "name": "lesson1_smoke",
+  "created": "2026-11-04T22:57:55",
+  "invocations": [
+    {
+      "command": "python -m teamb.experiments run --name lesson1_smoke --scenarios rush_hour --controllers fixed_time,max_pressure --seeds 1 --workers 1 --strict-validation",
+      "started": "2026-11-04T22:57:55",
+      "wall_time_s": 17.4,
+      "workers": 1,
+      "runs": 2,
+      "ok": 2,
+      "skipped": 0,
+      "failed": [],
+      "matrix": {
+        "scenarios": [
+          "rush_hour"
+        ],
+        "controllers": [
+          "fixed_time",
+          "max_pressure"
+        ],
+        "seeds": [
+          1
+        ],
+        "coverages": [
+          1.0
+        ],
+        "samplings": [
+          "uniform"
+        ],
+        "ev_preemption": [
+          true
+        ],
+        "end_time": [],
+        "controller_params": {},
+        "scenario_params": {}
+      }
+    }
+  ]
+}

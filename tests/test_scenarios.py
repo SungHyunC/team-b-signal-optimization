@@ -95,6 +95,54 @@ def test_static_detours(topo):
     assert route and "J2_J3" not in route and route[0] == "W0_J1" and route[-1] == "J4_E5"
 
 
+def test_stranded_pairs_and_closure_check(topo):
+    # cutting both ways into J4 from the west strands the eastbound through trips
+    assert routing.stranded_pairs(topo, [("W0_J1", "J4_E5")], {"J3_J4", "N3_N4"}) == [("W0_J1", "J4_E5")]
+    assert routing.stranded_pairs(topo, [("W0_J1", "J4_E5")], {"J2_J3"}) == []
+    # a closed origin or destination strands its trips, even if it is an inner edge
+    assert routing.stranded_pairs(topo, [("N3_J3", "J3_S3"), ("N3_J3", "J3_S3")], {"N3_J3"}) == [("N3_J3", "J3_S3")]
+    # all three roads into N2: nobody can reach the exit N2_NN2 any more
+    assert routing.stranded_pairs(topo, [("W0_J1", "N2_NN2")], {"J2_N2", "N1_N2", "N3_N2"}) == [("W0_J1", "N2_NN2")]
+    assert routing.stranded_pairs(topo, [("NOPE", "J4_E5")], set()) == []  # unknown edges are validate()'s job
+    pairs = {("W0_J1", "J4_E5"): "EB through"}
+    assert routing.closure_error(topo, ["J2_J3"], (), list(pairs), pairs) is None
+    assert "entry/exit" in routing.closure_error(topo, ["W0_J1"], (), list(pairs), pairs)
+    assert "unknown edge" in routing.closure_error(topo, ["NOPE"], (), list(pairs), pairs)
+    msg = routing.closure_error(topo, ["N3_N4"], {"J3_J4"}, list(pairs), pairs)
+    assert msg and "EB through" in msg and "no route" in msg
+    # pairs that earlier closures already cut off do not block an unrelated closure
+    assert routing.closure_error(topo, ["J1_J2"], {"J3_J4", "N3_N4"}, list(pairs), pairs) is None
+
+
+def test_scenario_closure_check_and_validate_replay_events(topo):
+    special = get_scenario("special_event")
+    assert "Stadium" in special.closure_error(topo, ["N3_J3"])  # the stadium garage exit is a flow origin
+    rush = get_scenario("rush_hour")
+    assert rush.closure_error(topo, ["J2_N2", "N2_J2"]) is None  # the sinkhole closure is fine
+    assert rush.closure_error(topo, ["N3_N2"], {"J2_N2", "N1_N2"})  # ... the third road into N2 is not
+    events = [
+        {"time": 50, "kind": "close_road", "params": {"edge": "J3_J4", "both_directions": True}},
+        {"time": 51, "kind": "close_road", "params": {"edge": "N3_N4"}},  # cuts J4 off from the west
+        {"time": 60, "kind": "reopen_road", "params": {"edge": "J3_J4", "both_directions": True}},
+        {"time": 61, "kind": "close_road", "params": {"edge": "N3_N4"}},  # fine once the bridge is open again
+        {"time": 70, "kind": "start_attack", "params": {"junction": "J2", "approach": "X"}},
+        {"time": 71, "kind": "start_attack", "params": {"junction": "J2", "approach": "N", "n": 0}},
+        {"time": 72, "kind": "start_attack", "params": {"junction": "J2", "approach": "N", "n": "many"}},
+        {"time": 80, "kind": "close_road", "params": {"edge": "J2-J3"}},
+    ]
+    problems = get_scenario("rush_hour", events=events).validate(topo)
+    assert len(problems) == 5, problems
+    assert problems[0].startswith("event at 51:") and "no route" in problems[0]
+    assert "no approach X" in problems[1] and "between 1 and 500" in problems[2] and "integer" in problems[3]
+    assert "unknown edge J2-J3" in problems[4]
+    ev = get_scenario("rush_hour", events=[
+        {"time": 50, "kind": "close_road", "params": {"edge": "J3_J4"}},
+        {"time": 50, "kind": "close_road", "params": {"edge": "N3_N4"}},
+        {"time": 60, "kind": "dispatch_ev", "params": {"origin": "W0_J1", "destination": "J4_E5"}},
+    ]).validate(topo)
+    assert len(ev) == 1 and "event at 50" in ev[0]  # the second closure is refused, so the EV still has a route
+
+
 # --- road closure (SUMO) --------------------------------------------------------------------
 CLOSE_AT, REOPEN_AT, CLOSURE_END = 150, 420, 600
 
@@ -173,6 +221,55 @@ def test_closure_rejects_bad_requests(closure_run):
         runtime.close_road("NOPE")
     with pytest.raises(ValueError):
         runtime.dispatch_ev("W0_J1", "J4_E5", kind="helicopter")
+
+
+@pytest.fixture(scope="module")
+def stranding_run(tmp_path_factory):
+    """Closures that would strand trips are refused and the run goes on (SUMO would quit)."""
+    events = [
+        {"time": 50, "kind": "close_road", "params": {"edge": "J3_J4"}},
+        {"time": 51, "kind": "close_road", "params": {"edge": "N3_N4"}},  # J4 cut off from the west
+    ]
+    env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=200, output_dir=tmp_path_factory.mktemp("stranding"),
+                 scenario_params={"warmup": 0, "events": events})
+    env.start()
+    out = {}
+    while env.t < 200:
+        env.step()
+        if env.t == 60:
+            out["first"] = env.runtime.close_road("J2_N2")
+            out["second"] = env.runtime.close_road("N1_N2")
+            with pytest.raises(ValueError, match="no route") as refused:
+                env.runtime.close_road("N3_N2")  # the last road into N2: trips to N2_NN2 would be stranded
+            out["refused"] = str(refused.value)
+    out["t"], out["closed"], out["events"] = env.t, sorted(env.runtime.closed), list(env.events)
+    out["report"] = env.runtime.report()
+    env.close()
+
+    special = SimEnv("special_event", "fixed_time", seed=1, end_time=20, output_dir=tmp_path_factory.mktemp("stadium"),
+                     scenario_params={"warmup": 0})
+    special.start()
+    while special.t < 10:
+        special.step()
+    with pytest.raises(ValueError, match="Stadium") as stadium:
+        special.handle_command({"type": "close_road", "edge": "N3_J3"})  # the garage exit is a flow origin
+    out["stadium"] = str(stadium.value)
+    while special.t < 20:
+        special.step()
+    out["stadium_closed"] = dict(special.runtime.closed)
+    special.close()
+    return out
+
+
+def test_closures_that_strand_trips_are_refused(stranding_run):
+    o = stranding_run
+    assert o["t"] == 200  # SUMO did not quit
+    assert o["first"]["closed"] and o["second"]["closed"] and "N2_NN2" in o["refused"]
+    assert o["closed"] == ["J2_N2", "J3_J4", "N1_N2"]
+    failed = [e for e in o["events"] if e["type"] == "event_failed"]
+    assert len(failed) == 1 and failed[0]["params"]["edge"] == "N3_N4" and "no route" in failed[0]["error"]
+    assert o["report"]["failed_events"] == 1
+    assert o["stadium_closed"] == {}
 
 
 # --- emergency vehicles from every side (SUMO) ----------------------------------------------------
@@ -361,3 +458,247 @@ def test_impact_cli_reads_an_experiment_folder(tmp_path):
     assert "actuated" in md and "B/C" in md
     data = json.loads((exp / "impact.json").read_text())
     assert data["rows"][0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(-15.0)
+
+
+# --- runtime bookkeeping with a fake TraCI connection (no SUMO) ------------------------------
+class _FakeVehicles:
+    def __init__(self, routes):
+        self.routes = {vid: list(r) for vid, r in routes.items()}
+        self.calls = 0
+
+    def getIDList(self):
+        return list(self.routes)
+
+    def getRoute(self, vid):
+        return tuple(self.routes[vid])
+
+    def getRouteIndex(self, vid):
+        return 0
+
+    def rerouteTraveltime(self, vid, current=False):
+        self.calls += 1  # the fastest route is the one it already has: nothing changes
+
+
+class _FakeEdges:
+    def adaptTraveltime(self, eid, value):
+        pass
+
+
+class _FakeEnv:
+    def __init__(self, topo, routes):
+        from types import SimpleNamespace
+
+        self.topology, self.t, self.events = topo, 1600.0, []
+        self.conn = SimpleNamespace(vehicle=_FakeVehicles(routes), edge=_FakeEdges())
+        self.sensors = SimpleNamespace(is_probe=lambda vid: True)
+
+    def log_event(self, event_type, /, **data):
+        self.events.append({"t": self.t, "type": event_type, **data})
+
+
+def test_rerouted_counts_vehicles_whose_route_changed_not_calls(topo):
+    from teamb.scenarios.events import ScenarioRuntime
+
+    env = _FakeEnv(topo, {"p1": ["J1_J2", "J2_N2", "N2_N3", "N3_J3", "J3_J4"]})
+    runtime = ScenarioRuntime(env, get_scenario("road_closure"))
+    runtime.closed = {"J2_J3": {"edge": "J2_J3", "cause": "flood", "since": 1500.0}}
+    runtime._refresh_detours()
+    for _ in range(3):  # three navigation updates, the route never changes
+        runtime._navigation_reroute()
+    report = runtime.report()
+    assert env.conn.vehicle.calls == 3 and report["reroute_calls"] == 3
+    assert report["rerouted"] == 0
+    env.conn.vehicle.rerouteTraveltime = lambda vid, current=False: env.conn.vehicle.routes.__setitem__(vid, ["J1_J2", "J2_N2", "N2_N3", "N3_J3", "J3_J4", "J4_E5"])
+    runtime._navigation_reroute()
+    runtime._navigation_reroute()
+    assert runtime.report()["rerouted"] == 1  # one vehicle, however often it is asked
+
+
+def _settling_runtime(topo, routes, closed=()):
+    """A runtime inside the settle window after a reopening, with `closed` edges still closed."""
+    from types import SimpleNamespace
+
+    from teamb.scenarios.events import ScenarioRuntime
+
+    env = _FakeEnv(topo, routes)
+    env.conn.simulation = SimpleNamespace(getStartingTeleportNumber=lambda: 0)
+    runtime = ScenarioRuntime(env, get_scenario("road_closure"))
+    runtime.closed = {e: {"edge": e, "cause": "flood", "since": 1500.0} for e in closed}
+    runtime._settle_until = env.t + 100.0
+    runtime._track_evs = lambda *args: None  # no SUMO subscription in the fake
+    runtime._next_tt_sample = runtime._next_reroute = float("inf")  # no travel-time sampling either
+    return env, runtime
+
+
+def test_an_ev_departing_in_the_settle_window_is_checked_for_closures(topo):
+    """A closure made after dispatch_ev but before SUMO inserted the EV lies on its fixed route; the
+    departure safety net must catch it during the REOPEN_SETTLE_S window too (dx-32)."""
+    ev_route = ["W0_J1", "J1_J2", "J2_J3", "J3_J4", "J4_E5"]
+    env, runtime = _settling_runtime(topo, {"ambulance_1": ev_route}, closed=["J2_J3"])
+    runtime.evs["ambulance_1"] = {"vehicle": "ambulance_1", "status": "dispatched"}
+    runtime._after_events(env.t, departed=("ambulance_1",), arrived=())
+    assert env.conn.vehicle.calls >= 1  # asked to re-route around J2_J3
+    assert "ambulance_1" in runtime._retry  # the fake re-route kept J2_J3: retried every step
+    open_env, open_runtime = _settling_runtime(topo, {"ambulance_2": ev_route})
+    open_runtime.evs["ambulance_2"] = {"vehicle": "ambulance_2", "status": "dispatched"}
+    open_runtime._after_events(open_env.t, departed=("ambulance_2",), arrived=())
+    assert open_env.conn.vehicle.calls == 0  # nothing closed: the EV keeps its dispatched route
+
+
+def test_settle_routing_is_not_counted_as_closure_rerouting(topo):
+    """Routing departures on the static weights after a reopening is not a closure re-route: it must
+    not inflate rerouted / reroute_calls in the summary (dx-33)."""
+    env, runtime = _settling_runtime(topo, {"c1": ["W0_J1", "J1_J2"], "c2": ["W0_J1", "J1_N1"]})
+    env.conn.vehicle.rerouteTraveltime = lambda vid, current=False: (
+        setattr(env.conn.vehicle, "calls", env.conn.vehicle.calls + 1),
+        env.conn.vehicle.routes.__setitem__(vid, ["W0_J1", "J1_J2", "J2_J3"]),
+    )
+    runtime._after_events(env.t, departed=("c1", "c2"), arrived=())
+    assert env.conn.vehicle.calls == 2  # both departures were routed on the static weights
+    assert runtime.report()["reroute_calls"] == 0 and runtime.report()["rerouted"] == 0
+    assert "c1" in runtime._touched and "c2" in runtime._touched  # next_tls must not trust stale subscriptions
+    # a departure with a closure still ahead goes through the counted safety net, as outside the window
+    blocked_env, blocked = _settling_runtime(topo, {"c3": ["W0_J1", "J1_J2", "J2_J3", "J3_J4"]}, closed=["J2_J3"])
+    blocked_env.conn.vehicle.rerouteTraveltime = lambda vid, current=False: blocked_env.conn.vehicle.routes.__setitem__(
+        vid, ["W0_J1", "J1_N1", "N1_N2", "N2_N3", "N3_J3", "J3_J4"])
+    blocked._after_events(blocked_env.t, departed=("c3",), arrived=())
+    assert blocked.report()["reroute_calls"] == 1 and blocked.report()["rerouted"] == 1 and not blocked._retry
+
+
+def test_failed_scheduled_events_are_reported_with_details(topo):
+    from teamb.scenarios.events import ScenarioRuntime
+
+    env = _FakeEnv(topo, {})
+    scenario = get_scenario("rush_hour", events=[{"time": 10, "kind": "close_road", "params": {"edge": "J2-J3"}},
+                                                 {"time": 20, "kind": "no_such_kind", "params": {}}])
+    runtime = ScenarioRuntime(env, scenario)
+    runtime._dispatch_pending(25.0)
+    report = runtime.report()
+    assert report["failed_events"] == 2
+    first, second = report["failed_event_details"]
+    assert first["kind"] == "close_road" and first["params"] == {"edge": "J2-J3"} and "unknown edge" in first["error"]
+    assert second["kind"] == "no_such_kind" and second["scheduled_at"] == 20
+    assert [e["type"] for e in env.events] == ["event_failed", "event_failed"]
+
+
+def test_runtime_reuses_step_data_instead_of_traci_round_trips(tmp_path, monkeypatch):
+    """EV tracking, departures, teleports and live travel times come from data the env, the
+    sensor feed and subscriptions already have (runtime-perf-3, ext-119/120/122)."""
+    import sys
+    from collections import Counter
+
+    import traci.connection
+
+    calls: Counter = Counter()
+    original = traci.connection.Connection._sendCmd
+
+    def counting(self, *args, **kwargs):
+        frame, getter = sys._getframe(1), None
+        while frame is not None:
+            name = frame.f_code.co_filename
+            if "traci" in name and getter is None and frame.f_code.co_name.startswith("get"):
+                getter = frame.f_code.co_name
+            if name.endswith("scenarios/events.py"):
+                calls[getter] += 1
+                break
+            frame = frame.f_back
+        return original(self, *args, **kwargs)
+
+    events = [
+        {"time": 5, "kind": "dispatch_ev", "params": {"origin": "W0_J1", "destination": "J4_E5", "kind": "ambulance"}},
+        {"time": 10, "kind": "close_road", "params": {"edge": "J2_J3"}},
+    ]
+    env = SimEnv("emergency", "fixed_time", seed=1, end_time=120, output_dir=tmp_path,
+                 scenario_params={"warmup": 0, "events": events, "demand_scale": 0.5})
+    env.start()
+    monkeypatch.setattr(traci.connection.Connection, "_sendCmd", counting)
+    lives = []
+    while env.t < 120:
+        env.step()
+        lives += [ev["live"] for ev in env.runtime.active_evs() if ev["live"]]
+    monkeypatch.undo()
+    summary = env.close()
+    for getter in ("getDepartedIDList", "getArrivedIDList", "getStartingTeleportNumber", "getRoadID", "getPosition",
+                   "getSpeed", "getAngle", "getTraveltime"):
+        assert calls[getter] == 0, (getter, calls)
+    assert calls["getNextTLS"] <= 2, calls  # only right after the EV was re-routed around the closure
+    assert lives and any(live["next_junction"] for live in lives)
+    assert env.runtime.teleports == summary.get("teleports", env.runtime.teleports)
+
+
+def _departures_after_reopening(tmp_path) -> list:
+    """Trips that departed within 300 s after a reopening on a route slower (free flow) than
+    the fastest open one. The closure makes the detour (J3 -> N3 -> N4 -> J4) jam."""
+    events = [
+        {"time": 300, "kind": "close_road", "params": {"edge": "J3_J4", "cause": "earthquake", "both_directions": True}},
+        {"time": 1000, "kind": "reopen_road", "params": {"edge": "J3_J4", "both_directions": True}},
+    ]
+    env = SimEnv("earthquake", "fixed_time", seed=1, end_time=1300, output_dir=tmp_path,
+                 scenario_params={"warmup": 0, "events": events, "demand_scale": 1.6})
+    env.start()
+    worse, topo, v = [], env.topology, env.conn.vehicle
+    while env.t < 1300:
+        env.step()
+        if env.t > 1000:
+            for vid in env.sensors.step_departed:
+                route = v.getRoute(vid)
+                best = routing.fastest_route(topo, route[0], route[-1], avoid=env.runtime.closed)
+                cost = sum(routing.free_flow_time(topo, e) for e in route)
+                if cost > sum(routing.free_flow_time(topo, e) for e in best) + 1.0:
+                    worse.append((env.t, vid, route))
+    env.close()
+    return worse
+
+
+def test_trips_departing_after_a_reopening_take_free_flow_routes(tmp_path):
+    """SUMO's insertion routing still remembers the jammed detour after a reopening; the
+    runtime routes those departures on the static weights (scenarios-sensors-5)."""
+    assert _departures_after_reopening(tmp_path) == []
+
+
+def test_ev_dispatched_in_the_settle_window_avoids_a_closure_made_before_it_departs(tmp_path):
+    """dx-32 / scenarios-sensors: within REOPEN_SETTLE_S of a reopening, dispatch an ambulance and close
+    a road on its route in the same step. SUMO inserts the EV a step later on its dispatched route,
+    so the departure check must re-route it; it used to wait at the closure until it teleported."""
+    events = [
+        {"time": 30, "kind": "close_road", "params": {"edge": "J1_N1"}},  # still closed during the window
+        {"time": 30, "kind": "close_road", "params": {"edge": "J3_N3"}},
+        {"time": 60, "kind": "reopen_road", "params": {"edge": "J3_N3"}},  # settle window until t=360
+        {"time": 70, "kind": "dispatch_ev", "params": {"origin": "W0_J1", "destination": "J4_E5", "kind": "ambulance"}},
+        {"time": 70, "kind": "close_road", "params": {"edge": "J2_J3"}},
+    ]
+    env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=400, output_dir=tmp_path,
+                 scenario_params={"warmup": 0, "events": events})
+    env.start()
+    blocked_at = []
+    try:
+        v = env.conn.vehicle
+        while env.t < 400:
+            env.step()
+            ev = env.runtime.evs.get("ambulance_1")
+            if ev and ev["status"] == "en_route" and "ambulance_1" not in env.runtime._retry:
+                route = v.getRoute("ambulance_1")
+                if "J2_J3" in route[v.getRouteIndex("ambulance_1") + 1 :]:
+                    blocked_at.append(env.t)
+        assert env.runtime._settle_until == 360.0 and "J2_J3" in env.runtime.closed
+        ev = env.runtime.evs["ambulance_1"]
+    finally:
+        env.close()
+    assert blocked_at == []  # re-routed the step it departed
+    assert ev["status"] == "arrived" and ev["travel_time_s"] < 300  # was 469 s, stuck until teleported
+
+
+def test_corridor_demand_for_a_subset_of_junctions_uses_their_own_edges(topo):
+    from teamb.demand.corridor import CorridorDemand
+
+    edges = {e.getID() for e in topo.net.getEdges()}
+    full = CorridorDemand().flows()
+    subset = CorridorDemand(junctions=("J2", "J4")).flows()
+    for f in subset:
+        assert f.origin in edges and f.destination in edges, f
+    by_name = {f.name: f for f in subset}
+    assert (by_name["SB through at J2"].origin, by_name["SB through at J2"].destination) == ("NN2_N2", "J2_S2")
+    assert (by_name["NB right at J4"].origin, by_name["NB right at J4"].destination) == ("S4_J4", "J4_E5")
+    assert {f.name for f in subset} <= {f.name for f in full} and not any("J1" in f.name or "J3" in f.name for f in subset)
+    with pytest.raises(ValueError):
+        CorridorDemand(junctions=("J9",)).flows()

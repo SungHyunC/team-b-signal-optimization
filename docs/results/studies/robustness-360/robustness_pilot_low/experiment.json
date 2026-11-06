@@ -1,0 +1,52 @@
+{
+  "name": "robustness_pilot_low",
+  "created": "2026-11-05T01:12:11",
+  "invocations": [
+    {
+      "command": "python -m teamb.experiments run --name robustness_pilot_low --scenarios rush_hour,emergency,road_closure --controllers fixed_time,max_pressure --seeds 1 --workers 2 --scenario-params '{\"demand_scale\":0.75}' --strict-validation",
+      "started": "2026-11-05T01:12:11",
+      "wall_time_s": 55.1,
+      "workers": 2,
+      "runs": 6,
+      "ok": 6,
+      "skipped": 0,
+      "failed": [],
+      "matrix": {
+        "scenarios": [
+          "emergency-193e6a",
+          "road_closure-193e6a",
+          "rush_hour-193e6a"
+        ],
+        "controllers": [
+          "fixed_time",
+          "max_pressure"
+        ],
+        "seeds": [
+          1
+        ],
+        "coverages": [
+          1.0
+        ],
+        "samplings": [
+          "uniform"
+        ],
+        "ev_preemption": [
+          true
+        ],
+        "end_time": [],
+        "controller_params": {},
+        "scenario_params": {
+          "rush_hour-193e6a": {
+            "demand_scale": 0.75
+          },
+          "emergency-193e6a": {
+            "demand_scale": 0.75
+          },
+          "road_closure-193e6a": {
+            "demand_scale": 0.75
+          }
+        }
+      }
+    }
+  ]
+}

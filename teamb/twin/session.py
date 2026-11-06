@@ -32,7 +32,10 @@ import concurrent.futures
 import json
 import logging
 import math
+import os
 import queue
+import re
+import shutil
 import threading
 import time
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
@@ -50,6 +53,60 @@ KPI_HISTORY = 720  # KPI samples (one per 5 sim-s, so one hour) for the sparklin
 KPI_KEYS = ("t", "vehicles", "arrived", "halting", "mean_speed", "mean_delay", "current_mean_delay")
 SPEEDS = (1, 2, 5, 10, 20, "max")
 CALL_TIMEOUT_S = 10.0
+# Limits on work one tester can queue on the single shared instance (twin-security-3).
+MAX_QUEUED_REQUESTS = 64  # pending sim-thread requests; more -> SessionBusy (HTTP 503 / "busy" reply)
+MAX_CLIENT_BACKLOG = 256  # unsent status/reply messages per browser; more -> the socket is closed (1013)
+MAX_LIVE_EVS = 50  # emergency vehicles dispatched or en route at the same time in the twin
+KEEP_RUNS_DEFAULT = 10  # twin run folders kept under runs_dir (TWIN_KEEP_RUNS; 0 = keep all)
+# SimEnv.run_id: <scenario>__<controller>__s<seed>__c<coverage>__<sampling>__<6 hex>
+_RUN_DIR = re.compile(r"[^/]+__[^/]+__s-?\d+__c\d+__.+__[0-9a-f]{6}")
+
+
+def keep_runs() -> int:
+    try:
+        return max(0, int(os.environ.get("TWIN_KEEP_RUNS", KEEP_RUNS_DEFAULT)))
+    except ValueError:
+        return KEEP_RUNS_DEFAULT
+
+
+def prune_runs(runs_dir: str | Path, keep: int) -> list[Path]:
+    """Delete all but the newest `keep` twin run folders in runs_dir; returns what was deleted.
+
+    Every restart writes a new folder (0.5 MB for an abandoned run, ~4 MB for a finished rush
+    hour), and nothing else cleans results/twin. Only folders named like a SimEnv run id are
+    touched, so other files in runs_dir are safe.
+    """
+    root = Path(runs_dir)
+    if keep < 0 or not root.is_dir():
+        return []
+    runs = []
+    for d in root.iterdir():
+        if d.is_dir() and not d.is_symlink() and _RUN_DIR.fullmatch(d.name):
+            try:
+                runs.append((d.stat().st_mtime, d.name, d))
+            except OSError:
+                continue
+    runs.sort(reverse=True)
+    removed = []
+    for _, _, d in runs[keep:]:
+        shutil.rmtree(d, ignore_errors=True)
+        removed.append(d)
+    return removed
+
+
+class SessionBusy(RuntimeError):
+    """The sim thread cannot take more work right now (queue full, or the thread is not running)."""
+
+
+class Request(concurrent.futures.Future):
+    """A future for one sim-thread request.
+
+    `superseded` is set when a newer restart replaced this one while it was still queued, so a
+    waiter can tell that cancellation apart from its own (asyncio.wrap_future also cancels the
+    request when the waiting task is cancelled, and Task.cancelling() only exists from 3.11 on).
+    """
+
+    superseded = False
 
 
 # --- small helpers -------------------------------------------------------------
@@ -66,13 +123,43 @@ def parse_speed(value) -> float:
         value = text
     try:
         speed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: a huge JSON integer such as 1e400 digits
         raise ValueError(f"invalid speed {value!r} (use a number of sim seconds per second, or 'max')") from None
     if math.isnan(speed) or speed < 0:
         raise ValueError(f"invalid speed {value!r}")
     if speed == 0 or math.isinf(speed):
         return math.inf
     return min(speed, 1000.0)
+
+
+CONTROL_ACTIONS = ("play", "pause", "step", "reset", "speed", "jump")
+
+
+def parse_control(action, speed=None, t=None) -> tuple[str, float | None, float | None]:
+    """Validate a control request before anything changes: (action, speed, t) or ValueError.
+
+    Malformed input (a number as action, a list as t, Infinity) used to escape as AttributeError
+    or TypeError, i.e. HTTP 500, sometimes after the speed had already been changed. An unknown
+    action is refused here too, so its speed is never applied.
+    """
+    if action is not None and not isinstance(action, str):
+        raise ValueError(f"invalid action {action!r} (expected one of {', '.join(CONTROL_ACTIONS)})")
+    action = (action or "speed").strip().lower()
+    if action not in CONTROL_ACTIONS:
+        raise ValueError(f"unknown control action {action!r} (expected one of {', '.join(CONTROL_ACTIONS)})")
+    new_speed = None if speed is None else parse_speed(speed)
+    target = None
+    if t is not None:
+        if isinstance(t, bool) or not isinstance(t, (int, float, str)):
+            raise ValueError(f"invalid time t={t!r} (expected simulated seconds)")
+        try:
+            target = float(t)
+        except (ValueError, OverflowError):
+            raise ValueError(f"invalid time t={t!r} (expected simulated seconds)") from None
+        if not math.isfinite(target):
+            raise ValueError(f"invalid time t={t!r} (expected simulated seconds)")
+        target = max(0.0, target)
+    return action, new_speed, target
 
 
 def speed_label(speed: float):
@@ -112,6 +199,25 @@ def dumps(obj) -> str:
         return json.dumps(jsonable(obj), separators=(",", ":"), allow_nan=False)
 
 
+SECRET_PARAM_KEYS = frozenset(("approval_token", "token", "password", "secret", "api_key"))
+REDACTED = "<redacted>"
+
+
+def is_secret_key(key) -> bool:
+    """Controller parameters that must never reach a browser (status, replies, hello)."""
+    k = str(key).lower()
+    return k in SECRET_PARAM_KEYS or k.endswith(("_token", "_secret", "_password"))
+
+
+def redact_secrets(value):
+    """A copy of `value` with every secret-looking key's value replaced by "<redacted>"."""
+    if isinstance(value, dict):
+        return {k: (REDACTED if is_secret_key(k) and v is not None else redact_secrets(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_secrets(v) for v in value]
+    return value
+
+
 def _as_bool(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "on")
@@ -140,6 +246,7 @@ class SessionConfig:
     def from_dict(cls, data: dict | None) -> "SessionConfig":
         from teamb.controllers import REGISTRY as CONTROLLERS
         from teamb.scenarios import REGISTRY as SCENARIOS
+        from teamb.sensors.sampling import parse_sampling
 
         data = dict(data or {})
         unknown = sorted(set(data) - {f.name for f in fields(cls)})
@@ -157,8 +264,10 @@ class SessionConfig:
                 cfg.coverage = float(cfg.coverage)
             if cfg.end_time is not None:
                 cfg.end_time = float(cfg.end_time)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:  # OverflowError: int(Infinity), int(1e400)
             raise ValueError(f"invalid session option: {exc}") from None
+        if not math.isfinite(cfg.start_at) or (cfg.end_time is not None and not math.isfinite(cfg.end_time)):
+            raise ValueError("start_at and end_time must be finite numbers of simulated seconds")
         if cfg.coverage is not None and not 0.0 < cfg.coverage <= 1.0:
             raise ValueError("coverage must be a share in (0, 1], e.g. 0.25 for 25 %")
         if cfg.end_time is not None and cfg.end_time <= 0:
@@ -167,28 +276,47 @@ class SessionConfig:
             raise ValueError("controller_params and scenario_params must be objects")
         cfg.ev_preemption = _as_bool(cfg.ev_preemption)
         cfg.autoplay = _as_bool(cfg.autoplay)
-        cfg.sampling = str(cfg.sampling)
+        # The sampling text is part of SimEnv.run_id, i.e. the run folder name: check it here (400)
+        # instead of after SUMO already wrote routes, wherever a "/" in it pointed.
+        cfg.sampling = "uniform" if cfg.sampling is None else str(cfg.sampling).strip() or "uniform"
+        try:
+            parse_sampling(cfg.sampling)
+        except ValueError as exc:  # e.g. "could not convert string to float" for 'approach_biased:x'
+            raise ValueError(str(exc) if "sampling" in str(exc) else f"invalid sampling '{cfg.sampling}': {exc}") from None
         cfg.speed = speed_label(parse_speed(cfg.speed))
         return cfg
 
     def to_dict(self) -> dict:
-        return jsonable(asdict(self))
+        """JSON for browsers and API replies. Secrets such as the AI recommender's approval_token
+        are redacted: the sim thread builds SimEnv from the object itself, never from this dict."""
+        d = jsonable(asdict(self))
+        d["controller_params"] = redact_secrets(d["controller_params"])
+        d["scenario_params"] = redact_secrets(d["scenario_params"])
+        return d
 
 
 # --- fan-out to browsers --------------------------------------------------------
 class Client:
     """One WebSocket connection. Only touched from the event-loop thread."""
 
-    def __init__(self, ws):
+    def __init__(self, ws, max_backlog: int = MAX_CLIENT_BACKLOG):
         self.ws = ws
         self.messages: collections.deque[str] = collections.deque()
         self.frame: str | None = None
         self.wake = asyncio.Event()
         self.closed = False
+        self.overflowed = False
+        self.max_backlog = max_backlog
 
     def offer(self, text: str, droppable: bool) -> None:
+        if self.closed:
+            return
         if droppable:
             self.frame = text  # a newer frame replaces one that was not sent yet
+        elif len(self.messages) >= self.max_backlog:
+            # A browser that stopped reading: replies and status messages must not be dropped
+            # silently, and must not pile up without bound either. Disconnect it; it reconnects.
+            self.overflowed = self.closed = True
         else:
             self.messages.append(text)
         self.wake.set()
@@ -203,6 +331,9 @@ class Client:
             if self.frame is not None and not self.closed:
                 text, self.frame = self.frame, None
                 await self.ws.send_text(text)
+        if self.overflowed:
+            self.messages.clear()
+            await self.ws.close(code=1013, reason="client too slow; reconnect")
 
 
 class Hub:
@@ -246,7 +377,9 @@ class TwinSession:
         self.hub = hub
         self.runs_dir = Path(runs_dir) if runs_dir else config.RESULTS / "twin"
         self.fps = fps
-        self._requests: queue.Queue = queue.Queue()
+        self._requests: queue.Queue = queue.Queue(maxsize=MAX_QUEUED_REQUESTS)
+        self._restart_lock = threading.Lock()
+        self._pending_restart: Request | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         # Everything below is written only by the sim thread; other threads just read it.
@@ -284,37 +417,57 @@ class TwinSession:
         self._thread = threading.Thread(target=self._run, name="teamb-sim", daemon=True)
         self._thread.start()
 
+    def thread_alive(self) -> bool | None:
+        """None before start_thread(); afterwards whether the sim thread still runs."""
+        return None if self._thread is None else self._thread.is_alive()
+
     def shutdown(self, timeout: float = 20.0) -> None:
         """Stop stepping, close SUMO (writes the run outputs) and join the thread."""
         self._stop.set()
-        self._requests.put(None)  # wake the thread if it is waiting
+        try:
+            self._requests.put_nowait(None)  # wake the thread if it is waiting
+        except queue.Full:
+            pass  # a full queue wakes it anyway
         if self._thread:
             self._thread.join(timeout)
 
     # --- public API (any thread) --------------------------------------------------
-    def submit(self, fn: Callable[[], Any]) -> concurrent.futures.Future:
+    def submit(self, fn: Callable[[], Any]) -> Request:
         """Run fn() on the sim thread between two steps."""
-        fut: concurrent.futures.Future = concurrent.futures.Future()
+        fut = Request()
         if threading.current_thread() is self._thread:  # already on the sim thread: no queue round trip
             try:
                 fut.set_result(fn())
             except Exception as exc:
                 fut.set_exception(exc)
             return fut
-        self._requests.put((fn, fut))
+        if self._thread is not None and not self._thread.is_alive() and not self._stop.is_set():
+            raise SessionBusy("the simulation thread is not running (see the server log)")
+        try:
+            self._requests.put_nowait((fn, fut))
+        except queue.Full:
+            raise SessionBusy("the simulation is busy (too many queued requests); try again in a moment") from None
         return fut
 
     def call(self, fn: Callable[[], Any], timeout: float = CALL_TIMEOUT_S):
         """Blocking version of submit() for synchronous callers (e.g. FastAPI's thread pool)."""
         return self.submit(fn).result(timeout)
 
-    def restart(self, cfg: SessionConfig) -> concurrent.futures.Future:
-        return self.submit(lambda: self._restart(cfg))
+    def restart(self, cfg: SessionConfig) -> Request:
+        """Queue a restart. A newer restart supersedes (cancels) one that is still waiting, so
+        N quick clicks or scripted calls cost at most one running plus one queued SUMO start."""
+        with self._restart_lock:
+            fut = self.submit(lambda: self._restart(cfg))
+            previous, self._pending_restart = self._pending_restart, fut
+        if previous is not None:
+            previous.superseded = True  # before cancel(): the waiter it wakes must already see it
+            previous.cancel()  # only succeeds while it is still queued
+        return fut
 
-    def control(self, action: str, speed=None, t=None) -> concurrent.futures.Future:
+    def control(self, action: str, speed=None, t=None) -> Request:
         return self.submit(lambda: self._control(action, speed, t))
 
-    def command(self, command: dict) -> concurrent.futures.Future:
+    def command(self, command: dict) -> Request:
         return self.submit(lambda: self._command(command))
 
     def status(self) -> dict:
@@ -356,6 +509,21 @@ class TwinSession:
             self._publish_status()
         finally:
             self._close_env()
+            self._cancel_queued()
+
+    def _cancel_queued(self) -> None:
+        """The thread is leaving: let everyone still waiting on a request know right away.
+
+        The requests fail with SessionBusy (HTTP 503) rather than being cancelled: a cancelled
+        request reads as "superseded by a newer restart" (409), which hides that the thread is gone.
+        """
+        while True:
+            try:
+                item = self._requests.get_nowait()
+            except queue.Empty:
+                return
+            if item is not None and item[1].set_running_or_notify_cancel():  # False: already cancelled
+                item[1].set_exception(SessionBusy("the simulation thread stopped (see the server log)"))
 
     def _stepping(self) -> bool:
         return self.env is not None and self.state != "loading" and (self.playing or self.ff_target is not None)
@@ -471,7 +639,8 @@ class TwinSession:
                 end_time=cfg.end_time,
                 frames=True,
             )
-            env.output_dir = self.runs_dir / env.run_id  # keep twin runs apart from experiment runs
+            env.output_dir = self._run_dir(env.run_id)  # keep twin runs apart from experiment runs
+            self._prune_runs()
             self.env = env  # set before start() so a failed start still gets closed
             env.start()
         except Exception as exc:
@@ -499,9 +668,9 @@ class TwinSession:
         return {"ok": True, "sid": self.sid, "run_id": env.run_id}
 
     def _control(self, action: str | None, speed=None, t=None) -> dict:
-        action = (action or "speed").lower()
-        if speed is not None:
-            self.speed = parse_speed(speed)
+        action, new_speed, t = parse_control(action, speed, t)  # raises before any change
+        if new_speed is not None:
+            self.speed = new_speed
             self._next_step_at = 0.0
             if self.config is not None:
                 self.config.speed = speed_label(self.speed)
@@ -513,7 +682,7 @@ class TwinSession:
         if action == "jump":
             if t is None:
                 return {"ok": False, "error": "jump needs a target time 't'"}
-            target = max(0.0, float(t))
+            target = t
             if env is None or target < env.t:  # SUMO cannot rewind: restart and fast-forward
                 if self.config is None:
                     return {"ok": False, "error": "no session yet"}
@@ -536,8 +705,6 @@ class TwinSession:
                 self.playing, self.ff_target, self.state = False, None, "paused"
                 if self._step_once():
                     self._publish_frame()
-        elif action != "speed":
-            return {"ok": False, "error": f"unknown control action '{action}'"}
         self._publish_status()
         return {"ok": True, "state": self.state, "speed": speed_label(self.speed), "t": self.last_t}
 
@@ -545,10 +712,12 @@ class TwinSession:
         env = self.env
         if env is None or self.state == "loading":
             return {"ok": False, "error": "no simulation running"}
+        if command.get("type") == "dispatch_ev" and _live_evs(env) >= MAX_LIVE_EVS:
+            return {"ok": False, "error": f"{MAX_LIVE_EVS} emergency vehicles are already on the road; wait for some to arrive"}
         try:
             reply = env.handle_command(dict(command))
         except Exception as exc:
-            log.warning("command %s failed: %s", command, exc)
+            log.warning("command %s failed: %s", redact_secrets(command), exc)
             reply = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         if not isinstance(reply, dict):
             reply = {"ok": True, "result": reply}
@@ -626,6 +795,27 @@ class TwinSession:
         self.playing, self.ff_target, self.state = False, None, "error"
         self._publish_status(message=self.error)
 
+    def _run_dir(self, run_id: str) -> Path:
+        """runs_dir/<run_id>, refusing an id that is not one plain folder name ("/", "..", an
+        absolute path): a run written anywhere else is never pruned and may overwrite files."""
+        out = self.runs_dir / run_id
+        if run_id in ("", ".", "..") or out.name != run_id or out.parent != self.runs_dir:
+            raise ValueError(f"refusing run id {run_id!r}: not a plain folder name inside {self.runs_dir}")
+        return out
+
+    def _prune_runs(self) -> None:
+        """Make room for the run about to start: keep the newest TWIN_KEEP_RUNS - 1 old ones."""
+        keep = keep_runs()
+        if keep <= 0:
+            return
+        try:
+            removed = prune_runs(self.runs_dir, keep - 1)
+        except Exception:  # housekeeping must never stop a run from starting
+            log.warning("could not prune old twin runs in %s", self.runs_dir, exc_info=True)
+            return
+        if removed:
+            log.info("removed %d old twin run folder(s) from %s", len(removed), self.runs_dir)
+
     def _close_env(self) -> None:
         env, self.env = self.env, None
         if env is not None:
@@ -660,6 +850,12 @@ class EnvProxy:
 
         call.__name__ = name
         return call
+
+
+def _live_evs(env) -> int:
+    """Emergency vehicles dispatched or still driving in this run (each costs TraCI calls per step)."""
+    evs = getattr(getattr(env, "runtime", None), "evs", None) or {}
+    return sum(1 for ev in evs.values() if isinstance(ev, dict) and ev.get("status") in ("dispatched", "en_route"))
 
 
 def _safe_close(env) -> None:

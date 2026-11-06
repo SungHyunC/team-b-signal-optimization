@@ -1,0 +1,491 @@
+scenario,controller,seed,mean_delay_s,unfinished_pct,completed,ev_mean_travel_time_s
+earthquake,max_pressure,900,212.01,2.9,2448,301.86
+earthquake,max_pressure,901,208.22,2.7,2483,298.29
+earthquake,max_pressure,902,247.88,2.41,2425,356.57
+earthquake,max_pressure,903,225.68,2.98,2507,297.57
+earthquake,max_pressure,904,209.58,2.66,2455,345.29
+earthquake,max_pressure,905,309.25,6.31,2407,503.86
+earthquake,max_pressure,906,206.91,3.01,2480,220.71
+earthquake,max_pressure,907,243.5,3.75,2516,383.0
+earthquake,max_pressure,908,223.07,2.6,2581,441.57
+earthquake,max_pressure,909,198.87,2.36,2526,320.0
+earthquake,rl (first model + fallback),900,212.39,3.01,2445,393.57
+earthquake,rl (first model + fallback),901,243.12,2.43,2490,437.14
+earthquake,rl (first model + fallback),902,238.55,2.37,2426,472.71
+earthquake,rl (first model + fallback),903,239.26,3.02,2506,306.29
+earthquake,rl (first model + fallback),904,253.67,2.97,2447,293.43
+earthquake,rl (first model + fallback),905,331.51,6.15,2411,555.14
+earthquake,rl (first model + fallback),906,227.51,2.7,2488,343.0
+earthquake,rl (first model + fallback),907,269.64,2.22,2556,432.29
+earthquake,rl (first model + fallback),908,228.91,2.45,2585,381.14
+earthquake,rl (first model + fallback),909,229.47,2.05,2534,296.71
+earthquake,"rl (first model, original)",900,246.84,3.61,2430,383.71
+earthquake,"rl (first model, original)",901,304.35,5.41,2414,350.57
+earthquake,"rl (first model, original)",902,287.12,3.06,2409,439.43
+earthquake,"rl (first model, original)",903,332.23,7.04,2402,397.0
+earthquake,"rl (first model, original)",904,362.63,6.03,2370,492.86
+earthquake,"rl (first model, original)",905,448.5,15.62,2167,515.0
+earthquake,"rl (first model, original)",906,303.27,3.44,2469,385.43
+earthquake,"rl (first model, original)",907,348.06,10.25,2346,407.33
+earthquake,"rl (first model, original)",908,399.73,7.92,2440,405.86
+earthquake,"rl (first model, original)",909,336.21,5.72,2439,431.14
+earthquake,rl (new default),900,187.06,2.86,2449,322.86
+earthquake,rl (new default),901,221.11,2.39,2491,408.43
+earthquake,rl (new default),902,205.24,2.17,2431,324.0
+earthquake,rl (new default),903,279.5,3.33,2498,447.0
+earthquake,rl (new default),904,304.16,3.17,2442,472.29
+earthquake,rl (new default),905,389.95,7.28,2382,458.14
+earthquake,rl (new default),906,232.03,2.74,2487,387.0
+earthquake,rl (new default),907,371.1,4.86,2487,701.71
+earthquake,rl (new default),908,371.07,6.98,2465,521.71
+earthquake,rl (new default),909,263.57,2.24,2529,427.86
+earthquake,rl v1 features,900,247.42,2.82,2450,411.29
+earthquake,rl v1 features,901,345.74,5.68,2407,514.67
+earthquake,rl v1 features,902,257.84,3.74,2392,368.86
+earthquake,rl v1 features,903,258.79,3.17,2502,310.29
+earthquake,rl v1 features,904,260.59,2.7,2454,377.57
+earthquake,rl v1 features,905,407.78,7.79,2369,630.43
+earthquake,rl v1 features,906,233.46,2.74,2487,322.0
+earthquake,rl v1 features,907,462.55,11.78,2306,414.5
+earthquake,rl v1 features,908,327.13,3.92,2546,510.57
+earthquake,rl v1 features,909,347.31,3.48,2497,438.29
+earthquake,rl v2 fine-tuned,900,218.38,3.13,2442,337.57
+earthquake,rl v2 fine-tuned,901,319.06,3.1,2473,421.29
+earthquake,rl v2 fine-tuned,902,229.17,2.33,2427,370.71
+earthquake,rl v2 fine-tuned,903,334.46,4.3,2473,662.14
+earthquake,rl v2 fine-tuned,904,289.21,2.93,2448,332.14
+earthquake,rl v2 fine-tuned,905,352.92,5.25,2434,744.29
+earthquake,rl v2 fine-tuned,906,343.2,3.83,2459,555.57
+earthquake,rl v2 fine-tuned,907,441.3,12.4,2289,587.4
+earthquake,rl v2 fine-tuned,908,348.13,7.66,2447,445.5
+earthquake,rl v2 fine-tuned,909,335.5,2.28,2528,494.29
+earthquake,rl v2 long,900,236.76,3.09,2443,378.57
+earthquake,rl v2 long,901,288.14,3.88,2453,665.57
+earthquake,rl v2 long,902,224.91,2.41,2425,334.71
+earthquake,rl v2 long,903,274.05,2.94,2508,391.57
+earthquake,rl v2 long,904,276.39,2.97,2447,321.71
+earthquake,rl v2 long,905,348.0,3.81,2471,740.14
+earthquake,rl v2 long,906,206.05,2.66,2489,354.29
+earthquake,rl v2 long,907,372.61,3.21,2530,474.43
+earthquake,rl v2 long,908,283.08,2.75,2577,453.0
+earthquake,rl v2 long,909,244.54,2.13,2532,312.0
+emergency,max_pressure,900,30.9,3.34,3295,97.6
+emergency,max_pressure,901,29.09,2.07,3310,98.0
+emergency,max_pressure,902,29.49,2.24,3277,98.4
+emergency,max_pressure,903,31.05,2.99,3371,100.1
+emergency,max_pressure,904,28.79,2.79,3241,91.5
+emergency,max_pressure,905,30.23,2.48,3268,101.0
+emergency,max_pressure,906,29.48,2.2,3294,97.6
+emergency,max_pressure,907,30.85,2.61,3402,103.4
+emergency,max_pressure,908,29.74,2.47,3440,95.3
+emergency,max_pressure,909,30.79,2.44,3362,99.7
+emergency,rl (first model + fallback),900,32.45,3.08,3304,103.4
+emergency,rl (first model + fallback),901,31.32,1.98,3313,99.2
+emergency,rl (first model + fallback),902,31.6,2.42,3271,109.1
+emergency,rl (first model + fallback),903,32.91,3.08,3368,103.6
+emergency,rl (first model + fallback),904,30.98,2.82,3240,93.4
+emergency,rl (first model + fallback),905,32.17,2.51,3267,98.3
+emergency,rl (first model + fallback),906,29.57,2.46,3285,100.0
+emergency,rl (first model + fallback),907,32.31,2.89,3392,100.1
+emergency,rl (first model + fallback),908,30.83,2.5,3439,94.1
+emergency,rl (first model + fallback),909,33.08,2.55,3358,100.0
+emergency,"rl (first model, original)",900,31.81,3.43,3292,101.9
+emergency,"rl (first model, original)",901,31.32,1.98,3313,99.2
+emergency,"rl (first model, original)",902,32.09,2.27,3276,107.5
+emergency,"rl (first model, original)",903,33.41,3.05,3369,103.2
+emergency,"rl (first model, original)",904,30.27,2.82,3240,91.3
+emergency,"rl (first model, original)",905,32.11,2.51,3267,99.7
+emergency,"rl (first model, original)",906,30.32,2.08,3298,103.5
+emergency,"rl (first model, original)",907,31.81,2.69,3399,102.6
+emergency,"rl (first model, original)",908,30.81,2.61,3435,93.6
+emergency,"rl (first model, original)",909,32.65,2.61,3356,99.1
+emergency,rl (new default),900,29.95,3.05,3305,102.7
+emergency,rl (new default),901,30.3,2.31,3302,97.7
+emergency,rl (new default),902,30.04,2.18,3279,105.3
+emergency,rl (new default),903,30.47,2.94,3373,102.3
+emergency,rl (new default),904,29.67,2.94,3236,96.4
+emergency,rl (new default),905,30.6,2.48,3268,100.8
+emergency,rl (new default),906,29.68,2.11,3297,104.5
+emergency,rl (new default),907,30.83,2.69,3399,97.6
+emergency,rl (new default),908,30.74,2.47,3440,95.5
+emergency,rl (new default),909,31.78,2.58,3357,99.6
+emergency,rl v1 features,900,31.13,3.37,3294,99.5
+emergency,rl v1 features,901,30.86,2.04,3311,99.3
+emergency,rl v1 features,902,31.2,2.33,3274,103.9
+emergency,rl v1 features,903,32.53,2.94,3373,100.3
+emergency,rl v1 features,904,30.17,2.76,3242,97.6
+emergency,rl v1 features,905,31.11,2.6,3264,100.8
+emergency,rl v1 features,906,30.8,2.29,3291,102.9
+emergency,rl v1 features,907,30.19,2.63,3401,107.6
+emergency,rl v1 features,908,30.0,2.55,3437,96.3
+emergency,rl v1 features,909,31.84,2.41,3363,101.0
+emergency,rl v2 fine-tuned,900,29.64,2.93,3309,105.2
+emergency,rl v2 fine-tuned,901,28.2,1.89,3316,96.0
+emergency,rl v2 fine-tuned,902,30.45,2.54,3267,101.9
+emergency,rl v2 fine-tuned,903,29.89,2.85,3376,102.4
+emergency,rl v2 fine-tuned,904,28.36,3.0,3234,94.4
+emergency,rl v2 fine-tuned,905,29.46,2.51,3267,97.2
+emergency,rl v2 fine-tuned,906,28.38,2.29,3291,103.0
+emergency,rl v2 fine-tuned,907,29.34,2.75,3397,102.1
+emergency,rl v2 fine-tuned,908,29.96,2.44,3441,96.2
+emergency,rl v2 fine-tuned,909,31.47,2.67,3354,101.1
+emergency,rl v2 long,900,33.22,3.14,3302,103.8
+emergency,rl v2 long,901,31.92,2.07,3310,101.9
+emergency,rl v2 long,902,31.75,2.21,3278,110.7
+emergency,rl v2 long,903,33.69,2.96,3372,102.9
+emergency,rl v2 long,904,31.23,2.94,3236,96.2
+emergency,rl v2 long,905,31.59,2.48,3268,102.8
+emergency,rl v2 long,906,30.93,2.23,3293,101.8
+emergency,rl v2 long,907,32.34,2.81,3395,100.7
+emergency,rl v2 long,908,32.46,2.58,3436,100.2
+emergency,rl v2 long,909,33.04,2.64,3355,98.5
+off_peak,max_pressure,900,22.76,3.45,1064,
+off_peak,max_pressure,901,22.94,3.1,1095,
+off_peak,max_pressure,902,21.95,2.87,1082,
+off_peak,max_pressure,903,21.48,2.94,1091,
+off_peak,max_pressure,904,22.73,2.64,1145,
+off_peak,max_pressure,905,22.07,3.7,1092,
+off_peak,max_pressure,906,22.04,2.72,1073,
+off_peak,max_pressure,907,22.52,3.66,1106,
+off_peak,max_pressure,908,22.19,3.57,1134,
+off_peak,max_pressure,909,22.56,3.67,1077,
+off_peak,rl (first model + fallback),900,18.82,3.72,1061,
+off_peak,rl (first model + fallback),901,18.34,2.48,1102,
+off_peak,rl (first model + fallback),902,17.95,3.05,1080,
+off_peak,rl (first model + fallback),903,17.92,3.02,1090,
+off_peak,rl (first model + fallback),904,18.4,2.47,1147,
+off_peak,rl (first model + fallback),905,18.68,3.62,1093,
+off_peak,rl (first model + fallback),906,18.65,2.45,1076,
+off_peak,rl (first model + fallback),907,19.43,3.4,1109,
+off_peak,rl (first model + fallback),908,18.16,3.66,1133,
+off_peak,rl (first model + fallback),909,18.61,3.31,1081,
+off_peak,"rl (first model, original)",900,18.75,3.72,1061,
+off_peak,"rl (first model, original)",901,18.34,2.48,1102,
+off_peak,"rl (first model, original)",902,19.05,3.05,1080,
+off_peak,"rl (first model, original)",903,18.15,3.02,1090,
+off_peak,"rl (first model, original)",904,18.4,2.47,1147,
+off_peak,"rl (first model, original)",905,18.68,3.62,1093,
+off_peak,"rl (first model, original)",906,18.55,2.45,1076,
+off_peak,"rl (first model, original)",907,19.43,3.4,1109,
+off_peak,"rl (first model, original)",908,18.16,3.66,1133,
+off_peak,"rl (first model, original)",909,17.92,3.4,1080,
+off_peak,rl (new default),900,18.18,3.63,1062,
+off_peak,rl (new default),901,17.5,2.74,1099,
+off_peak,rl (new default),902,17.81,3.14,1079,
+off_peak,rl (new default),903,18.29,2.94,1091,
+off_peak,rl (new default),904,18.45,2.64,1145,
+off_peak,rl (new default),905,18.94,3.44,1095,
+off_peak,rl (new default),906,17.92,2.63,1074,
+off_peak,rl (new default),907,18.63,3.83,1104,
+off_peak,rl (new default),908,18.23,3.57,1134,
+off_peak,rl (new default),909,18.56,3.4,1080,
+off_peak,rl v1 features,900,17.87,3.45,1064,
+off_peak,rl v1 features,901,17.75,2.57,1101,
+off_peak,rl v1 features,902,18.88,2.96,1081,
+off_peak,rl v1 features,903,17.73,2.85,1092,
+off_peak,rl v1 features,904,19.18,2.55,1146,
+off_peak,rl v1 features,905,18.33,3.53,1094,
+off_peak,rl v1 features,906,17.84,2.72,1073,
+off_peak,rl v1 features,907,19.17,3.66,1106,
+off_peak,rl v1 features,908,18.38,3.4,1136,
+off_peak,rl v1 features,909,18.26,3.22,1082,
+off_peak,rl v2 fine-tuned,900,17.97,3.72,1061,
+off_peak,rl v2 fine-tuned,901,18.48,2.92,1097,
+off_peak,rl v2 fine-tuned,902,17.87,2.6,1085,
+off_peak,rl v2 fine-tuned,903,18.12,2.85,1092,
+off_peak,rl v2 fine-tuned,904,17.88,2.47,1147,
+off_peak,rl v2 fine-tuned,905,18.06,3.35,1096,
+off_peak,rl v2 fine-tuned,906,18.01,2.36,1077,
+off_peak,rl v2 fine-tuned,907,19.3,3.4,1109,
+off_peak,rl v2 fine-tuned,908,18.34,3.4,1136,
+off_peak,rl v2 fine-tuned,909,18.31,3.31,1081,
+off_peak,rl v2 long,900,18.36,3.72,1061,
+off_peak,rl v2 long,901,18.4,2.83,1098,
+off_peak,rl v2 long,902,18.28,3.05,1080,
+off_peak,rl v2 long,903,18.48,2.85,1092,
+off_peak,rl v2 long,904,18.79,2.55,1146,
+off_peak,rl v2 long,905,18.87,3.79,1091,
+off_peak,rl v2 long,906,18.42,2.54,1075,
+off_peak,rl v2 long,907,19.18,3.66,1106,
+off_peak,rl v2 long,908,18.47,3.74,1132,
+off_peak,rl v2 long,909,18.56,3.22,1082,
+road_closure,max_pressure,900,86.95,2.08,3812,
+road_closure,max_pressure,901,91.84,2.28,3726,
+road_closure,max_pressure,902,98.32,2.36,3688,
+road_closure,max_pressure,903,85.16,1.7,3864,
+road_closure,max_pressure,904,84.77,1.96,3707,
+road_closure,max_pressure,905,89.73,2.28,3734,
+road_closure,max_pressure,906,91.06,2.24,3795,
+road_closure,max_pressure,907,85.47,2.05,3876,
+road_closure,max_pressure,908,86.01,2.17,3882,
+road_closure,max_pressure,909,88.28,2.18,3814,
+road_closure,rl (first model + fallback),900,100.14,2.05,3813,
+road_closure,rl (first model + fallback),901,113.31,2.26,3727,
+road_closure,rl (first model + fallback),902,113.15,2.41,3686,
+road_closure,rl (first model + fallback),903,97.63,1.78,3861,
+road_closure,rl (first model + fallback),904,111.18,2.14,3700,
+road_closure,rl (first model + fallback),905,94.41,2.41,3729,
+road_closure,rl (first model + fallback),906,102.66,2.11,3800,
+road_closure,rl (first model + fallback),907,87.56,2.07,3875,
+road_closure,rl (first model + fallback),908,101.86,2.09,3885,
+road_closure,rl (first model + fallback),909,97.35,2.31,3809,
+road_closure,"rl (first model, original)",900,168.17,2.05,3813,
+road_closure,"rl (first model, original)",901,151.94,2.52,3717,
+road_closure,"rl (first model, original)",902,228.68,2.38,3687,
+road_closure,"rl (first model, original)",903,144.99,1.73,3863,
+road_closure,"rl (first model, original)",904,163.44,1.96,3707,
+road_closure,"rl (first model, original)",905,154.4,2.49,3726,
+road_closure,"rl (first model, original)",906,141.59,2.4,3789,
+road_closure,"rl (first model, original)",907,174.57,2.05,3876,
+road_closure,"rl (first model, original)",908,174.0,2.19,3881,
+road_closure,"rl (first model, original)",909,171.62,2.31,3809,
+road_closure,rl (new default),900,89.72,2.03,3814,
+road_closure,rl (new default),901,82.88,2.31,3725,
+road_closure,rl (new default),902,96.23,2.57,3680,
+road_closure,rl (new default),903,86.69,1.86,3858,
+road_closure,rl (new default),904,90.82,2.01,3705,
+road_closure,rl (new default),905,82.13,2.49,3726,
+road_closure,rl (new default),906,94.3,2.11,3800,
+road_closure,rl (new default),907,85.8,2.1,3874,
+road_closure,rl (new default),908,84.81,1.97,3890,
+road_closure,rl (new default),909,83.43,2.39,3806,
+road_closure,rl v1 features,900,94.16,2.0,3815,
+road_closure,rl v1 features,901,92.41,2.18,3730,
+road_closure,rl v1 features,902,109.19,2.28,3691,
+road_closure,rl v1 features,903,97.98,1.7,3864,
+road_closure,rl v1 features,904,97.41,1.96,3707,
+road_closure,rl v1 features,905,87.53,2.59,3722,
+road_closure,rl v1 features,906,89.56,2.11,3800,
+road_closure,rl v1 features,907,85.47,2.0,3878,
+road_closure,rl v1 features,908,108.74,1.99,3889,
+road_closure,rl v1 features,909,86.19,2.46,3803,
+road_closure,rl v2 fine-tuned,900,86.24,1.9,3819,
+road_closure,rl v2 fine-tuned,901,86.58,2.36,3723,
+road_closure,rl v2 fine-tuned,902,108.82,2.44,3685,
+road_closure,rl v2 fine-tuned,903,92.72,1.68,3865,
+road_closure,rl v2 fine-tuned,904,82.44,1.96,3707,
+road_closure,rl v2 fine-tuned,905,75.88,2.43,3728,
+road_closure,rl v2 fine-tuned,906,82.69,2.37,3790,
+road_closure,rl v2 fine-tuned,907,86.05,2.0,3878,
+road_closure,rl v2 fine-tuned,908,89.56,2.02,3888,
+road_closure,rl v2 fine-tuned,909,89.83,2.36,3807,
+road_closure,rl v2 long,900,87.89,1.98,3816,
+road_closure,rl v2 long,901,83.98,2.31,3725,
+road_closure,rl v2 long,902,95.08,2.36,3688,
+road_closure,rl v2 long,903,87.31,1.91,3856,
+road_closure,rl v2 long,904,82.24,2.06,3703,
+road_closure,rl v2 long,905,80.69,2.33,3732,
+road_closure,rl v2 long,906,82.06,2.45,3787,
+road_closure,rl v2 long,907,81.59,2.07,3875,
+road_closure,rl v2 long,908,82.18,2.09,3885,
+road_closure,rl v2 long,909,78.71,2.21,3813,
+rush_hour,max_pressure,900,30.65,3.21,3290,
+rush_hour,max_pressure,901,30.16,2.17,3297,
+rush_hour,max_pressure,902,30.49,2.3,3265,
+rush_hour,max_pressure,903,30.32,3.0,3361,
+rush_hour,max_pressure,904,29.01,2.8,3231,
+rush_hour,max_pressure,905,29.71,2.66,3252,
+rush_hour,max_pressure,906,27.45,2.32,3280,
+rush_hour,max_pressure,907,29.82,2.67,3390,
+rush_hour,max_pressure,908,28.82,2.39,3433,
+rush_hour,max_pressure,909,30.3,2.5,3350,
+rush_hour,rl (first model + fallback),900,30.83,3.21,3290,
+rush_hour,rl (first model + fallback),901,30.77,2.28,3293,
+rush_hour,rl (first model + fallback),902,30.95,2.33,3264,
+rush_hour,rl (first model + fallback),903,32.28,3.03,3360,
+rush_hour,rl (first model + fallback),904,29.07,2.83,3230,
+rush_hour,rl (first model + fallback),905,32.11,2.54,3256,
+rush_hour,rl (first model + fallback),906,29.16,2.08,3288,
+rush_hour,rl (first model + fallback),907,30.32,2.93,3381,
+rush_hour,rl (first model + fallback),908,32.06,2.59,3426,
+rush_hour,rl (first model + fallback),909,30.79,2.44,3352,
+rush_hour,"rl (first model, original)",900,31.08,3.09,3294,
+rush_hour,"rl (first model, original)",901,31.17,2.37,3290,
+rush_hour,"rl (first model, original)",902,30.23,2.15,3270,
+rush_hour,"rl (first model, original)",903,33.14,3.09,3358,
+rush_hour,"rl (first model, original)",904,29.45,2.86,3229,
+rush_hour,"rl (first model, original)",905,32.22,2.54,3256,
+rush_hour,"rl (first model, original)",906,30.19,2.32,3280,
+rush_hour,"rl (first model, original)",907,30.32,2.93,3381,
+rush_hour,"rl (first model, original)",908,30.86,2.59,3426,
+rush_hour,"rl (first model, original)",909,31.03,2.42,3353,
+rush_hour,rl (new default),900,29.25,3.5,3280,
+rush_hour,rl (new default),901,28.89,2.2,3296,
+rush_hour,rl (new default),902,30.97,2.27,3266,
+rush_hour,rl (new default),903,31.18,3.0,3361,
+rush_hour,rl (new default),904,29.03,2.89,3228,
+rush_hour,rl (new default),905,29.62,2.45,3259,
+rush_hour,rl (new default),906,29.73,2.2,3284,
+rush_hour,rl (new default),907,29.68,2.78,3386,
+rush_hour,rl (new default),908,28.84,2.56,3427,
+rush_hour,rl (new default),909,30.93,2.71,3343,
+rush_hour,rl v1 features,900,30.81,3.09,3294,
+rush_hour,rl v1 features,901,29.27,2.2,3296,
+rush_hour,rl v1 features,902,30.67,2.48,3259,
+rush_hour,rl v1 features,903,32.02,3.06,3359,
+rush_hour,rl v1 features,904,29.77,2.83,3230,
+rush_hour,rl v1 features,905,30.19,2.45,3259,
+rush_hour,rl v1 features,906,29.76,2.35,3279,
+rush_hour,rl v1 features,907,31.42,2.73,3388,
+rush_hour,rl v1 features,908,31.07,2.33,3435,
+rush_hour,rl v1 features,909,30.12,2.36,3355,
+rush_hour,rl v2 fine-tuned,900,29.64,3.15,3292,
+rush_hour,rl v2 fine-tuned,901,29.91,2.05,3301,
+rush_hour,rl v2 fine-tuned,902,29.15,2.39,3262,
+rush_hour,rl v2 fine-tuned,903,31.02,2.94,3363,
+rush_hour,rl v2 fine-tuned,904,28.57,2.83,3230,
+rush_hour,rl v2 fine-tuned,905,29.28,2.63,3253,
+rush_hour,rl v2 fine-tuned,906,28.74,2.2,3284,
+rush_hour,rl v2 fine-tuned,907,30.54,2.84,3384,
+rush_hour,rl v2 fine-tuned,908,28.78,2.5,3429,
+rush_hour,rl v2 fine-tuned,909,29.53,2.56,3348,
+rush_hour,rl v2 long,900,31.19,3.38,3284,
+rush_hour,rl v2 long,901,31.37,2.02,3302,
+rush_hour,rl v2 long,902,30.6,2.33,3264,
+rush_hour,rl v2 long,903,31.65,2.83,3367,
+rush_hour,rl v2 long,904,30.86,2.89,3228,
+rush_hour,rl v2 long,905,31.04,2.48,3258,
+rush_hour,rl v2 long,906,31.1,2.26,3282,
+rush_hour,rl v2 long,907,31.23,2.76,3387,
+rush_hour,rl v2 long,908,30.73,2.56,3427,
+rush_hour,rl v2 long,909,32.34,2.42,3353,
+sinkhole_cross,max_pressure,900,42.73,3.21,3290,
+sinkhole_cross,max_pressure,901,47.17,2.02,3302,
+sinkhole_cross,max_pressure,902,39.26,2.33,3264,
+sinkhole_cross,max_pressure,903,76.11,3.46,3345,
+sinkhole_cross,max_pressure,904,49.09,2.83,3230,
+sinkhole_cross,max_pressure,905,54.8,2.6,3254,
+sinkhole_cross,max_pressure,906,34.08,2.32,3280,
+sinkhole_cross,max_pressure,907,61.07,2.73,3388,
+sinkhole_cross,max_pressure,908,56.18,2.67,3423,
+sinkhole_cross,max_pressure,909,61.92,2.47,3351,
+sinkhole_cross,rl (first model + fallback),900,42.97,3.12,3293,
+sinkhole_cross,rl (first model + fallback),901,48.14,2.14,3298,
+sinkhole_cross,rl (first model + fallback),902,48.64,2.33,3264,
+sinkhole_cross,rl (first model + fallback),903,39.32,3.03,3360,
+sinkhole_cross,rl (first model + fallback),904,40.78,2.74,3233,
+sinkhole_cross,rl (first model + fallback),905,46.16,2.48,3258,
+sinkhole_cross,rl (first model + fallback),906,35.74,2.2,3284,
+sinkhole_cross,rl (first model + fallback),907,51.64,2.73,3388,
+sinkhole_cross,rl (first model + fallback),908,50.32,2.47,3430,
+sinkhole_cross,rl (first model + fallback),909,51.93,2.44,3352,
+sinkhole_cross,"rl (first model, original)",900,48.88,3.44,3282,
+sinkhole_cross,"rl (first model, original)",901,45.89,1.99,3303,
+sinkhole_cross,"rl (first model, original)",902,44.1,2.57,3256,
+sinkhole_cross,"rl (first model, original)",903,39.18,3.03,3360,
+sinkhole_cross,"rl (first model, original)",904,40.45,2.77,3232,
+sinkhole_cross,"rl (first model, original)",905,45.01,2.54,3256,
+sinkhole_cross,"rl (first model, original)",906,38.05,2.14,3286,
+sinkhole_cross,"rl (first model, original)",907,44.66,2.78,3386,
+sinkhole_cross,"rl (first model, original)",908,57.1,2.62,3425,
+sinkhole_cross,"rl (first model, original)",909,52.49,2.47,3351,
+sinkhole_cross,rl (new default),900,49.33,3.41,3283,
+sinkhole_cross,rl (new default),901,42.54,1.9,3306,
+sinkhole_cross,rl (new default),902,42.06,2.18,3269,
+sinkhole_cross,rl (new default),903,39.07,2.89,3365,
+sinkhole_cross,rl (new default),904,40.98,2.8,3231,
+sinkhole_cross,rl (new default),905,42.02,2.48,3258,
+sinkhole_cross,rl (new default),906,34.97,2.47,3275,
+sinkhole_cross,rl (new default),907,40.68,2.7,3389,
+sinkhole_cross,rl (new default),908,49.62,2.5,3429,
+sinkhole_cross,rl (new default),909,48.31,2.53,3349,
+sinkhole_cross,rl v1 features,900,46.98,3.18,3291,
+sinkhole_cross,rl v1 features,901,41.21,2.08,3300,
+sinkhole_cross,rl v1 features,902,36.04,2.21,3268,
+sinkhole_cross,rl v1 features,903,41.22,3.0,3361,
+sinkhole_cross,rl v1 features,904,36.97,2.89,3228,
+sinkhole_cross,rl v1 features,905,43.04,2.48,3258,
+sinkhole_cross,rl v1 features,906,35.71,2.29,3281,
+sinkhole_cross,rl v1 features,907,42.22,2.73,3388,
+sinkhole_cross,rl v1 features,908,39.69,2.33,3435,
+sinkhole_cross,rl v1 features,909,41.89,2.62,3346,
+sinkhole_cross,rl v2 fine-tuned,900,50.58,3.27,3288,
+sinkhole_cross,rl v2 fine-tuned,901,42.77,2.11,3299,
+sinkhole_cross,rl v2 fine-tuned,902,40.8,2.63,3254,
+sinkhole_cross,rl v2 fine-tuned,903,37.6,2.97,3362,
+sinkhole_cross,rl v2 fine-tuned,904,41.43,2.89,3228,
+sinkhole_cross,rl v2 fine-tuned,905,48.87,2.57,3255,
+sinkhole_cross,rl v2 fine-tuned,906,35.63,2.29,3281,
+sinkhole_cross,rl v2 fine-tuned,907,43.78,2.61,3392,
+sinkhole_cross,rl v2 fine-tuned,908,59.97,2.87,3416,
+sinkhole_cross,rl v2 fine-tuned,909,51.6,2.65,3345,
+sinkhole_cross,rl v2 long,900,42.32,3.44,3282,
+sinkhole_cross,rl v2 long,901,45.3,2.2,3296,
+sinkhole_cross,rl v2 long,902,42.77,2.27,3266,
+sinkhole_cross,rl v2 long,903,45.5,3.06,3359,
+sinkhole_cross,rl v2 long,904,35.99,2.86,3229,
+sinkhole_cross,rl v2 long,905,40.77,2.42,3260,
+sinkhole_cross,rl v2 long,906,36.48,2.35,3279,
+sinkhole_cross,rl v2 long,907,40.52,2.64,3391,
+sinkhole_cross,rl v2 long,908,51.81,2.67,3423,
+sinkhole_cross,rl v2 long,909,42.07,2.47,3351,
+special_event,max_pressure,900,45.46,3.21,3169,
+special_event,max_pressure,901,53.47,2.59,3273,
+special_event,max_pressure,902,55.75,3.28,3185,
+special_event,max_pressure,903,51.93,2.54,3267,
+special_event,max_pressure,904,63.49,3.37,3267,
+special_event,max_pressure,905,56.8,3.19,3279,
+special_event,max_pressure,906,47.7,3.41,3177,
+special_event,max_pressure,907,50.69,2.86,3293,
+special_event,max_pressure,908,55.76,2.7,3390,
+special_event,max_pressure,909,56.92,3.06,3326,
+special_event,rl (first model + fallback),900,46.81,2.99,3176,
+special_event,rl (first model + fallback),901,49.19,2.68,3270,
+special_event,rl (first model + fallback),902,50.46,3.61,3174,
+special_event,rl (first model + fallback),903,48.65,2.74,3260,
+special_event,rl (first model + fallback),904,54.24,3.31,3269,
+special_event,rl (first model + fallback),905,46.58,3.19,3279,
+special_event,rl (first model + fallback),906,44.55,3.37,3178,
+special_event,rl (first model + fallback),907,51.68,2.74,3297,
+special_event,rl (first model + fallback),908,52.15,2.67,3391,
+special_event,rl (first model + fallback),909,51.16,3.15,3323,
+special_event,"rl (first model, original)",900,50.07,3.08,3173,
+special_event,"rl (first model, original)",901,53.83,3.3,3249,
+special_event,"rl (first model, original)",902,57.05,3.55,3176,
+special_event,"rl (first model, original)",903,49.56,2.66,3263,
+special_event,"rl (first model, original)",904,55.4,4.76,3220,
+special_event,"rl (first model, original)",905,53.13,3.96,3253,
+special_event,"rl (first model, original)",906,46.68,3.59,3171,
+special_event,"rl (first model, original)",907,52.77,2.89,3292,
+special_event,"rl (first model, original)",908,55.21,4.13,3340,
+special_event,"rl (first model, original)",909,53.25,3.5,3311,
+special_event,rl (new default),900,42.41,2.93,3178,
+special_event,rl (new default),901,48.49,2.47,3277,
+special_event,rl (new default),902,51.78,3.77,3169,
+special_event,rl (new default),903,48.71,2.63,3264,
+special_event,rl (new default),904,50.34,3.79,3253,
+special_event,rl (new default),905,50.63,3.84,3257,
+special_event,rl (new default),906,45.06,3.56,3172,
+special_event,rl (new default),907,48.68,2.83,3294,
+special_event,rl (new default),908,51.47,3.16,3374,
+special_event,rl (new default),909,51.58,3.03,3327,
+special_event,rl v1 features,900,46.84,3.05,3174,
+special_event,rl v1 features,901,50.78,3.3,3249,
+special_event,rl v1 features,902,51.48,4.1,3158,
+special_event,rl v1 features,903,49.6,2.74,3260,
+special_event,rl v1 features,904,53.25,3.9,3249,
+special_event,rl v1 features,905,50.21,4.34,3240,
+special_event,rl v1 features,906,45.89,3.56,3172,
+special_event,rl v1 features,907,52.85,3.22,3281,
+special_event,rl v1 features,908,54.02,4.48,3328,
+special_event,rl v1 features,909,50.54,3.06,3326,
+special_event,rl v2 fine-tuned,900,45.03,3.08,3173,
+special_event,rl v2 fine-tuned,901,48.78,2.92,3262,
+special_event,rl v2 fine-tuned,902,52.53,4.71,3137,
+special_event,rl v2 fine-tuned,903,46.86,2.71,3261,
+special_event,rl v2 fine-tuned,904,51.04,4.82,3216,
+special_event,rl v2 fine-tuned,905,50.08,4.58,3232,
+special_event,rl v2 fine-tuned,906,46.92,3.56,3172,
+special_event,rl v2 fine-tuned,907,48.95,3.01,3288,
+special_event,rl v2 fine-tuned,908,51.97,4.02,3344,
+special_event,rl v2 fine-tuned,909,50.84,3.64,3306,
+special_event,rl v2 long,900,44.46,2.93,3178,
+special_event,rl v2 long,901,48.25,2.98,3260,
+special_event,rl v2 long,902,50.29,3.31,3184,
+special_event,rl v2 long,903,49.5,2.63,3264,
+special_event,rl v2 long,904,49.85,3.16,3274,
+special_event,rl v2 long,905,49.78,3.37,3273,
+special_event,rl v2 long,906,45.2,3.62,3170,
+special_event,rl v2 long,907,47.54,2.74,3297,
+special_event,rl v2 long,908,51.81,2.84,3385,
+special_event,rl v2 long,909,51.86,3.24,3320,

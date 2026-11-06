@@ -1,5 +1,9 @@
 # Final Project Handoff — Team B Traffic Signal Optimization
 
+> **Update, November 2026:** a later 3,780-run confirmation promoted `max_pressure_plus` (passes the same
+> 5 % regression rule in all 21 conditions) and retrained the RL controller. See
+> [what changed](whats-new-2026-11.md) and the [controller confirmation](results/studies/controller-confirmation-2026-11/README.md).
+
 **Status:** Research prototype and local sandbox **implemented and tested**. [Sandbox integration PR #6](https://github.com/SungHyunC/team-b-signal-optimization/pull/6) is merged into `main`. Experimental general-purpose spillback-aware controller **rejected** and retained only in [draft research PR #5](https://github.com/SungHyunC/team-b-signal-optimization/pull/5).
 
 ## Deliverables and readiness
@@ -23,7 +27,7 @@ These commands work around machines that have Python 3.11 installed with the `py
 ```powershell
 git clone https://github.com/SungHyunC/team-b-signal-optimization.git
 cd team-b-signal-optimization
-py -3.11 -m pip install -r requirements.txt
+py -3.11 -m pip install -e ".[dev]"   # teamb, SUMO 1.28.0 and the test tools
 # Make SUMO command-line executables visible for this PowerShell session if necessary:
 $env:Path += ";$env:LOCALAPPDATA\Programs\Python\Python311\Scripts"
 py -3.11 -m pytest tests/test_sandbox.py tests/test_sandbox_http.py -q
@@ -34,7 +38,7 @@ Open `http://127.0.0.1:8000/static/sandbox.html` **on the same computer**. In th
 
 ### Automated short SUMO smoke (known working)
 
-The CI covers: page and JS routes, JSON-to-experiment contract, JS syntax, strict-valid 1-run SUMO simulation, zero controller errors, zero fallbacks and zero rejected actions. [Release smoke CI](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41973492051) passed all steps before merge.
+The CI covers: page and JS routes, JSON-to-experiment contract, JS syntax, strict-valid 1-run SUMO simulation, zero controller errors, zero fallbacks and zero rejected actions. [Release smoke CI](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41973492051) passed all steps before merge. Since then the same smoke run, the whole test suite and the Docker image checks run in [CI](../.github/workflows/ci.yml) on every pull request and push to `main`.
 
 ## Research findings (synthetic network only)
 
@@ -50,9 +54,13 @@ A tuned experimental spillback controller was independently tested with **360 si
 
 **Limitations:** no calibration against observed real intersections or traffic volumes, synthetic route choices and closures, model-based safety not field deployment authorization. Finished-trip mean delay alone can hide vehicle completion and unfinished-trip tradeoffs. See linked reports for intervals and complete outcomes.
 
-## Final handoff / next research directions
+## Cloud MVP and event status (post-handoff update)
 
-**Scope completed:** a reproducible research and demonstration prototype with a tested phase-one sandbox. A full browser-based custom SUMO execution backend, hosted results streaming, and a publicly tested live sandbox are **not part of this release**.
+A later project phase added a Docker-hosted live SUMO service on Render (operator-reported functional after the shared-library fix). [Cloud guide](cloud-live-sumo-deployment.md) explains login, one-session boundaries and deployment. [Presentation-day runbook](presentation-day-demo-runbook.md) covers the audience QR and prerecorded-demo plan. The static GitHub Pages sandbox remains the appropriate **independent attendee activity**, because concurrent cloud viewers share one SUMO process. An attendee-scale live backend has not been implemented or load tested.
+
+## Original research handoff / next research directions
+
+**Original scope completed:** a reproducible research and demonstration prototype with a tested phase-one sandbox. The subsequent Render cloud MVP added authenticated live SUMO streaming but **not independent concurrent sandbox sessions**; see the cloud/event sections above.
 
 **Optional future work:** pilot a scenario-aware congestion controller; preregister balanced delay, completed trips, unfinished share, spillback, queue, emergency response and safety guardrails; independently test on fresh random seeds; then consider field-data calibration and integration.
 

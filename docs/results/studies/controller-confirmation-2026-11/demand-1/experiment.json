@@ -1,0 +1,293 @@
+{
+  "name": "final_d10",
+  "created": "2026-11-06T01:41:03",
+  "invocations": [
+    {
+      "command": "python -m teamb.experiments run --backend modal --no-report --name final_d10 --workers 100 --scenarios rush_hour,special_event,emergency,road_closure,sinkhole_cross,earthquake,off_peak --seeds 201-230 --scenario-params '{\"demand_scale\": 1.0}' --controllers max_pressure --controller-params '{\"rho\": 0.25, \"closure_aware\": true, \"closure_weight\": 0.35}'",
+      "started": "2026-11-06T01:41:03",
+      "wall_time_s": 213.1,
+      "backend": "modal",
+      "workers": 100,
+      "runs": 210,
+      "ok": 210,
+      "skipped": 0,
+      "failed": [],
+      "matrix": {
+        "scenarios": [
+          "earthquake-c2b747",
+          "emergency-c2b747",
+          "off_peak-c2b747",
+          "road_closure-c2b747",
+          "rush_hour-c2b747",
+          "sinkhole_cross-c2b747",
+          "special_event-c2b747"
+        ],
+        "controllers": [
+          "max_pressure-b8251d"
+        ],
+        "seeds": [
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213,
+          214,
+          215,
+          216,
+          217,
+          218,
+          219,
+          220,
+          221,
+          222,
+          223,
+          224,
+          225,
+          226,
+          227,
+          228,
+          229,
+          230
+        ],
+        "coverages": [
+          1.0
+        ],
+        "samplings": [
+          "uniform"
+        ],
+        "ev_preemption": [
+          true
+        ],
+        "end_time": [],
+        "controller_params": {
+          "max_pressure-b8251d": {
+            "rho": 0.25,
+            "closure_aware": true,
+            "closure_weight": 0.35
+          }
+        },
+        "scenario_params": {
+          "rush_hour-c2b747": {
+            "demand_scale": 1.0
+          },
+          "special_event-c2b747": {
+            "demand_scale": 1.0
+          },
+          "emergency-c2b747": {
+            "demand_scale": 1.0
+          },
+          "road_closure-c2b747": {
+            "demand_scale": 1.0
+          },
+          "sinkhole_cross-c2b747": {
+            "demand_scale": 1.0
+          },
+          "earthquake-c2b747": {
+            "demand_scale": 1.0
+          },
+          "off_peak-c2b747": {
+            "demand_scale": 1.0
+          }
+        }
+      }
+    },
+    {
+      "command": "python -m teamb.experiments run --backend modal --no-report --name final_d10 --workers 100 --scenarios rush_hour,special_event,emergency,road_closure,sinkhole_cross,earthquake,off_peak --seeds 201-230 --scenario-params '{\"demand_scale\": 1.0}' --controllers rl --controller-params '{\"model_path\": \"models/rl_qtable_v1_rush_hour.json\", \"fallback_min_visits\": 0}'",
+      "started": "2026-11-06T01:44:37",
+      "wall_time_s": 223.5,
+      "backend": "modal",
+      "workers": 100,
+      "runs": 210,
+      "ok": 210,
+      "skipped": 0,
+      "failed": [],
+      "matrix": {
+        "scenarios": [
+          "earthquake-c2b747",
+          "emergency-c2b747",
+          "off_peak-c2b747",
+          "road_closure-c2b747",
+          "rush_hour-c2b747",
+          "sinkhole_cross-c2b747",
+          "special_event-c2b747"
+        ],
+        "controllers": [
+          "rl-8582b6"
+        ],
+        "seeds": [
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213,
+          214,
+          215,
+          216,
+          217,
+          218,
+          219,
+          220,
+          221,
+          222,
+          223,
+          224,
+          225,
+          226,
+          227,
+          228,
+          229,
+          230
+        ],
+        "coverages": [
+          1.0
+        ],
+        "samplings": [
+          "uniform"
+        ],
+        "ev_preemption": [
+          true
+        ],
+        "end_time": [],
+        "controller_params": {
+          "rl-8582b6": {
+            "model_path": "models/rl_qtable_v1_rush_hour.json",
+            "fallback_min_visits": 0
+          }
+        },
+        "scenario_params": {
+          "rush_hour-c2b747": {
+            "demand_scale": 1.0
+          },
+          "special_event-c2b747": {
+            "demand_scale": 1.0
+          },
+          "emergency-c2b747": {
+            "demand_scale": 1.0
+          },
+          "road_closure-c2b747": {
+            "demand_scale": 1.0
+          },
+          "sinkhole_cross-c2b747": {
+            "demand_scale": 1.0
+          },
+          "earthquake-c2b747": {
+            "demand_scale": 1.0
+          },
+          "off_peak-c2b747": {
+            "demand_scale": 1.0
+          }
+        }
+      }
+    },
+    {
+      "command": "python -m teamb.experiments run --backend modal --no-report --name final_d10 --workers 100 --scenarios rush_hour,special_event,emergency,road_closure,sinkhole_cross,earthquake,off_peak --seeds 201-230 --scenario-params '{\"demand_scale\": 1.0}' --controllers fixed_time,max_pressure,max_pressure_plus,rl",
+      "started": "2026-11-06T01:41:03",
+      "wall_time_s": 789.8,
+      "backend": "modal",
+      "workers": 100,
+      "runs": 840,
+      "ok": 840,
+      "skipped": 0,
+      "failed": [],
+      "matrix": {
+        "scenarios": [
+          "earthquake-c2b747",
+          "emergency-c2b747",
+          "off_peak-c2b747",
+          "road_closure-c2b747",
+          "rush_hour-c2b747",
+          "sinkhole_cross-c2b747",
+          "special_event-c2b747"
+        ],
+        "controllers": [
+          "fixed_time",
+          "max_pressure",
+          "max_pressure_plus",
+          "rl"
+        ],
+        "seeds": [
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213,
+          214,
+          215,
+          216,
+          217,
+          218,
+          219,
+          220,
+          221,
+          222,
+          223,
+          224,
+          225,
+          226,
+          227,
+          228,
+          229,
+          230
+        ],
+        "coverages": [
+          1.0
+        ],
+        "samplings": [
+          "uniform"
+        ],
+        "ev_preemption": [
+          true
+        ],
+        "end_time": [],
+        "controller_params": {},
+        "scenario_params": {
+          "rush_hour-c2b747": {
+            "demand_scale": 1.0
+          },
+          "special_event-c2b747": {
+            "demand_scale": 1.0
+          },
+          "emergency-c2b747": {
+            "demand_scale": 1.0
+          },
+          "road_closure-c2b747": {
+            "demand_scale": 1.0
+          },
+          "sinkhole_cross-c2b747": {
+            "demand_scale": 1.0
+          },
+          "earthquake-c2b747": {
+            "demand_scale": 1.0
+          },
+          "off_peak-c2b747": {
+            "demand_scale": 1.0
+          }
+        }
+      }
+    }
+  ]
+}

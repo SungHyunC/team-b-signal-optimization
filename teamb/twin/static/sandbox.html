@@ -14,36 +14,51 @@ button{cursor:pointer;margin:4px;background:#23598c}button:hover{background:#307
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#071120;padding:12px;border-radius:8px;font-size:12px}
 #status{min-height:25px}#status.error{color:#ff9b9b}#status.ok{color:#7ce4b1}
 details{margin-top:16px}summary{cursor:pointer} .note{padding:10px;background:#24304b;border-radius:8px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.lang-switch button{padding:4px 10px;margin:0 0 0 4px;background:#182842;font-size:13px}.lang-switch button.active{background:#23598c}
+.cmd-label{margin:12px 0 4px;font-size:13px}#schema_source{font-size:12px}
 @media(max-width:760px){main{grid-template-columns:1fr}body{padding:14px}}
 </style></head><body>
-<a href="/">← Back to Signal Twin</a>
-<h1>Scenario Sandbox</h1><p>Phase 1 · Build, validate, export and import reproducible SUMO experiment configurations. This page does not run simulations or calculate performance results.</p>
-<main><section><h2>Configure your experiment</h2>
-<label>Preset scenario<select id="scenario"></select></label>
-<label>Signal controller<select id="controller"></select></label>
-<label>Traffic demand multiplier <small>(1.0 = preset demand)</small><input id="demand_scale" type="number" min=".1" max="3" step=".05" value="1"></label>
-<label>Random seed<input id="seed" type="number" min="0" max="2147483647" step="1" value="1"></label>
-<label>Duration in seconds <small>(blank = preset duration)</small><input id="duration_s" type="number" min="60" max="10800" step="1" placeholder="Use preset duration"></label>
-<label><input id="ev_preemption" type="checkbox" checked> Enable emergency vehicle signal preemption</label>
-<button id="reset" type="button">Reset preset</button>
-<button id="export" type="button">Download JSON</button>
-<label>Import saved configuration<input id="import" type="file" accept=".json,application/json"></label>
-<p class="note">Emergency dispatches and road closures are defined by the selected preset. The EMS switch controls signal preemption; it does not create emergency vehicles.</p>
-</section><section><h2>Validated configuration</h2>
+<!-- Text marked data-i18n is translated by translatePage() (js/i18n.js); the Korean is in js/sandbox.js. -->
+<div class="top"><a href="/" data-i18n>← Back to Signal Twin</a><div class="lang-switch" id="lang-switch" role="group" aria-label="Language / 언어"></div></div>
+<h1 data-i18n>Scenario Sandbox</h1>
+<p data-i18n>Build, validate, export and import reproducible SUMO experiment configurations. This page does not run simulations itself: run the exported file with the commands below, or launch it on a live SUMO server.</p>
+<main><section><h2 data-i18n>Configure your experiment</h2>
+<label><span data-i18n>Preset scenario</span><select id="scenario"></select></label>
+<label><span data-i18n>Signal controller</span><select id="controller"></select></label>
+<label><span data-i18n>Traffic demand multiplier</span> <small data-i18n>(1.0 = preset demand)</small><input id="demand_scale" type="number" min=".1" max="3" step=".05" value="1"></label>
+<label><span data-i18n>Random seed</span><input id="seed" type="number" min="0" max="2147483647" step="1" value="1"></label>
+<label><span data-i18n>Duration in seconds</span> <small id="duration_hint"></small><input id="duration_s" type="number" min="1200" max="10800" step="1" placeholder="Use preset duration"></label>
+<label><input id="ev_preemption" type="checkbox" checked> <span data-i18n>Enable emergency vehicle signal preemption</span></label>
+<button id="reset" type="button" data-i18n>Reset preset</button>
+<button id="export" type="button" data-i18n>Download JSON</button>
+<label><span data-i18n>Import saved configuration</span><input id="import" type="file" accept=".json,application/json"></label>
+<p class="note" data-i18n>Emergency dispatches and road closures are defined by the selected preset. The EMS switch controls signal preemption; it does not create emergency vehicles.</p>
+<p id="schema_source"></p>
+</section><section><h2 data-i18n>Validated configuration</h2>
 <p id="status" role="status" aria-live="polite"></p><pre id="preview"></pre>
-<button id="copy" type="button">Copy JSON</button>
-<details open><summary><strong>Run a live SUMO simulation</strong></summary>
-<p>This launches a real SUMO run on a separate cloud server, not in GitHub Pages. The server must be deployed, online and accessible to you.</p>
-<label>Cloud simulator address <small>(for example https://your-live-sumo.onrender.com)</small>
-<input id="live_url" type="url" placeholder="https://your-live-sumo.onrender.com" autocomplete="url"></label>
-<button id="launch_live" type="button">Launch LIVE SUMO →</button>
-<p id="launch_hint" class="note">Live runs require a hosted SUMO server. All visitors connected to one instance share the same simulation.</p>
-</details>
-<details><summary>How to reproduce the experiment</summary>
-<p>Save this JSON together with the project commit SHA, SUMO version, controller parameters and result files. The current experiment runner accepts the scenario, controller, seed, demand scale, preemption setting and optional end time. A future sandbox execution service will run these configurations; this static page only creates them.</p>
+<button id="copy" type="button" data-i18n>Copy JSON</button>
+<details open><summary><strong data-i18n>How to reproduce the experiment</strong></summary>
+<p data-i18n>Both commands run the same experiment in SUMO and write a report under results/experiments/sandbox_trial/. They use the scenario's own navigation-app coverage. Keep the JSON together with the project commit SHA and the SUMO version.</p>
+<p class="cmd-label" data-i18n>After Download JSON (saves sandbox_trial.json):</p>
+<pre id="command_file"></pre>
+<p class="cmd-label" data-i18n>Or the same run without the file:</p>
 <pre id="command"></pre></details>
-<details><summary>What each setting means</summary><p><b>Scenario:</b> the network demand and timed events. <b>Controller:</b> the traffic-light decision rule. <b>Seed:</b> reproducible random traffic. <b>Demand multiplier:</b> scale the existing vehicle flows. <b>Preemption:</b> emergency-vehicle signal priority. <b>Duration:</b> optional experiment end time.</p></details>
-<p><a href="/">Open recorded digital twin →</a></p>
+<details open><summary><strong data-i18n>Run a live SUMO simulation</strong></summary>
+<p data-i18n>This launches a real SUMO run on a separate cloud server, not in GitHub Pages. The server must be deployed, online and accessible to you.</p>
+<label><span data-i18n>Cloud simulator address</span> <small data-i18n>(for example https://your-live-sumo.onrender.com)</small>
+<input id="live_url" type="url" placeholder="https://your-live-sumo.onrender.com" autocomplete="url"></label>
+<button id="launch_live" type="button" data-i18n>Launch LIVE SUMO →</button>
+<p id="launch_hint" class="note" data-i18n>Live runs require a hosted SUMO server. All visitors connected to one instance share the same simulation.</p>
+</details>
+<details><summary data-i18n>What each setting means</summary>
+<p><b data-i18n>Scenario:</b> <span data-i18n>the network demand and timed events.</span>
+<b data-i18n>Controller:</b> <span data-i18n>the traffic-light decision rule.</span>
+<b data-i18n>Seed:</b> <span data-i18n>reproducible random traffic.</span>
+<b data-i18n>Demand multiplier:</b> <span data-i18n>scale the existing vehicle flows.</span>
+<b data-i18n>Preemption:</b> <span data-i18n>emergency-vehicle signal priority.</span>
+<b data-i18n>Duration:</b> <span data-i18n>optional end time in simulated seconds; the first 900 s are warm-up and are not measured.</span></p></details>
+<p><a href="/" data-i18n>Open recorded digital twin →</a></p>
 </section></main>
 <script type="module" src="./js/sandbox.js"></script>
 </body></html>

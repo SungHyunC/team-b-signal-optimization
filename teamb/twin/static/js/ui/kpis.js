@@ -15,14 +15,17 @@ addKo({
   'Mean speed': '평균 속도',
   'Trips completed': '완료된 통행',
   'throughput ≈ {n} veh/h (last 5 min)': '처리량 ≈ {n} veh/h (최근 5분)',
+  'throughput ≈ {n} veh/h (last {m} min)': '처리량 ≈ {n} veh/h (최근 {m}분)',
+  'throughput ≈ {n} veh/h (last {s} s)': '처리량 ≈ {n} veh/h (최근 {s}초)',
   'throughput: collecting…': '처리량: 집계 중…',
   'sampled every 5 s': '5초마다 집계',
 });
 
 const HISTORY = 240; // samples kept per sparkline (20 min of sim time)
 
-/** Throughput (veh/h) from the arrived counter over the last ~5 minutes of sim time. */
-function throughput(history) {
+/** Throughput from the arrived counter over the last ~5 minutes of sim time:
+ *  {rate (veh/h), window (s)}, where the window is shorter early in a run. null below 30 s. */
+export function throughput(history) {
   if (history.length < 2) return null;
   const last = history[history.length - 1];
   let first = history[0];
@@ -33,7 +36,16 @@ function throughput(history) {
     }
   }
   const dt = last.t - first.t;
-  return dt > 30 ? ((last.arrived - first.arrived) * 3600) / dt : null;
+  return dt > 30 ? { rate: ((last.arrived - first.arrived) * 3600) / dt, window: dt } : null;
+}
+
+/** The tile text: says which window the rate covers (samples every 5 s: 5 min = 295-300 s). */
+export function throughputText(tp) {
+  if (!tp) return t('throughput: collecting…');
+  const n = fmtNum(tp.rate, 0);
+  if (tp.window >= 295) return t('throughput ≈ {n} veh/h (last 5 min)', { n });
+  if (tp.window >= 120) return t('throughput ≈ {n} veh/h (last {m} min)', { n, m: Math.round(tp.window / 60) });
+  return t('throughput ≈ {n} veh/h (last {s} s)', { n, s: Math.round(tp.window) });
 }
 
 // label and title are translated when the tiles are built; sub and badge when they render.
@@ -56,10 +68,7 @@ const TILES = [
   },
   {
     id: 'arrived', label: 'Trips completed', unit: '', color: '#c084fc', value: (k) => k.arrived, digits: 0,
-    sub: (k, hist) => {
-      const tp = throughput(hist);
-      return tp != null ? t('throughput ≈ {n} veh/h (last 5 min)', { n: fmtNum(tp, 0) }) : t('throughput: collecting…');
-    },
+    sub: (k, hist) => throughputText(throughput(hist)),
   },
 ];
 
