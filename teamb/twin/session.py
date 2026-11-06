@@ -505,14 +505,18 @@ class TwinSession:
             self._cancel_queued()
 
     def _cancel_queued(self) -> None:
-        """The thread is leaving: let everyone still waiting on a request know right away."""
+        """The thread is leaving: let everyone still waiting on a request know right away.
+
+        The requests fail with SessionBusy (HTTP 503) rather than being cancelled: a cancelled
+        request reads as "superseded by a newer restart" (409), which hides that the thread is gone.
+        """
         while True:
             try:
                 item = self._requests.get_nowait()
             except queue.Empty:
                 return
-            if item is not None:
-                item[1].cancel()
+            if item is not None and item[1].set_running_or_notify_cancel():  # False: already cancelled
+                item[1].set_exception(SessionBusy("the simulation thread stopped (see the server log)"))
 
     def _stepping(self) -> bool:
         return self.env is not None and self.state != "loading" and (self.playing or self.ff_target is not None)

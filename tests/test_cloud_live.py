@@ -324,6 +324,32 @@ def test_await_future_without_task_cancelling(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_requests_queued_when_the_sim_thread_crashes_answer_503(open_client):
+    """A crash is not a newer restart: waiters get 503 'thread stopped', not 409 'superseded'."""
+    import threading
+
+    session = open_client.app.state.session
+    results = {}
+    waiting = threading.Thread(target=lambda: results.update(r=open_client.post("/api/control", json={"action": "pause"})))
+    waiting.start()
+    for _ in range(100):  # until the control request is queued
+        if session._requests.qsize():
+            break
+        threading.Event().wait(0.02)
+    assert session._requests.qsize() == 1
+
+    def crash(timeout):
+        raise RuntimeError("boom")
+
+    session._drain = crash
+    session.start_thread()
+    waiting.join(10)
+    r = results["r"]
+    assert r.status_code == 503 and "superseded" not in r.json()["detail"]
+    assert "stopped" in r.json()["detail"]
+    assert session.thread_alive() is False
+
+
 def test_websocket_in_flight_limit(open_client):
     from teamb.twin.server import MAX_WS_INFLIGHT
 
