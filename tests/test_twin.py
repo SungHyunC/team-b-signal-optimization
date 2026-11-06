@@ -415,9 +415,12 @@ def test_live_session_over_websocket(client):
         assert client.get("/api/state").json()["t"] == t0
         assert client.get("/api/v1/spat").json()["junctions"].keys() == {"J1", "J2", "J3", "J4"}
         ws.send_json({"type": "control", "id": 4, "action": "step"})
-        stepped = recv_until(ws, lambda m: is_reply(m, 4), "step reply")
+        # the stepped frame and the reply race each other on the socket; accept either order
+        before_reply: list = []
+        stepped = recv_until(ws, lambda m: is_reply(m, 4), "step reply", seen=before_reply)
         assert stepped["t"] == t0 + 1
-        recv_until(ws, lambda m: is_frame(m, sid) and m["t"] == t0 + 1, "the stepped frame")
+        if not any(is_frame(m, sid) and m["t"] == t0 + 1 for m in before_reply):
+            recv_until(ws, lambda m: is_frame(m, sid) and m["t"] == t0 + 1, "the stepped frame")
         ws.send_json({"type": "control", "id": 5, "action": "play", "speed": 20})
         played = recv_until(ws, lambda m: is_reply(m, 5), "play reply")
         assert played["state"] == "running" and played["speed"] == 20
