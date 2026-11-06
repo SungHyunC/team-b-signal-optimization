@@ -105,6 +105,29 @@ def test_max_pressure_follows_pressure_with_margin(topo):
     assert ctl.propose_action(make_state(topo, 112)) == {}, "decides only every 5 s"
 
 
+def test_max_pressure_rho_asks_a_bigger_lead_under_heavy_pressure(topo):
+    obs = make_obs(topo, 100, count={("J2", "W"): 10, ("J2", "N"): 13})  # P_EW 10, P_NS 13, margin 2
+    for params, want in (({}, {"J2": "NS"}),  # 13 > 10 + 2
+                         ({"rho": 0.25}, {}),  # 13 <= 10 + 2 + 2.5
+                         ({"rho": 0.25, "rho_cap": 0.5}, {"J2": "NS"})):  # 13 > 10 + 2 + 0.5
+        ctl = ready("max_pressure", topo, **params)
+        ctl.observe(obs)
+        assert ctl.propose_action(make_state(topo, 100)) == want, params
+    ctl = ready("max_pressure", topo, rho=0.25)
+    assert ctl.hysteresis(-4.0) == 0.0 and ctl.hysteresis(8.0) == 2.0
+    assert ctl.params["rho"] == 0.25 and ctl.params["rho_cap"] is None
+    with pytest.raises(ValueError):
+        make_controller("max_pressure", rho=-0.1)
+
+
+def test_max_pressure_saturated_arterial_ends_only_at_max_green(topo):
+    ctl = ready("max_pressure", topo)
+    ctl.observe(make_obs(topo, 100, count={("J2", "W"): 26, ("J2", "N"): 1}))
+    assert ctl.propose_action(make_state(topo, 100, green_s=89)) == {}, "NS cannot beat the margin"
+    ctl.observe(make_obs(topo, 105, count={("J2", "W"): 26, ("J2", "N"): 1}))
+    assert ctl.propose_action(make_state(topo, 105, green_s=91)) == {"J2": "NS"}, "max-out bounds starvation"
+
+
 def test_fake_probe_queue_fools_blind_controller_not_defended_one(topo):
     attack = dict(count={("J2", "W"): 8, ("J2", "E"): 4}, probe_n={("J2", "N"): 99 + 1}, untrusted=[("J2", "N")])
     blind = ready("max_pressure_probe", topo)

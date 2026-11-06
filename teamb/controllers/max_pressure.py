@@ -37,8 +37,16 @@ the lanes can hold, and uses the loop detector there instead (defense.py).
 Registered twice: `max_pressure` (detectors) and `max_pressure_probe` (probes, no
 defense) so the security test is one dropdown away.
 
-Tunable: measure, down_measure, weighted, margin (cars), interval (5 s), min_green, max_green,
-source, defense.
+Lost-time-aware hysteresis (`rho`, default 0 = off): every switch costs 5 s of yellow +
+all-red, which matters most when queues are long. With rho > 0 the green switches only if
+
+    P_other > P_current + margin + min(rho · max(P_current, 0), rho_cap)
+
+(rho_cap in cars, None = no cap). Symmetric: it never boosts one approach, it only asks for a
+larger lead before paying the lost time. rho=0 gives exactly the original rule.
+
+Tunable: measure, down_measure, weighted, margin (cars), rho, rho_cap (cars), interval (5 s),
+min_green, max_green, source, defense.
 """
 from __future__ import annotations
 
@@ -72,20 +80,27 @@ class MaxPressureController(AdaptiveController):
         interval: float = 5.0,
         min_green: float = 10.0,
         max_green: float | None = 90.0,
+        rho: float = 0.0,
+        rho_cap: float | None = None,
         **params,
     ):
         if source not in SOURCES:
             raise ValueError(f"source must be one of {SOURCES}, not {source!r}")
         if measure not in MEASURES or (down_measure or measure) not in MEASURES:
             raise ValueError(f"measure and down_measure must be one of {MEASURES}")
+        if float(rho) < 0 or (rho_cap is not None and float(rho_cap) < 0):
+            raise ValueError("rho and rho_cap must be >= 0")
         super().__init__(source=source, defense=defense, measure=measure, down_measure=down_measure, weighted=weighted,
-                         margin=margin, interval=interval, min_green=min_green, max_green=max_green, **params)
+                         margin=margin, interval=interval, min_green=min_green, max_green=max_green, rho=rho,
+                         rho_cap=rho_cap, **params)
         self.source = source
         self.defense = bool(defense)
         self.measure = measure
         self.down_measure = down_measure or measure
         self.weighted = bool(weighted)
         self.margin = float(margin)
+        self.rho = float(rho)
+        self.rho_cap = None if rho_cap is None else float(rho_cap)
 
     def reset(self, cfg, seed, topology) -> None:
         super().reset(cfg, seed, topology)
@@ -101,9 +116,18 @@ class MaxPressureController(AdaptiveController):
     # --- the rule -----------------------------------------------------------
     def decide(self, junction: str, axis: str, t_green: float) -> str | None:
         other = other_axis(axis)
-        if self.pressure(junction, other) > self.pressure(junction, axis) + self.margin:
+        p_other = self.pressure(junction, other)
+        p_current = self.pressure(junction, axis)
+        if p_other > p_current + self.margin + self.hysteresis(p_current):
             return other
         return axis
+
+    def hysteresis(self, p_current: float) -> float:
+        """Extra lead (cars) the other axis needs on top of `margin`: rho·P_current, capped at rho_cap."""
+        if not self.rho:
+            return 0.0
+        extra = self.rho * max(p_current, 0.0)
+        return extra if self.rho_cap is None else min(extra, self.rho_cap)
 
     def pressure(self, junction: str, axis: str) -> float:
         approaches = self.observation["junctions"][junction]["approaches"]
