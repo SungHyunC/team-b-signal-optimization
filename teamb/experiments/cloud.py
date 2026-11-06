@@ -50,7 +50,8 @@ from teamb import config
 APP_NAME = "teamb-experiments"
 # the SUMO Linux binary needs these shared libraries (same list as the Dockerfile)
 APT_PACKAGES = ("libgl1", "libglib2.0-0", "libgomp1", "libxrender1")
-RUNTIME_PACKAGES = ("eclipse-sumo", "traci", "sumolib", "numpy", "pandas", "optuna", "pyyaml")
+# libsumo runs SUMO in-process: byte-identical outputs to traci, about 2x faster (tests/test_sim_backend.py)
+RUNTIME_PACKAGES = ("eclipse-sumo", "traci", "sumolib", "libsumo", "numpy", "optuna", "pyyaml")
 CPU_PER_RUN = 1.0
 MEMORY_MB = 2048
 RUN_TIMEOUT_S = 3600
@@ -81,7 +82,7 @@ if modal is not None:
         modal.Image.debian_slim(python_version=f"{sys.version_info.major}.{sys.version_info.minor}")
         .apt_install(*APT_PACKAGES)
         .pip_install(*_pinned())
-        .env({"PYTHONUNBUFFERED": "1"})
+        .env({"PYTHONUNBUFFERED": "1", "TEAMB_TRACI_BACKEND": "auto"})
         .add_local_python_source("teamb", copy=True)
         .add_local_dir(str(config.MODELS), "/root/models", copy=True)
         # build the SUMO network once into the image instead of in every container
