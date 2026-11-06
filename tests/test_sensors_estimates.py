@@ -68,6 +68,12 @@ def test_penetration_estimate_stays_near_the_coverage_after_a_closure(topo):
     wide, _ = _suite(topo, coverage=0.25, sampling="approach_biased:4")
     wide._pen_loop[key].add(10.0, 400)
     assert wide._probe(10.0, key, lanes)[0]["penetration_est"] == pytest.approx(0.25 / 4, abs=1e-3)
+    # approach_biased:0.2 (arterial drivers share less): the arterial share is ~0.092 at c = 0.25,
+    # below c/2, so the band must widen on the low side too (1/r) or queue_est_adj comes out low
+    low, _ = _suite(topo, coverage=0.25, sampling="approach_biased:0.2")
+    low._pen_loop[key].add(10.0, 1000)
+    low._pen_probe[key].setdefault(0.25, type(low._pen_loop[key])(900.0)).add(10.0, 92)
+    assert low._probe(10.0, key, lanes)[0]["penetration_est"] == pytest.approx((92 + 10 * 0.25) / 1010, abs=1e-3)
 
 
 def test_fused_queue_never_exceeds_what_fits_on_the_approach(topo):

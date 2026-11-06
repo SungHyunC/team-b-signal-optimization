@@ -50,9 +50,10 @@ Notes for controller authors
   in effect when it departed, so the numbers stay right after the coverage changes mid-run
   (``observation["coverage"]`` is the current setting; prefer ``n_est`` over ``n / coverage``). ``queue_est_adj`` divides by the *measured* share of
   probes on that approach instead (fixes approach bias, not stopped-phone bias).
-- ``penetration_est`` is kept within [c/2, 2c] of the coverage c (wider for approach_biased:r
-  with r > 2): right after a closure the first vehicles back on an approach are not a random
-  sample, and an estimate of a few percent made genuine reports look fake.
+- ``penetration_est`` is kept within [c/2, 2c] of the coverage c (within [c/b, bc] with
+  b = max(r, 1/r) for approach_biased:r with r > 2 or r < 1/2): right after a closure the
+  first vehicles back on an approach are not a random sample, and an estimate of a few
+  percent made genuine reports look fake.
 - The E2 detector only sees the last 100 m. ``fused.queue`` uses the detector and, only when
   the detector zone is full and the probes are trusted, adds the halted probes reported
   upstream of the zone (scaled by the penetration), never past what fits on the approach.

@@ -39,7 +39,7 @@ PHANTOM_FRONT_M = 4.0  # ... starting 4 m before the stop line
 FLOW_WINDOW_S = 300.0  # flows are counted over the last 5 minutes
 PENETRATION_WINDOW_S = 900.0  # penetration is estimated over the last 15 minutes
 PENETRATION_PRIOR = 10.0  # pseudo-vehicles that pull a thin estimate toward the nominal coverage
-PENETRATION_BAND = 2.0  # the per-approach estimate stays within [c / 2, 2c] (wider for approach_biased:r > 2)
+PENETRATION_BAND = 2.0  # the per-approach estimate stays within [c / 2, 2c] (wider for approach_biased:r, r > 2 or r < 1/2)
 
 
 def _clamp_coverage(value: float) -> float:
@@ -100,7 +100,10 @@ class SensorSuite:
         self.rng = random.Random(seed * 7919 + 17)  # who is a probe (same stream as the first version)
         self.report_rng = random.Random(seed * 104729 + 3)  # when a stopped probe reports (speed_biased)
         self.selector = ProbeSelector(self.spec, self.rng)
-        band = max(PENETRATION_BAND, self.spec.arterial_ratio if self.spec.mechanism == "approach_biased" else 0.0)
+        band = PENETRATION_BAND
+        if self.spec.mechanism == "approach_biased":  # r > 1 starves the cross streets, r < 1 the arterial
+            r = self.spec.arterial_ratio
+            band = max(band, r, 1.0 / r)
         self._band_low, self._band_high = 1.0 / band, band
         self.probes: dict[str, float] = {}  # probe vehicle id -> coverage when it departed (its cohort)
         self._cohorts: dict[float, int] = {}  # cohort coverage -> probes of it in the network

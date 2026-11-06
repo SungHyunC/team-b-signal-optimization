@@ -16,12 +16,14 @@ east–west corridor). N1–N4 are unsignalized priority junctions. Edge ids are
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
@@ -30,7 +32,7 @@ from teamb import config
 from teamb.fsutil import atomic_write_text
 from teamb.sumo_paths import DEVNULL, binary
 
-NETWORK_VERSION = "1"  # bump only for changes the build digest cannot see (e.g. netconvert's own defaults)
+NETWORK_VERSION = "1"  # bump only for changes build_digest cannot see (a SUMO/netconvert upgrade, sumolib)
 E2_LENGTH_M = 100.0  # lane-area detector length upstream of each stop line
 E1_SETBACK_M = 25.0  # induction loop distance from the stop line
 NETCONVERT_OPTIONS = (
@@ -112,15 +114,44 @@ def _plain_xml() -> tuple[str, str]:
     return nod, edg
 
 
+def _const_fingerprint(const: object) -> str:
+    if isinstance(const, types.CodeType):
+        return _code_fingerprint(const)
+    if isinstance(const, tuple):
+        return "(" + ",".join(_const_fingerprint(c) for c in const) + ")"
+    if isinstance(const, frozenset):  # its repr order follows the per-process string hash seed
+        return "frozenset(" + ",".join(sorted(_const_fingerprint(c) for c in const)) + ")"
+    return repr(const)
+
+
+def _code_fingerprint(code: types.CodeType) -> str:
+    """Bytecode, referenced names and constants of `code`, recursing into nested code objects
+    (a generator expression, say) instead of using their repr, which holds a memory address and
+    the file path. The same code gives the same string in every process."""
+    return "|".join((code.co_code.hex(), repr(code.co_names), *map(_const_fingerprint, code.co_consts)))
+
+
+def _detector_code(fn: types.FunctionType) -> str:
+    """The detector writer's code: its source, or its bytecode where no source ships."""
+    try:
+        return inspect.getsource(fn)
+    except (OSError, TypeError):
+        return _code_fingerprint(fn.__code__)
+
+
 def build_digest(nod: str | None = None, edg: str | None = None) -> str:
-    """Hash of everything the build uses: geometry (node/edge files), netconvert options, detector layout.
+    """Hash of everything this file feeds the build: geometry (node/edge files), netconvert
+    options, the detector settings and the code of _write_detectors.
 
     Stored in generated/VERSION, so a change to config geometry or to this file's build settings
-    rebuilds the network by itself, without a manual NETWORK_VERSION bump."""
+    or detector writer rebuilds the network by itself, without a manual NETWORK_VERSION bump
+    (a comment edit in _write_detectors rebuilds too, which takes under a second). Not covered:
+    a different SUMO/netconvert or sumolib version; bump NETWORK_VERSION for those."""
     if nod is None or edg is None:
         nod, edg = _plain_xml()
     h = hashlib.sha256()
-    for part in (NETWORK_VERSION, nod, edg, json.dumps(NETCONVERT_OPTIONS), repr(E2_LENGTH_M), repr(E1_SETBACK_M)):
+    for part in (NETWORK_VERSION, nod, edg, json.dumps(NETCONVERT_OPTIONS), repr(E2_LENGTH_M), repr(E1_SETBACK_M),
+                 _DETECTOR_CODE):
         h.update(part.encode())
         h.update(b"\0")
     return f"{NETWORK_VERSION}:{h.hexdigest()[:16]}"
@@ -146,6 +177,12 @@ def _write_detectors(net_path: Path, out: Path) -> None:
                 )
     lines.append("</additional>")
     out.write_text("\n".join(lines) + "\n")
+
+
+# Read once at import, so the digest always describes the _write_detectors this process runs:
+# inspect.getsource re-reads build.py from disk, and a later call after an edit or checkout
+# would stamp the new file's digest on detectors written by the old in-memory code.
+_DETECTOR_CODE = _detector_code(_write_detectors)
 
 
 def ensure_network(force: bool = False) -> NetworkPaths:
