@@ -285,6 +285,45 @@ def test_superseded_restart_answers_409(open_client):
     assert results["first"].status_code == 409 and "superseded" in results["first"].json()["detail"]
 
 
+def test_await_future_without_task_cancelling(monkeypatch):
+    """Python 3.10 has no Task.cancelling() (requires-python >= 3.10): a superseded restart is
+    still Superseded, and the waiter's own cancellation still propagates as CancelledError."""
+    import asyncio
+
+    from teamb.twin.server import Superseded, await_future
+    from teamb.twin.session import Hub, SessionConfig, TwinSession
+
+    class Py310Task:
+        """What asyncio.current_task() returns on 3.10: a Task without cancelling()."""
+
+        def __init__(self, task):
+            self._task = task
+
+        def __getattr__(self, name):
+            if name == "cancelling":
+                raise AttributeError(name)
+            return getattr(self._task, name)
+
+    real_current_task = asyncio.current_task
+    monkeypatch.setattr(asyncio, "current_task", lambda loop=None: Py310Task(real_current_task(loop)))
+
+    async def scenario():
+        session = TwinSession(Hub())  # no thread: requests stay queued
+        superseded = asyncio.ensure_future(await_future(session.restart(SessionConfig(seed=1)), 5))
+        await asyncio.sleep(0.05)
+        session.restart(SessionConfig(seed=2))
+        with pytest.raises(Superseded):
+            await superseded
+
+        own = asyncio.ensure_future(await_future(session.control("pause"), 5))
+        await asyncio.sleep(0.05)
+        own.cancel()  # e.g. the WebSocket closed while the request waited
+        with pytest.raises(asyncio.CancelledError):
+            await own
+
+    asyncio.run(scenario())
+
+
 def test_websocket_in_flight_limit(open_client):
     from teamb.twin.server import MAX_WS_INFLIGHT
 

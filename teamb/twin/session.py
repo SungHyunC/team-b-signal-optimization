@@ -98,6 +98,17 @@ class SessionBusy(RuntimeError):
     """The sim thread cannot take more work right now (queue full, or the thread is not running)."""
 
 
+class Request(concurrent.futures.Future):
+    """A future for one sim-thread request.
+
+    `superseded` is set when a newer restart replaced this one while it was still queued, so a
+    waiter can tell that cancellation apart from its own (asyncio.wrap_future also cancels the
+    request when the waiting task is cancelled, and Task.cancelling() only exists from 3.11 on).
+    """
+
+    superseded = False
+
+
 # --- small helpers -------------------------------------------------------------
 def parse_speed(value) -> float:
     """1, 2.5, "5", "5x", "max" -> float. "max" (or 0 / inf) means as fast as SUMO can go."""
@@ -361,7 +372,7 @@ class TwinSession:
         self.fps = fps
         self._requests: queue.Queue = queue.Queue(maxsize=MAX_QUEUED_REQUESTS)
         self._restart_lock = threading.Lock()
-        self._pending_restart: concurrent.futures.Future | None = None
+        self._pending_restart: Request | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         # Everything below is written only by the sim thread; other threads just read it.
@@ -414,9 +425,9 @@ class TwinSession:
             self._thread.join(timeout)
 
     # --- public API (any thread) --------------------------------------------------
-    def submit(self, fn: Callable[[], Any]) -> concurrent.futures.Future:
+    def submit(self, fn: Callable[[], Any]) -> Request:
         """Run fn() on the sim thread between two steps."""
-        fut: concurrent.futures.Future = concurrent.futures.Future()
+        fut = Request()
         if threading.current_thread() is self._thread:  # already on the sim thread: no queue round trip
             try:
                 fut.set_result(fn())
@@ -435,20 +446,21 @@ class TwinSession:
         """Blocking version of submit() for synchronous callers (e.g. FastAPI's thread pool)."""
         return self.submit(fn).result(timeout)
 
-    def restart(self, cfg: SessionConfig) -> concurrent.futures.Future:
+    def restart(self, cfg: SessionConfig) -> Request:
         """Queue a restart. A newer restart supersedes (cancels) one that is still waiting, so
         N quick clicks or scripted calls cost at most one running plus one queued SUMO start."""
         with self._restart_lock:
             fut = self.submit(lambda: self._restart(cfg))
             previous, self._pending_restart = self._pending_restart, fut
         if previous is not None:
+            previous.superseded = True  # before cancel(): the waiter it wakes must already see it
             previous.cancel()  # only succeeds while it is still queued
         return fut
 
-    def control(self, action: str, speed=None, t=None) -> concurrent.futures.Future:
+    def control(self, action: str, speed=None, t=None) -> Request:
         return self.submit(lambda: self._control(action, speed, t))
 
-    def command(self, command: dict) -> concurrent.futures.Future:
+    def command(self, command: dict) -> Request:
         return self.submit(lambda: self._command(command))
 
     def status(self) -> dict:
