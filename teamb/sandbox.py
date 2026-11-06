@@ -26,6 +26,9 @@ DEMAND_SCALE_RANGE = (0.1, 3.0)
 MIN_MEASURED_S = 300  # a run must measure at least this long after the warm-up
 # 900 s warm-up + 300 s measured, up to the longest run the hosted twin accepts.
 DURATION_RANGE = (1200, 10800)
+# A sandbox run is headless: nobody can approve the AI recommender's plan, so it is approved
+# automatically, as `teamb run` does (otherwise the run stays on the starting plan).
+HEADLESS_CONTROLLER_PARAMS = {"ai_recommender": {"auto_approve": True}}
 
 
 def _json_number(value):
@@ -56,9 +59,10 @@ class SandboxConfig:
         Exactly the runs `experiment_command()` gives: coverage None is the scenario's own
         default (what the CLI's --coverages default means; fake_data_attack runs at 25 %), and
         end_time is a float like the CLI's --end; a whole-number demand_scale is written like the
-        web builder writes it (1, not 1.0), so both give the same run name.
+        web builder writes it (1, not 1.0), so both give the same run name. ai_recommender gets
+        auto_approve (HEADLESS_CONTROLLER_PARAMS): its run name then carries a parameter hash.
         """
-        return {
+        kwargs = {
             "scenarios": [self.scenario],
             "controllers": [self.controller],
             "seeds": [self.seed],
@@ -67,6 +71,16 @@ class SandboxConfig:
             "end_time": None if self.duration_s is None else float(self.duration_s),
             "scenario_params": {"demand_scale": _json_number(self.demand_scale)},
         }
+        params = _controller_params(self.controller)
+        if params:
+            kwargs["controller_params"] = params
+        return kwargs
+
+
+def _controller_params(controller: str) -> dict | None:
+    """--controller-params for a sandbox run of `controller` ({controller: {...}}), or None."""
+    params = HEADLESS_CONTROLLER_PARAMS.get(controller)
+    return {controller: dict(params)} if params else None
 
 
 def parse_sandbox_config(value: dict | str) -> SandboxConfig:
@@ -124,7 +138,8 @@ def experiment_command(cfg: SandboxConfig, name: str = "sandbox_trial") -> str:
     """The equivalent `teamb exp run` command line (what the sandbox page shows).
 
     It builds exactly the specs of ``build_matrix(**cfg.experiment_kwargs())``: no --coverages
-    (the CLI default is the scenario's own coverage), and --end only when duration_s is set.
+    (the CLI default is the scenario's own coverage), --end only when duration_s is set, and
+    --controller-params only for a controller in HEADLESS_CONTROLLER_PARAMS.
     """
     import shlex
 
@@ -135,6 +150,9 @@ def experiment_command(cfg: SandboxConfig, name: str = "sandbox_trial") -> str:
     ]
     if cfg.duration_s is not None:
         parts += ["--end", str(cfg.duration_s)]
+    params = _controller_params(cfg.controller)
+    if params:
+        parts += ["--controller-params", json.dumps(params)]
     return " ".join(shlex.quote(p) for p in parts)
 
 

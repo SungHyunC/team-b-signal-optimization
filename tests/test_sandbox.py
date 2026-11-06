@@ -64,3 +64,81 @@ def test_cli_validate(tmp_path, capsys):
     bad.write_text('{"duration_s": 600}')
     assert main(["validate", str(bad)]) == 2
     assert "duration_s" in capsys.readouterr().out
+
+
+HEADLESS_AI = {"ai_recommender": {"auto_approve": True}}
+
+
+def test_ai_recommender_exports_approve_the_plan_headless():
+    """No engineer can approve in a sandbox run: like `teamb run`, the AI plan is auto-approved."""
+    from teamb.experiments.runner import build_matrix
+
+    cfg = parse_sandbox_config({"controller": "ai_recommender", "duration_s": 1200})
+    assert cfg.experiment_kwargs()["controller_params"] == HEADLESS_AI
+    (spec,) = build_matrix(**cfg.experiment_kwargs())
+    assert spec.controller_params == {"auto_approve": True}
+    assert "controller_params" not in parse_sandbox_config({"controller": "max_pressure"}).experiment_kwargs()
+
+
+@pytest.mark.parametrize("controller", ["ai_recommender", "max_pressure"])
+def test_the_equivalent_command_builds_the_same_spec(controller, monkeypatch, capsys):
+    import shlex
+
+    import teamb.experiments.__main__ as experiments_cli
+    from teamb.experiments.runner import build_matrix
+    from teamb.sandbox import experiment_command
+
+    cfg = parse_sandbox_config({"controller": controller, "seed": 4, "duration_s": 1500})
+    built = []
+    monkeypatch.setattr(experiments_cli, "build_matrix", lambda *a, **k: built.append(build_matrix(*a, **k)) or built[-1])
+    argv = shlex.split(experiment_command(cfg))
+    assert experiments_cli.main(argv[2:] + ["--dry-run"]) == 0
+    capsys.readouterr()
+    assert built == [build_matrix(**cfg.experiment_kwargs())]
+    assert ("--controller-params" in argv) is (controller == "ai_recommender")
+
+
+def _stub_runner(monkeypatch, tmp_path, failed=()):
+    """sandbox main()'s runner and report, without SUMO: records the specs it was given."""
+    import teamb.experiments.analysis as analysis
+    import teamb.experiments.runner as runner
+
+    seen = {}
+
+    def fake_run_matrix(specs, exp_dir, **kwargs):
+        seen.update(specs=specs, exp_dir=exp_dir, **kwargs)
+        for spec in specs:
+            out = exp_dir / "runs" / spec.name
+            out.mkdir(parents=True)
+            (out / "summary.json").write_text('{"mean_delay_s": 12.5, "completed": 10}')
+        return {"failed": list(failed)}
+
+    monkeypatch.setattr(runner, "EXPERIMENTS_DIR", tmp_path / "experiments")
+    monkeypatch.setattr(runner, "run_matrix", fake_run_matrix)
+    monkeypatch.setattr(analysis, "write_report", lambda exp_dir, baseline: seen.update(report=baseline))
+    return seen
+
+
+def test_cli_run_passes_the_contract_specs_to_the_runner(tmp_path, monkeypatch, capsys):
+    from teamb.sandbox import experiment_command, main
+
+    cfg = SandboxConfig(controller="ai_recommender", seed=3, duration_s=1200)
+    path = tmp_path / "trial.json"
+    path.write_text(cfg.to_json())
+    seen = _stub_runner(monkeypatch, tmp_path)
+    assert main(["run", str(path), "--name", "trial"]) == 0
+    (spec,) = seen["specs"]
+    assert spec.controller == "ai_recommender" and spec.controller_params == {"auto_approve": True}
+    assert seen["command"] == experiment_command(cfg, "trial") and seen["backend"] == "local"
+    assert seen["report"] == "ai_recommender"
+    assert "12.5" in capsys.readouterr().out
+
+
+def test_cli_run_reports_a_failed_run(tmp_path, monkeypatch, capsys):
+    from teamb.sandbox import main
+
+    path = tmp_path / "trial.json"
+    path.write_text(SandboxConfig(duration_s=1200).to_json())
+    seen = _stub_runner(monkeypatch, tmp_path, failed=["x"])
+    assert main(["run", str(path)]) == 1
+    assert "run failed" in capsys.readouterr().out and "report" not in seen
