@@ -11,12 +11,23 @@ Every simulation step (Aditya's controller interface):
 
 Headless experiments call `SimEnv(...).run()`. The twin server steps it itself with
 frames=True, which subscribes to vehicle positions for drawing.
+
+Run outputs and completeness
+----------------------------
+`close()` ends a run and writes its outputs. summary.json is written only when the run reached
+its end time without a failed step; it carries "complete": true and is written last, atomically,
+so its presence means every other output is there too. A run closed early (e.g. the twin's
+Reset) gets its other outputs and summary.partial.json ("complete": false) instead. After a
+failure, `abort()` (what `run()` and `with SimEnv(...)` call) only releases SUMO: no outputs,
+it never raises, and the original exception (or Ctrl-C) propagates unchanged.
 """
 from __future__ import annotations
 
+import contextlib
 import csv
+import io
 import itertools
-import json
+import math
 import os
 import subprocess
 import time
@@ -29,6 +40,7 @@ import traci.constants as tc
 
 from teamb import config
 from teamb.controllers import make_controller
+from teamb.fsutil import atomic_write_json, atomic_write_text
 from teamb.evaluation.metrics import EV_TYPES, MetricsCollector
 from teamb.network.build import ensure_network, file_hash, network_hash
 from teamb.network.topology import load_topology
@@ -36,12 +48,16 @@ from teamb.safety.supervisor import SafetySupervisor
 from teamb.scenarios import get_scenario
 from teamb.scenarios.events import EVENT_KINDS, ScenarioRuntime
 from teamb.sensors import SensorSuite
+from teamb.sim import backend
 from teamb.sim.phases import approach_colors, axis_of, build_state, is_conflict_free
 from teamb.sumo_paths import binary
 
 _labels = itertools.count()
 VEHICLE_VARS = (tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED, tc.VAR_TYPE)
 DRAWN_TYPES = ("ambulance", "firetruck", "truck", "bus")
+SUMMARY_FILE = "summary.json"  # complete runs only
+PARTIAL_SUMMARY_FILE = "summary.partial.json"  # runs closed before their end time
+ABORT_WAIT_S = 5.0  # after a failure, how long SUMO may take to exit before it is killed
 
 
 def _git_revision() -> str:
@@ -81,6 +97,8 @@ class SimEnv:
         self.fallback = make_controller(fallback)
         self.seed = int(seed)
         self.coverage = float(coverage if coverage is not None else self.scenario.defaults.get("coverage", 1.0))
+        if not (math.isfinite(self.coverage) and 0.0 < self.coverage <= 1.0):
+            raise ValueError(f"coverage must be a share in (0, 1], e.g. 0.25 for 25 % (got {coverage!r})")
         self.sampling = sampling
         self.ev_preemption = ev_preemption
         self.step_length = float(step_length)
@@ -105,12 +123,16 @@ class SimEnv:
         self._ev_active: set[tuple[str, str]] = set()
         self._sumo_version = "unknown"
         self.summary: dict | None = None
+        self._in_step = False  # True while a step runs; stays True if the step raised
+        self._closed = False  # close() or abort() ran: nothing more is written
 
     # --- lifecycle --------------------------------------------------------
     def start(self) -> "SimEnv":
         self._net_paths = ensure_network()
         self.topology = load_topology()
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        for stale in (SUMMARY_FILE, PARTIAL_SUMMARY_FILE):  # a summary here must come from this run
+            (self.output_dir / stale).unlink(missing_ok=True)
         self.routes_path = self.scenario.build_routes(self.output_dir / "routes.rou.xml", self.seed)
         self.tripinfo_path = self.output_dir / "tripinfo.xml"
         cmd = [
@@ -128,45 +150,56 @@ class SimEnv:
             "--tripinfo-output", str(self.tripinfo_path),
             "--tripinfo-output.write-unfinished", "true",
         ]
-        version = traci.start(cmd, label=self.label)
-        if isinstance(version, tuple) and len(version) > 1:
-            self._sumo_version = str(version[1])
-        self.conn = traci.getConnection(self.label)
-        self.supervisor = SafetySupervisor(list(self.topology.tls_ids))
-        self.sensors = SensorSuite(self.conn, self.topology, coverage=self.coverage, sampling=self.sampling, seed=self.seed)
-        self.metrics = MetricsCollector(self.conn, self.topology, warmup=self.scenario.warmup, end_time=self.end_time)
-        cfg = self.run_config()
-        self.controller.reset(cfg, self.seed, self.topology)
-        self.fallback.reset(cfg, self.seed, self.topology)
-        self.runtime = ScenarioRuntime(self, self.scenario)
-        self._apply(self.supervisor.signals())
-        self.t = self.conn.simulation.getTime()
-        self._wall0 = time.time()
-        self.log_event("started", scenario=self.scenario.name, controller=self.controller.name, seed=self.seed, coverage=self.coverage)
+        self.conn, self._sumo_version = backend.start(cmd, self.label)
+        try:  # anything failing from here on (sampling spec, RL model, scenario) must not leak SUMO
+            self.supervisor = SafetySupervisor(list(self.topology.tls_ids))
+            self.sensors = SensorSuite(self.conn, self.topology, coverage=self.coverage, sampling=self.sampling, seed=self.seed)
+            self.coverage = self.sensors.coverage  # the share the sensors really use
+            self.metrics = MetricsCollector(self.conn, self.topology, warmup=self.scenario.warmup, end_time=self.end_time)
+            cfg = self.run_config()
+            self.controller.reset(cfg, self.seed, self.topology)
+            self.fallback.reset(cfg, self.seed, self.topology)
+            self.runtime = ScenarioRuntime(self, self.scenario)
+            self._apply(self.supervisor.signals())
+            self.t = self.conn.simulation.getTime()
+            self._wall0 = time.time()
+            self.log_event("started", scenario=self.scenario.name, controller=self.controller.name, seed=self.seed, coverage=self.coverage)
+        except BaseException:
+            self.abort()
+            raise
         return self
 
     def run(self, callback=None) -> dict:
-        if self.conn is None:
-            self.start()
         try:
+            if self.conn is None:
+                self.start()
             while self.t < self.end_time:
                 self.step()
                 if callback:
                     callback(self)
         except BaseException:
-            self.close()
+            self.abort()  # never raises, so the original error (or Ctrl-C) is what propagates
             raise
         return self.close()
 
     def __enter__(self):
         return self.start()
 
-    def __exit__(self, *exc):
-        self.close()
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            self.abort()
+        else:
+            self.close()
+        return False
 
     @property
     def finished(self) -> bool:
         return self.t >= self.end_time
+
+    @property
+    def complete(self) -> bool:
+        """The run reached its end time and its last step did not fail half-way."""
+        return self.t >= self.end_time and not self._in_step
 
     def run_config(self) -> dict:
         return {
@@ -186,6 +219,7 @@ class SimEnv:
 
     # --- one step ---------------------------------------------------------
     def step(self) -> None:
+        self._in_step = True
         t = self.t
         observation = self.sensors.observe(t, self.controller.observation_source)
         state = self.supervisor.state(t)
@@ -196,7 +230,12 @@ class SimEnv:
             self.controller_errors += 1
             self.supervisor.record(t, None, "controller_error", detail=f"invalid action: {type(exc).__name__}: {exc}")
             safe = self.supervisor.validate(self._fallback(observation, state), t)
-        preempt = self._ev_requests() if self.ev_preemption else {}
+        if self.ev_preemption:
+            preempt = self._ev_requests()
+        else:
+            preempt = {}
+            if self._ev_active:
+                self._ev_active = set()  # nothing is preempted any more (the frame and a later re-enable must see that)
         self._apply(self.supervisor.apply_safe_action(safe, t, preempt))
         self.conn.simulationStep()
         self.supervisor.tick(self.step_length)
@@ -218,6 +257,7 @@ class SimEnv:
         self.controller.log(self.step_count)
         self.events.extend(self.controller.drain_events())
         self.step_count += 1
+        self._in_step = False
 
     def _ask(self, observation, state):
         start = time.perf_counter()
@@ -341,6 +381,8 @@ class SimEnv:
             return {"ok": True, "coverage": self.coverage}
         if kind == "set_preemption":
             self.ev_preemption = bool(params.get("enabled", True))
+            if not self.ev_preemption:
+                self._ev_active = set()
             return {"ok": True, "ev_preemption": self.ev_preemption}
         if kind in EVENT_KINDS:  # every scenario event type is also a twin command
             return {"ok": True, "result": getattr(self.runtime, kind)(**params)}
@@ -348,14 +390,31 @@ class SimEnv:
         return reply if reply is not None else {"ok": False, "error": f"unknown command '{kind}'"}
 
     # --- results ------------------------------------------------------------
-    def close(self) -> dict:
+    def abort(self) -> None:
+        """Release SUMO and TraCI after a failure. Writes no outputs and never raises.
+
+        close() would parse a possibly truncated tripinfo file and could replace the original
+        exception with its own; abort() only lets go of the simulation."""
+        self._closed = True
+        conn, self.conn = self.conn, None
+        backend.release(conn, timeout=ABORT_WAIT_S)
+        with contextlib.suppress(Exception):
+            self.controller.close()
+
+    def close(self) -> dict | None:
+        """End the run and write its outputs; returns the summary (None if the env never started or was aborted)."""
         if self.summary is not None:
             return self.summary
-        if self.conn is not None:
-            try:
-                self.conn.close()
-            except Exception:
-                pass
+        if self._closed:
+            return None
+        self._closed = True
+        conn, self.conn = self.conn, None
+        if conn is None:  # never started: nothing to write
+            with contextlib.suppress(Exception):
+                self.controller.close()
+            return None
+        complete = self.complete
+        backend.release(conn)  # SUMO has finished writing tripinfo when this returns
         controller_summary = self.controller.summary()  # before close(), which may free its state
         self.controller.close()
         departs = getattr(self.scenario, "departs", [])
@@ -375,19 +434,41 @@ class SimEnv:
             **metrics,
             "controller_errors": self.controller_errors,
             "fallback_steps": self.fallback_steps,
-            "rejected_actions": self.supervisor.rejections if self.conn else 0,
+            "rejected_actions": self.supervisor.rejections,
             "preemptions": len(self.preemptions),
-            "signal_switches": sum(1 for e in self.supervisor.events if e.reason in ("switch", "preempt")) if self.conn else 0,
+            "signal_switches": sum(1 for e in self.supervisor.events if e.reason in ("switch", "preempt")),
+            "end_time": self.end_time,
+            "complete": complete,
         }
         if controller_summary is not None:
             self.summary["controller_summary"] = controller_summary
-        if self.conn is not None:
-            self._write_outputs(trips)
+        self._write_outputs(trips)
         return self.summary
 
     def _write_outputs(self, trips: list[dict]) -> None:
+        """Write the run files, each atomically; the summary goes last (see the module docstring)."""
         out = self.output_dir
-        (out / "summary.json").write_text(json.dumps(self.summary, indent=2))
+        complete = bool(self.summary.get("complete"))
+        summary_file = SUMMARY_FILE if complete else PARTIAL_SUMMARY_FILE
+        outputs = {"summary": summary_file}
+        if trips:
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=list(trips[0]))
+            writer.writeheader()
+            writer.writerows(trips)
+            atomic_write_text(out / "trips.csv", buf.getvalue(), newline="")
+            outputs["trips"] = "trips.csv"
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["t", "junction", "requested", "executed", "reason", "detail"])
+        for e in self.supervisor.events:
+            writer.writerow([e.t, e.junction, e.requested, e.executed, e.reason, e.detail])
+        atomic_write_text(out / "signal_events.csv", buf.getvalue(), newline="")
+        atomic_write_json(out / "preemptions.json", self.preemptions)
+        # per-emergency-vehicle dispatch → arrival times, closure/attack history, reroutes
+        atomic_write_json(out / "events_report.json", self.runtime.report(), default=str)
+        outputs.update(signal_events="signal_events.csv", preemptions="preemptions.json", events="events_report.json",
+                       tripinfo="tripinfo.xml")
         manifest = {
             "run_id": self.run_id,
             "created_unix": round(time.time()),
@@ -396,27 +477,9 @@ class SimEnv:
             "network_hash": network_hash(self._net_paths.net),
             "demand_hash": file_hash(self.routes_path),
             "seed": self.seed,
+            "complete": complete,
             "config": self.run_config(),
-            "outputs": {
-                "summary": "summary.json",
-                "trips": "trips.csv",
-                "signal_events": "signal_events.csv",
-                "preemptions": "preemptions.json",
-                "events": "events_report.json",
-                "tripinfo": "tripinfo.xml",
-            },
+            "outputs": outputs,
         }
-        (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
-        if trips:
-            with open(out / "trips.csv", "w", newline="") as fh:
-                writer = csv.DictWriter(fh, fieldnames=list(trips[0]))
-                writer.writeheader()
-                writer.writerows(trips)
-        with open(out / "signal_events.csv", "w", newline="") as fh:
-            writer = csv.writer(fh)
-            writer.writerow(["t", "junction", "requested", "executed", "reason", "detail"])
-            for e in self.supervisor.events:
-                writer.writerow([e.t, e.junction, e.requested, e.executed, e.reason, e.detail])
-        (out / "preemptions.json").write_text(json.dumps(self.preemptions, indent=2))
-        # per-emergency-vehicle dispatch → arrival times, closure/attack history, reroutes
-        (out / "events_report.json").write_text(json.dumps(self.runtime.report(), indent=2, default=str))
+        atomic_write_json(out / "manifest.json", manifest, default=str)
+        atomic_write_json(out / summary_file, self.summary)

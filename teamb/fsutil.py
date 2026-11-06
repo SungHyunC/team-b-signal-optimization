@@ -12,17 +12,18 @@ os.umask(_UMASK)
 _FILE_MODE = 0o666 & ~_UMASK
 
 
-def atomic_write_text(path: str | Path, text: str, encoding: str = "utf-8") -> Path:
+def atomic_write_text(path: str | Path, text: str, encoding: str = "utf-8", newline: str | None = None) -> Path:
     """Write ``text`` so readers never see a half-written file: temp file in the same folder, then rename.
 
     An interrupted run (Ctrl-C, killed worker, full disk) leaves either the old file or no file,
-    never a truncated one that a later resume or report would accept.
+    never a truncated one that a later resume or report would accept. ``newline`` is passed to
+    open(); use ``newline=""`` for text produced by the csv module.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding=encoding) as fh:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
