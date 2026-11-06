@@ -228,6 +228,25 @@ def test_webster_plan_gives_the_heavy_axis_more_green():
     assert plan.offsets["J1"] == 0 and plan.offsets["J2"] == pytest.approx(24.0)
 
 
+def test_webster_seed_trial_keeps_relative_offsets_for_a_westbound_wave():
+    import optuna
+
+    from teamb.controllers.optimizer import plan_to_params, suggest_plan
+
+    demand = {(j, s): v for j in ("J1", "J2", "J3", "J4") for s, v in (("W", 600), ("E", 900), ("N", 150), ("S", 150))}
+    lanes = {(j, s): (2 if s in "WE" else 1) for j, s in demand}
+    plan = webster_plan(demand, lanes)  # westbound heavier: the reference is J4, so J1's offset is not 0
+    assert plan.offsets["J4"] == 0 and plan.offsets["J1"] != 0
+    spec = SearchSpec(flows=[], current=TimingPlan().to_dict(), junctions=["J1", "J2", "J3", "J4"])
+    again = suggest_plan(optuna.trial.FixedTrial(plan_to_params(plan, spec)), spec)
+    assert again.cycle == plan.cycle and again.offsets["J1"] == 0.0
+    for j in ("J2", "J3", "J4"):
+        want = (plan.offsets[j] - plan.offsets["J1"]) % plan.cycle
+        got = (again.offsets[j] - again.offsets["J1"]) % again.cycle
+        assert min(abs(want - got), plan.cycle - abs(want - got)) < 0.1, (j, want, got)
+    assert again.splits == pytest.approx({j: min(0.85, max(0.25, v)) for j, v in plan.splits.items()}, abs=1e-3)
+
+
 def test_search_cache_round_trip(tmp_path):
     spec = SearchSpec(flows=[{"origin": "W0_J1", "destination": "J4_E5", "veh_per_hour": 900.0}],
                       current=TimingPlan(splits={"J1": 0.5}).to_dict(), trials=3)

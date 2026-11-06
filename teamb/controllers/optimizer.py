@@ -33,7 +33,8 @@ from pathlib import Path
 from teamb import config
 from teamb.controllers.fixed_time import FixedTimeController, TimingPlan
 
-SEARCH_VERSION = 1  # bump when the evaluation changes, so old cache files are not reused
+SEARCH_VERSION = 2  # bump when the evaluation changes, so old cache files are not reused
+# 2: relative offsets for the Webster seed trials, fixed-cycle green clamp in TimingPlan
 CACHE_DIR = config.RESULTS / "cache" / "ai_recommender"
 
 
@@ -97,8 +98,10 @@ def plan_to_params(plan: TimingPlan, spec: SearchSpec) -> dict:
     params = {"cycle": cycle}
     for j in spec.junctions:
         params[f"split_{j}"] = min(s_hi, max(s_lo, plan.splits.get(j, 0.5)))
+    # suggest_plan pins the first junction at offset 0, so express the others relative to it
+    ref = plan.offsets.get(spec.junctions[0], 0.0)
     for j in spec.junctions[1:]:
-        params[f"offset_{j}"] = (plan.offsets.get(j, 0.0) / cycle) % 1.0
+        params[f"offset_{j}"] = ((plan.offsets.get(j, 0.0) - ref) / cycle) % 1.0
     return params
 
 
