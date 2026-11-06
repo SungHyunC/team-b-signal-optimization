@@ -128,6 +128,52 @@ def test_max_pressure_saturated_arterial_ends_only_at_max_green(topo):
     assert ctl.propose_action(make_state(topo, 105, green_s=91)) == {"J2": "NS"}, "max-out bounds starvation"
 
 
+def test_max_pressure_closure_aware_does_not_count_a_closed_exit_as_room(topo):
+    obs = make_obs(topo, 100, count={("J2", "W"): 20})
+    obs["junctions"]["J2"]["exits"]["E"]["closed"] = True  # J2_J3 closed (flood)
+    plain = ready("max_pressure", topo)
+    plain.observe(obs)
+    assert plain.pressure("J2", "EW") == 20, "default: the empty closed road looks like room"
+    aware = ready("max_pressure", topo, closure_aware=True)
+    aware.observe(obs)
+    assert aware.pressure("J2", "EW") == 0, "the through movement has nowhere to go"
+    half = ready("max_pressure", topo, closure_aware=True, closure_weight=0.5)
+    half.observe(obs)
+    assert half.pressure("J2", "EW") == 10
+    listed = make_obs(topo, 100, count={("J2", "W"): 20})
+    listed["closed_edges"] = ["J2_J3"]
+    aware.observe(listed)
+    assert aware.pressure("J2", "EW") == 0 and aware.pressure("J1", "EW") == 0
+
+
+def test_max_pressure_closure_aware_infers_a_closed_exit_from_detectors(topo):
+    ctl = ready("max_pressure", topo, closure_aware=True)  # closure_detect_s 30 = six 5 s decisions
+    stuck = dict(count={("J2", "W"): 11}, queue={("J2", "W"): 8})  # cars stopped on a green, exit zone empty
+    for i in range(6):
+        t = 100 + 5 * i
+        ctl.observe(make_obs(topo, t, **stuck))
+        ctl.propose_action(make_state(topo, t, green_s=20 + 5 * i))
+        assert ctl.through_closed("J2", "W") == (i == 5), i
+    assert ctl.pressure("J2", "EW") == 0 and ctl.stats["closure_adjusted"] > 0
+    assert not ctl.through_closed("J1", "W"), "no stopped cars at J1: no evidence"
+    ctl.observe(make_obs(topo, 130, **stuck, exit_count={("J2", "E"): 1}))  # a car gets onto J2_J3 again
+    ctl.propose_action(make_state(topo, 130, green_s=50))
+    assert not ctl.through_closed("J2", "W") and ctl.pressure("J2", "EW") == 11 - 1  # x_down = 1 stopped car
+
+
+def test_max_pressure_closure_aware_is_a_no_op_while_cars_reach_the_exit(topo):
+    plain, aware = ready("max_pressure", topo), ready("max_pressure", topo, closure_aware=True)
+    for i in range(40):
+        t = 100 + 5 * i
+        obs = make_obs(topo, t, count={("J2", "W"): 11, ("J2", "N"): 4 + i % 9}, queue={("J2", "W"): 8},
+                       exit_count={("J2", "E"): i % 3})  # the exit zone is empty now and then, never for long
+        state = make_state(topo, t, green_s=20 + 5 * i)
+        for ctl in (plain, aware):
+            ctl.observe(obs)
+        assert plain.propose_action(state) == aware.propose_action(state), i
+    assert aware.stats["closure_adjusted"] == 0
+
+
 def test_fake_probe_queue_fools_blind_controller_not_defended_one(topo):
     attack = dict(count={("J2", "W"): 8, ("J2", "E"): 4}, probe_n={("J2", "N"): 99 + 1}, untrusted=[("J2", "N")])
     blind = ready("max_pressure_probe", topo)

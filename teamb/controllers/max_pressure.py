@@ -45,8 +45,21 @@ all-red, which matters most when queues are long. With rho > 0 the green switche
 (rho_cap in cars, None = no cap). Symmetric: it never boosts one approach, it only asks for a
 larger lead before paying the lost time. rho=0 gives exactly the original rule.
 
+Closed / blocked straight-on exits (`closure_aware`, default False = off): when the road an
+approach's straight-on traffic drives into is closed, its detector zone is empty, so x_down = 0
+reads as "lots of room" although nobody can go straight. With closure_aware=True such an
+approach's term becomes closure_weight · (x_up − x_down) instead of (x_up − x_down)
+(closure_weight 0 = the through movement adds no pressure). The exit counts as closed when
+    - the observation says so (exits[side]["closed"] is true, or its edge is listed in
+      observation["closed_edges"]), or
+    - detectors show it: while the approach had green with ≥ closure_min_queue stopped cars,
+      the exit's zone stayed completely empty for closure_detect_s seconds of decisions.
+      Any car in that zone resets the evidence (so a reopened road counts as open again).
+Without a closure nothing changes: the evidence never builds up while cars reach the exit.
+
 Tunable: measure, down_measure, weighted, margin (cars), rho, rho_cap (cars), interval (5 s),
-min_green, max_green, source, defense.
+min_green, max_green, source, defense, closure_aware, closure_weight, closure_detect_s,
+closure_min_queue.
 """
 from __future__ import annotations
 
@@ -82,6 +95,10 @@ class MaxPressureController(AdaptiveController):
         max_green: float | None = 90.0,
         rho: float = 0.0,
         rho_cap: float | None = None,
+        closure_aware: bool = False,
+        closure_weight: float = 0.0,
+        closure_detect_s: float = 30.0,
+        closure_min_queue: float = 3.0,
         **params,
     ):
         if source not in SOURCES:
@@ -90,9 +107,12 @@ class MaxPressureController(AdaptiveController):
             raise ValueError(f"measure and down_measure must be one of {MEASURES}")
         if float(rho) < 0 or (rho_cap is not None and float(rho_cap) < 0):
             raise ValueError("rho and rho_cap must be >= 0")
+        if not 0.0 <= float(closure_weight) <= 1.0:
+            raise ValueError("closure_weight must be between 0 and 1")
         super().__init__(source=source, defense=defense, measure=measure, down_measure=down_measure, weighted=weighted,
                          margin=margin, interval=interval, min_green=min_green, max_green=max_green, rho=rho,
-                         rho_cap=rho_cap, **params)
+                         rho_cap=rho_cap, closure_aware=closure_aware, closure_weight=closure_weight,
+                         closure_detect_s=closure_detect_s, closure_min_queue=closure_min_queue, **params)
         self.source = source
         self.defense = bool(defense)
         self.measure = measure
@@ -101,6 +121,10 @@ class MaxPressureController(AdaptiveController):
         self.margin = float(margin)
         self.rho = float(rho)
         self.rho_cap = None if rho_cap is None else float(rho_cap)
+        self.closure_aware = bool(closure_aware)
+        self.closure_weight = float(closure_weight)
+        self.closure_detect_s = float(closure_detect_s)
+        self.closure_min_queue = float(closure_min_queue)
 
     def reset(self, cfg, seed, topology) -> None:
         super().reset(cfg, seed, topology)
@@ -112,10 +136,13 @@ class MaxPressureController(AdaptiveController):
                 j2 = topology.downstream_junction(edge)
                 side2 = next((s for s, e in topology.approach_edges.get(j2, {}).items() if e == edge), None)
                 self.downstream[(j, side)] = (j2, side2) if j2 and side2 else None
+        self._empty_exit_s: dict[tuple[str, str], float] = {}  # (junction, exit side) → closure evidence
 
     # --- the rule -----------------------------------------------------------
     def decide(self, junction: str, axis: str, t_green: float) -> str | None:
         other = other_axis(axis)
+        if self.closure_aware:
+            self._watch_exits(junction, axis)
         p_other = self.pressure(junction, other)
         p_current = self.pressure(junction, axis)
         if p_other > p_current + self.margin + self.hysteresis(p_current):
@@ -135,8 +162,35 @@ class MaxPressureController(AdaptiveController):
         for side in AXIS_SIDES[axis]:
             if side in approaches:
                 weight = self.lanes.get((junction, side), 1) if self.weighted else 1
-                total += weight * (self.cars(junction, side) - self.cars_downstream(junction, THROUGH_EXIT[side]))
+                up, down = self.cars(junction, side), self.cars_downstream(junction, THROUGH_EXIT[side])
+                if self.closure_aware and up > down and self.through_closed(junction, side):
+                    down += (1.0 - self.closure_weight) * (up - down)  # a closed road is not an empty one
+                    self.stats["closure_adjusted"] += 1
+                total += weight * (up - down)
         return total
+
+    # --- closed straight-on exits (closure_aware) ----------------------------------
+    def through_closed(self, junction: str, side: str) -> bool:
+        """Is the road that straight-on traffic from approach `side` drives into closed / blocked?"""
+        exit_side = THROUGH_EXIT[side]
+        info = self.observation["junctions"][junction].get("exits", {}).get(exit_side) or {}
+        if info.get("closed") or (info.get("edge") and info["edge"] in (self.observation.get("closed_edges") or ())):
+            return True
+        return self._empty_exit_s.get((junction, exit_side), 0.0) >= self.closure_detect_s
+
+    def _watch_exits(self, junction: str, axis: str) -> None:
+        """Collect detector evidence of closed exits at one decision of `junction` (green `axis`)."""
+        js = self.observation["junctions"][junction]
+        approaches, exits = js["approaches"], js.get("exits", {})
+        for side, exit_side in THROUGH_EXIT.items():
+            det = (exits.get(exit_side) or {}).get("detector")
+            if det is None:
+                continue  # no detector on that road: only explicit closure info can tell
+            key = (junction, exit_side)
+            if num(det, "count") > 0:
+                self._empty_exit_s[key] = 0.0  # cars get onto that road: it is open
+            elif side in AXIS_SIDES[axis] and num(detector(approaches.get(side)), "queue") >= self.closure_min_queue:
+                self._empty_exit_s[key] = self._empty_exit_s.get(key, 0.0) + self.interval
 
     def has_demand(self, junction: str, axis: str) -> bool:
         approaches = self.observation["junctions"][junction]["approaches"]
