@@ -2,7 +2,8 @@
 
 Usage:
     python -m teamb.experiments.diagnose results/experiments/robustness_high --output diagnosis.json
-Requires only the Python standard library. Does not alter simulation outputs.
+Requires only the Python standard library (teamb.evaluation.stats is stdlib-only). Does not
+alter simulation outputs.
 """
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ import math
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
+
+from teamb.evaluation.stats import mean_ci
 
 METRICS = (
     "mean_delay_s", "mean_delay_incl_unfinished_s", "unfinished_pct",
@@ -34,18 +37,14 @@ def _mean(values):
 
 
 def _ci(values):
-    """Mean difference and approximate two-sided 95% Student-t interval."""
-    n = len(values)
-    if n < 2:
-        return {"n": n, "mean": _mean(values), "ci95": None}
-    mean = statistics.mean(values)
-    se = statistics.stdev(values) / math.sqrt(n)
-    # Cornish-Fisher expansion of t(.975, df); accurate for n >= 10.
-    df = n - 1
-    z = 1.959963984540054
-    t = z + (z**3 + z) / (4 * df) + (5*z**5 + 16*z**3 + 3*z) / (96*df**2)
-    hw = t * se
-    return {"n": n, "mean": round(mean, 4), "ci95": [round(mean-hw, 4), round(mean+hw, 4)]}
+    """Mean difference and its two-sided 95 % Student-t interval [low, high].
+
+    Same t quantiles as the experiment report and the impact analysis (stats.mean_ci)."""
+    s = mean_ci(values)
+    if s["ci95"] is None:
+        return {"n": s["n"], "mean": _mean(values), "ci95": None}
+    mean, hw = s["mean"], s["ci95"]
+    return {"n": s["n"], "mean": round(mean, 4), "ci95": [round(mean - hw, 4), round(mean + hw, 4)]}
 
 
 def load_runs(folder):

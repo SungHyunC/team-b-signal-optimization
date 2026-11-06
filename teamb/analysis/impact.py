@@ -37,20 +37,15 @@ import argparse
 import csv
 import hashlib
 import json
-import math
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean, stdev
+from statistics import mean
 
 from teamb import config
 from teamb.analysis.assumptions import ASSUMPTIONS, ImpactParams
-
-T_975 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
-         11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093,
-         20: 2.086, 21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056, 27: 2.052, 28: 2.048,
-         29: 2.045, 30: 2.042}
+from teamb.evaluation.stats import mean_ci
 NUMERIC_FIELDS = ("seed", "coverage", "sim_time_s", "completed", "unfinished", "unfinished_pct", "mean_delay_s",
                   "stops_per_veh", "throughput_veh_h", "ev_count", "ev_mean_travel_time_s", "teleports", "warmup")
 
@@ -177,14 +172,10 @@ def pair_effect(base: dict, cand: dict, p: ImpactParams) -> dict:
 
 
 def _summary_stat(values: list[float | None]) -> dict:
-    vals = [v for v in values if v is not None and not (isinstance(v, float) and math.isnan(v))]
-    if not vals:
-        return {"mean": None, "ci95": None, "n": 0}
-    m = mean(vals)
-    if len(vals) < 2:
-        return {"mean": m, "ci95": None, "n": 1}
-    half = T_975.get(len(vals) - 1, 1.96) * stdev(vals) / math.sqrt(len(vals))
-    return {"mean": m, "ci95": half, "n": len(vals)}
+    """Mean and 95 % t half-width over seeds: the same implementation as the experiment report
+    (teamb.evaluation.stats.mean_ci), so impact.md and report.md agree for the same data."""
+    s = mean_ci(values)
+    return {"mean": s["mean"], "ci95": s["ci95"], "n": s["n"]}
 
 
 # --- the analysis ----------------------------------------------------------------------------

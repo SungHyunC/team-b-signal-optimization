@@ -39,3 +39,18 @@ def test_unpaired_and_demand_mismatch_are_visible(tmp_path):
     assert sc["paired_seeds"] == 1
     assert any("unpaired seeds" in w for w in sc["warnings"])
     assert any("demand_hash" in w for w in sc["warnings"])
+
+
+def test_ci_uses_exact_student_t_quantiles():
+    from teamb.evaluation.stats import t_critical
+    from teamb.experiments.diagnose import _ci
+
+    assert _ci([0.0, 1.0])["ci95"] == [-5.853, 6.853]  # t(0.975, 1) = 12.706, se = 0.5
+    lo, hi = _ci([0.0, 1.0, 2.0])["ci95"]
+    assert abs(lo - (1 - 4.303 / 3 ** 0.5)) < 1e-3 and abs(hi - (1 + 4.303 / 3 ** 0.5)) < 1e-3
+    for n in (4, 10, 31, 45):
+        vals = [float(i % 7) for i in range(n)]
+        r = _ci(vals)
+        sd = (sum((v - sum(vals) / n) ** 2 for v in vals) / (n - 1)) ** 0.5
+        assert abs((r["ci95"][1] - r["mean"]) - t_critical(n - 1) * sd / n ** 0.5) < 1e-3
+    assert _ci([3.0])["ci95"] is None
