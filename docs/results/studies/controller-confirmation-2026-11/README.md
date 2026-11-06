@@ -129,10 +129,13 @@ Unfinished trips (% of planned):
 
 ## Files
 
-`demand-<d>/report.md` (paired report against max_pressure, all metrics), `summary.csv` (one row
-per run), `experiment.json` (commands and matrix), and `screen_<candidate>.md/json` (the screen
-per candidate). Per-run folders (tripinfo, time series) are not committed; the commands below
-regenerate them.
+| Demand | Paired report | Screens vs max_pressure |
+|---|---|---|
+| 0.75 | [report.md](demand-0.75/report.md) | [max_pressure_plus](demand-0.75/screen_max_pressure_plus.md) · [rho 0.25 + closure_aware](demand-0.75/screen_max_pressure_rho_025_closure_aware.md) · [retrained rl](demand-0.75/screen_rl.md) |
+| 1 | [report.md](demand-1/report.md) | [max_pressure_plus](demand-1/screen_max_pressure_plus.md) · [rho 0.25 + closure_aware](demand-1/screen_max_pressure_rho_025_closure_aware.md) · [retrained rl](demand-1/screen_rl.md) |
+| 1.25 | [report.md](demand-1.25/report.md) | [max_pressure_plus](demand-1.25/screen_max_pressure_plus.md) · [rho 0.25 + closure_aware](demand-1.25/screen_max_pressure_rho_025_closure_aware.md) · [retrained rl](demand-1.25/screen_rl.md) |
+
+Each `demand-<d>/` folder also has `summary.csv` (one row per run), `experiment.json` (commands and matrix), `validation.json` (strict audit) and the screens as JSON. Per-run folders (tripinfo, time series) are not committed; the commands below regenerate them.
 
 ## Reproduce
 
