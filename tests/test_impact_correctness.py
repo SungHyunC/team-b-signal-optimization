@@ -236,3 +236,19 @@ def test_valid_overrides_still_work():
     assert p.service_life_years == 15 and impact.capital_recovery_factor(0.0, 15) == pytest.approx(1 / 15)
     with pytest.raises(ValueError):
         impact.capital_recovery_factor(0.07, 0)
+
+
+# --- one dollar year (evaluation-14) ---------------------------------------------------------------
+def test_monetary_values_share_one_dollar_year():
+    import re
+
+    from teamb.analysis.assumptions import ASSUMPTIONS
+
+    years = {a.name: re.search(r"USD \((\d{4})\)", a.unit).group(1) for a in ASSUMPTIONS if re.search(r"USD \((\d{4})\)", a.unit)}
+    assert {n for n, y in years.items() if y != "2023"} == {"co2_usd_per_tonne"}  # converted with the CPI factor
+    p = impact.ImpactParams()
+    assert p.cpi_2020_to_2023 == pytest.approx(304.702 / 258.811, abs=1e-3)
+    base = impact.run_quantities(impact._normalize(S()), p)
+    cand = impact.run_quantities(impact._normalize(S(controller="max_pressure", mean_delay_s=50.0)), p)
+    eff = impact.pair_effect(base, cand, p)
+    assert eff["co2_value_usd_per_h"] == pytest.approx(eff["co2_avoided_kg_per_h"] / 1000 * 190.0 * p.cpi_2020_to_2023)

@@ -31,7 +31,8 @@ Method (paired by seed, so every controller sees the identical demand)
     time value      = delay saved × [(1 − truck_share) × occupancy × VOT + truck_share × truck VOT]
     fuel saved      = delay saved × idle_fuel_gal_per_h + stops saved/h × fuel_per_stop_gal
     fuel value      = fuel saved × (fuel price − fuel tax)                 (taxes are transfers)
-    CO2 avoided     = fuel saved × co2_kg_per_gal;  CO2 value = t × co2_usd_per_tonne
+    CO2 avoided     = fuel saved × co2_kg_per_gal;  CO2 value = t × co2_usd_per_tonne × cpi_2020_to_2023
+                      (every dollar amount is in 2023 dollars)
     EV time saved   = baseline ev_mean_travel_time_s − candidate ev_mean_travel_time_s
   Seeds are averaged; ± is the 95 % confidence half-width of the paired differences (t-dist.).
   A candidate that leaves more trips unfinished than the baseline (by more than
@@ -214,7 +215,7 @@ def pair_effect(base: dict, cand: dict, p: ImpactParams) -> dict:
     co2_kg = fuel * p.co2_kg_per_gal
     time_usd = saved * vot_per_vehicle_hour(p)
     fuel_usd = fuel * (p.fuel_price_usd_per_gal - p.fuel_tax_usd_per_gal)
-    co2_usd = co2_kg / 1000.0 * p.co2_usd_per_tonne
+    co2_usd = co2_kg / 1000.0 * p.co2_usd_per_tonne * p.cpi_2020_to_2023  # SC-CO2 is in 2020 dollars
     d_delay = None if base["mean_delay_s"] is None or cand["mean_delay_s"] is None else cand["mean_delay_s"] - base["mean_delay_s"]
     d_unf = None if base["unfinished_pct"] is None or cand["unfinished_pct"] is None else cand["unfinished_pct"] - base["unfinished_pct"]
     ev_saved = None if base["ev"] is None or cand["ev"] is None else base["ev"] - cand["ev"]

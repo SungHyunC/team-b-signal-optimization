@@ -76,7 +76,13 @@ ASSUMPTIONS: list[Assumption] = [
     Assumption(
         "co2_usd_per_tonne", 190.0, "USD (2020) per tonne CO2", "cited",
         "US EPA (2023), Report on the Social Cost of Greenhouse Gases: 2020 emissions, 2 % discount "
-        "rate. Note: USDOT's May 2025 guidance no longer monetizes CO2; set 0 to follow it.",
+        "rate. Converted to 2023 dollars with cpi_2020_to_2023 before it is added to the 2023-dollar time "
+        "and fuel values. Note: USDOT's May 2025 guidance no longer monetizes CO2; set 0 to follow it.",
+    ),
+    Assumption(
+        "cpi_2020_to_2023", 1.177, "USD (2023) per USD (2020)", "cited",
+        "US BLS, CPI-U (all urban consumers, US city average) annual averages: 304.702 (2023) / 258.811 "
+        "(2020) = 1.177. Puts the 2020-dollar CO2 value in the dollar year of the other values.",
     ),
     # --- deployment cost ----------------------------------------------------------------------
     Assumption(
