@@ -134,3 +134,83 @@ def test_others_extra_delay_excludes_the_emergency_vehicles():
     for r in runs:
         r.pop("others_mean_delay_s")
     assert impact.analyze(runs)["preemption"][0]["others_extra_delay_s"]["mean"] == pytest.approx(-1.0)  # fallback
+
+
+# --- annual hours: once per scenario (evaluation-4) and EV hours (ext-23) -------------------------
+def _variant(params, **kw):
+    from teamb.experiments.runner import short_hash
+
+    scen = kw.get("scenario", "rush_hour")
+    return S(scenario_variant=f"{scen}-{short_hash(params)}", scenario_params=params, **kw)
+
+
+def _pairs(make, seeds=(1, 2), base_delay=76.0, cand_delay=32.0, **kw):
+    out = []
+    for seed in seeds:
+        out.append(make(seed=seed, mean_delay_s=base_delay + seed, **kw))
+        out.append(make(seed=seed, controller="max_pressure", mean_delay_s=cand_delay + seed, **kw))
+    return out
+
+
+def _annual(result, controller="max_pressure"):
+    return next(a for a in result["annual"] if a["controller"] == controller)
+
+
+def test_counterfactual_twins_are_not_annualized():
+    p = impact.ImpactParams()
+    plain = _pairs(lambda **k: S(scenario_params={}, **k), scenario="road_closure")
+    twins = _pairs(lambda **k: _variant({"events": []}, **k), scenario="road_closure", base_delay=40.0, cand_delay=30.0)
+    result = impact.analyze(plain + twins, params=p)
+    row = next(r for r in result["rows"] if r["scenario"] == "road_closure")
+    twin = next(r for r in result["rows"] if r["scenario"] != "road_closure")
+    assert twin["annual_hours"] == 0 and any("counterfactual" in f for f in twin["flags"])
+    hours = p.annual_hours["road_closure"]
+    assert _annual(result)["annual_benefit_usd"] == pytest.approx(row["stats"]["total_value_usd_per_h"]["mean"] * hours)
+    assert _annual(result)["scenarios_used"] == ["road_closure"]
+    # from a summary.csv the parameters are unknown: the plain scenario's twin is recognised by name
+    from teamb.experiments.runner import short_hash
+
+    unknown = {"scenario_name": "road_closure", "scenario": f"road_closure-{short_hash({'events': []})}", "scenario_params": None}
+    assert impact._is_counterfactual(unknown)
+    assert not impact._is_counterfactual({**unknown, "scenario": "road_closure-abc123"})
+    assert not impact._is_counterfactual({"scenario_name": "rush_hour", "scenario": "rush_hour-x", "scenario_params": {"events": []}})
+
+
+def test_scenario_variants_count_the_annual_hours_once():
+    p = impact.ImpactParams()
+    plain = _pairs(lambda **k: S(**k))
+    scaled = _pairs(lambda **k: _variant({"demand_scale": 1.2}, **k), base_delay=90.0, cand_delay=40.0)
+    result = impact.analyze(plain + scaled, params=p)
+    row = next(r for r in result["rows"] if r["scenario"] == "rush_hour")
+    var = next(r for r in result["rows"] if r["scenario"] != "rush_hour")
+    assert row["annual_hours"] == 500.0 and var["annual_hours"] == 0 and any("variant of rush_hour" in f for f in var["flags"])
+    assert _annual(result)["annual_benefit_usd"] == pytest.approx(row["stats"]["total_value_usd_per_h"]["mean"] * 500.0)
+    # the only variant (e.g. one --scenario-params experiment) carries the hours
+    alone = impact.analyze(scaled, params=p)
+    assert alone["rows"][0]["annual_hours"] == 500.0 and _annual(alone)["annual_benefit_usd"] > 0
+    # two variants and no plain run: none is counted unless chosen explicitly
+    other = _pairs(lambda **k: _variant({"demand_scale": 0.8}, **k), base_delay=50.0, cand_delay=40.0)
+    two = impact.analyze(scaled + other, params=p)
+    assert all(r["annual_hours"] == 0 for r in two["rows"]) and _annual(two)["annual_benefit_usd"] == 0
+    chosen = scaled[0]["scenario_variant"]
+    picked = impact.analyze(scaled + other, params={"annual_hours": {chosen: 250}})
+    assert {r["scenario"]: r["annual_hours"] for r in picked["rows"]}[chosen] == 250.0
+
+
+def test_ev_hours_come_from_claimed_emergency_rows_only():
+    p = impact.ImpactParams()
+    runs = []
+    for seed in (1, 2, 3):
+        runs.append(S(scenario="emergency", seed=seed, ev_mean_travel_time_s=200.0))
+        runs.append(S(scenario="emergency", seed=seed, controller="cand", ev_mean_travel_time_s=180.0))
+        runs.append(S(scenario="earthquake", seed=seed, ev_mean_travel_time_s=500.0))
+        runs.append(S(scenario="earthquake", seed=seed, controller="cand", ev_mean_travel_time_s=300.0,
+                      completed=3200, unfinished=400, unfinished_pct=10.0))
+    expected = 20.0 * p.ev_trips_per_year / 3600.0
+    assert _annual(impact.analyze(runs, params=p), "cand")["ev_hours_saved_per_year"] == pytest.approx(expected)
+    claimed = [dict(r, completed=3600, unfinished=0, unfinished_pct=0.0) for r in runs]
+    a = _annual(impact.analyze(claimed, params=p), "cand")
+    assert a["ev_hours_saved_per_year"] == pytest.approx(expected) and a["ev_scenarios_used"] == ["emergency"]
+    stranding = [dict(r, unfinished=400, unfinished_pct=10.0) if r["controller"] == "cand" and r["scenario"] == "emergency" else r
+                 for r in runs]
+    assert _annual(impact.analyze(stranding, params=p), "cand")["ev_hours_saved_per_year"] is None

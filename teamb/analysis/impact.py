@@ -39,6 +39,12 @@ Method (paired by seed, so every controller sees the identical demand)
   Annual benefit = Σ over scenarios of value per hour × ANNUAL_HOURS[scenario]; it is compared
   with the controller's deployment cost (capital annualized over the service life at the
   discount rate, plus O&M): B/C ratio, simple payback and NPV.
+  Each scenario's annual hours are counted once per controller setting: by the plain scenario
+  row, or by its only variant ('<scenario>-<hash>', e.g. a --scenario-params run) when there is
+  no plain row. Other variants and no-event counterfactual twins (events=[]) get 0 hours and a
+  flag; set annual_hours["<scenario>-<hash>"] to annualize a variant explicitly.
+  EV hours per year = the paired EV time saved in the claimed 'emergency' scenario rows
+  (seed-weighted) × ev_trips_per_year; other EV scenarios (earthquake) are not routine trips.
 Every number used is a named parameter in teamb/analysis/assumptions.py with its source.
 """
 from __future__ import annotations
@@ -115,6 +121,9 @@ def _normalize(summary: dict, run_dir: Path | None = None) -> dict:
     run["_variant"] = spec.get("variant") or run.get("variant") or run.get("controller")
     scenario_params = spec.get("scenario_params") or {}
     run["_scenario"] = run.get("scenario_variant") or run.get("scenario")
+    # the variant's parameters if known (run_spec.json or the summary itself), else None
+    known = spec.get("scenario_params") if "scenario_params" in spec else run.get("scenario_params")
+    run["_scenario_params"] = known if isinstance(known, dict) else None
     if scenario_params:  # same naming as the experiments runner (RunSpec.scenario_variant)
         digest = hashlib.sha1(json.dumps(scenario_params, sort_keys=True).encode()).hexdigest()[:6]
         run["_scenario"] = f"{run.get('scenario')}-{digest}"
@@ -274,6 +283,10 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
             {**pair_effect(qb, qc, p), "seed": seed, "fallback": fallback, "mixed": qb["delay_method"] != qc["delay_method"]}
         )
 
+    params_of = {}
+    for run in by_key.values():
+        if run.get("_scenario_params") is not None:
+            params_of.setdefault(run["_scenario"], run["_scenario_params"])
     rows = []
     for (scen, variant, cov, samp, pre), effects in sorted(groups.items(), key=lambda kv: str(kv[0])):
         stats = {k: _summary_stat([e[k] for e in effects]) for k in effects[0] if k not in ("seed", "fallback", "mixed")}
@@ -301,10 +314,12 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
                 "n": len(effects),
                 "stats": stats,
                 "claimed": not any(f.startswith("PERF-01") for f in flags),
-                "annual_hours": p.annual_hours.get(scenario_name, 0.0),
+                "scenario_params": params_of.get(scen, {} if scen == scenario_name else None),
+                "annual_hours": 0.0,
                 "flags": flags,
             }
         )
+    _assign_annual_hours(rows, p)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": str(source) if not isinstance(source, (list, tuple)) else f"{len(runs)} summaries",
@@ -318,6 +333,58 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
         "vot_usd_per_vehicle_hour": vot_per_vehicle_hour(p),
         "notes": sorted(set(notes)),
     }
+
+
+def _is_counterfactual(row: dict) -> bool:
+    """A no-event twin (--counterfactual): the scenario with its events removed."""
+    from teamb.experiments.runner import short_hash
+    from teamb.scenarios import REGISTRY, get_scenario
+
+    name, params = row["scenario_name"], row.get("scenario_params")
+    if name not in REGISTRY:
+        return False
+    if params is None:  # parameters unknown (e.g. a summary.csv): recognise the twin of the plain scenario by name
+        return row["scenario"] == f"{name}-{short_hash({'events': []})}"
+    if params.get("events") != []:
+        return False
+    try:
+        return bool(get_scenario(name, **{k: v for k, v in params.items() if k != "events"}).events)
+    except Exception:
+        return False
+
+
+def _assign_annual_hours(rows: list[dict], p: ImpactParams) -> None:
+    """Give each scenario's ANNUAL_HOURS to exactly one row per controller setting (evaluation-4).
+
+    An explicit annual_hours entry for a variant ("rush_hour-1a2b3c") always applies. Otherwise
+    counterfactual twins get 0; of the remaining rows of one base scenario the plain one gets the
+    hours, or the only variant if there is no plain row; the others get 0. Every 0 is flagged."""
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for r in rows:
+        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"], r["scenario_name"])].append(r)
+    for (*_, name), rs in groups.items():
+        hours = p.annual_hours.get(name, 0.0)
+        rest = []
+        for r in rs:
+            if r["scenario"] != name and r["scenario"] in p.annual_hours:
+                r["annual_hours"] = p.annual_hours[r["scenario"]]
+            elif _is_counterfactual(r):
+                if hours:
+                    r["flags"].append("no-event counterfactual: not annualized")
+            else:
+                rest.append(r)
+        if not rest or not hours:
+            continue
+        plain = [r for r in rest if r["scenario"] == name]
+        chosen = plain[0] if plain else (rest[0] if len(rest) == 1 else None)
+        for r in rest:
+            if r is chosen:
+                r["annual_hours"] = hours
+            elif chosen is not None:
+                r["flags"].append(f"variant of {name}: not annualized ({chosen['scenario']} carries its {hours:g} h/yr)")
+            else:
+                r["flags"].append(f"{len(rest)} variants of {name} and no plain run: none annualized "
+                                  f"(set annual_hours[\"{r['scenario']}\"] to count one)")
 
 
 def capital_recovery_factor(rate: float, years: float) -> float:
@@ -349,8 +416,12 @@ def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
             parts["fuel"] += (s["fuel_value_usd_per_h"]["mean"] or 0.0) * hours
             parts["co2"] += (s["co2_value_usd_per_h"]["mean"] or 0.0) * hours
             used.append(r["scenario"])
-        ev_saved = [r["stats"]["ev_time_saved_s"]["mean"] for r in rs if r["stats"]["ev_time_saved_s"]["mean"] is not None]
-        ev_hours = mean(ev_saved) * p.ev_trips_per_year / 3600.0 if ev_saved else None
+        # routine EV trips: the claimed 'emergency' rows only, weighted by their seed counts (ext-23)
+        ev_rows = [r for r in rs if r["claimed"] and r["scenario_name"] == "emergency"
+                   and r["stats"]["ev_time_saved_s"]["mean"] is not None]
+        n_ev = sum(r["stats"]["ev_time_saved_s"]["n"] for r in ev_rows)
+        ev_hours = (sum(r["stats"]["ev_time_saved_s"]["mean"] * r["stats"]["ev_time_saved_s"]["n"] for r in ev_rows)
+                    / n_ev * p.ev_trips_per_year / 3600.0) if n_ev else None
         benefit = sum(parts.values())
         capex, om, profile = p.cost_of(controller)
         annual_cost = capex * crf + om
@@ -367,6 +438,7 @@ def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
                 "annual_benefit_usd": benefit,
                 "annual_benefit_parts_usd": parts,
                 "ev_hours_saved_per_year": ev_hours,
+                "ev_scenarios_used": [r["scenario"] for r in ev_rows],
                 "capex_usd": capex,
                 "om_usd_per_year": om,
                 "cost_profile": profile,
@@ -510,7 +582,9 @@ def render_markdown(result: dict) -> str:
     if not result["annual"]:
         lines.append("| – | | | | | | | | | |")
     hours = ", ".join(f"{k} {v:g} h" for k, v in result["annual_hours"].items())
-    lines += ["", f"Hours per year each scenario stands for (assumptions): {hours}."]
+    lines += ["", f"Hours per year each scenario stands for (assumptions): {hours}. Each scenario's hours count "
+              "once per controller setting (the plain scenario, or its only variant); other variants and no-event "
+              "counterfactual twins are not annualized. EV hours per year use the claimed `emergency` rows only."]
 
     if result["preemption"]:
         lines += [
