@@ -16,7 +16,8 @@ every step (cheap)
     * every E2 lane-area detector: halting number, vehicle number, occupancy, mean speed,
     * every E1 induction loop: seconds since the last detection, vehicles on the loop,
     * lane 0 of every edge: disallowed vehicle classes (a closed road disallows all),
-    * the simulation: number of vehicles that started teleporting.
+    * the simulation: time, departed and arrived vehicle ids, number of vehicles that
+      started teleporting (``step_values`` gives SimEnv the first three without getters).
 on request, at most once per step (``snapshot_at``)
     * all vehicles: position on the lane (m) and SUMO time loss (s). Taken by a one-shot
       context subscription (subscribe, read, unsubscribe = 2 round trips). The metrics
@@ -52,7 +53,13 @@ E2_VARS = (
 E1_VARS = (tc.LAST_STEP_TIME_SINCE_DETECTION, tc.LAST_STEP_VEHICLE_ID_LIST)
 STEP_VEHICLE_VARS = (tc.VAR_LANE_ID, tc.VAR_SPEED)
 SNAPSHOT_VEHICLE_VARS = (tc.VAR_LANEPOSITION, tc.VAR_TIMELOSS)
-SIM_VARS = (tc.VAR_TELEPORT_STARTING_VEHICLES_NUMBER,)
+# simulation.subscribe() replaces the variable list, so everything per step goes into this one call
+SIM_VARS = (
+    tc.VAR_TELEPORT_STARTING_VEHICLES_NUMBER,
+    tc.VAR_TIME,
+    tc.VAR_DEPARTED_VEHICLES_IDS,
+    tc.VAR_ARRIVED_VEHICLES_IDS,
+)
 
 # Direct getters used when a subscription value is missing (for example because some
 # other code re-subscribed the same object with different variables).
@@ -137,6 +144,24 @@ class TrafficFeed:
         c.simulation.subscribe(list(SIM_VARS))
 
     # --- every step -------------------------------------------------------------
+    def step_values(self) -> tuple[float, tuple, tuple]:
+        """(simulation time, departed ids, arrived ids) after the last simulationStep.
+
+        Read from the simulation subscription (no round trip); a missing value falls back to
+        its getter, like `e1`/`e2`."""
+        c = self.conn
+        sim = c.simulation.getSubscriptionResults() or {}
+        t = sim.get(tc.VAR_TIME)
+        departed = sim.get(tc.VAR_DEPARTED_VEHICLES_IDS)
+        arrived = sim.get(tc.VAR_ARRIVED_VEHICLES_IDS)
+        if t is None:
+            t = c.simulation.getTime()
+        if departed is None:
+            departed = c.simulation.getDepartedIDList()
+        if arrived is None:
+            arrived = c.simulation.getArrivedIDList()
+        return t, departed, arrived
+
     def update(self, t: float) -> None:
         """Index this step's subscription results. Cheap; repeated calls for the same t are free."""
         if t == self.t:

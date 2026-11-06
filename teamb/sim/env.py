@@ -32,6 +32,7 @@ import os
 import subprocess
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import asdict
 from pathlib import Path
 
@@ -58,6 +59,16 @@ DRAWN_TYPES = ("ambulance", "firetruck", "truck", "bus")
 SUMMARY_FILE = "summary.json"  # complete runs only
 PARTIAL_SUMMARY_FILE = "summary.partial.json"  # runs closed before their end time
 ABORT_WAIT_S = 5.0  # after a failure, how long SUMO may take to exit before it is killed
+
+
+def _route_vtypes(routes_path: Path) -> dict[str, str]:
+    """Vehicle id -> vType id for the trips in a routes file whose type is a plain <vType> there.
+
+    Lets SimEnv spot emergency vehicles at departure without a getTypeID round trip; vehicles
+    not listed (added during the run, flows, type distributions) are still asked from SUMO."""
+    root = ET.parse(routes_path).getroot()
+    vtypes = {el.get("id") for el in root.iter("vType")}
+    return {el.get("id"): el.get("type") for el in root if el.tag in ("trip", "vehicle") and el.get("type") in vtypes}
 
 
 def _git_revision() -> str:
@@ -121,6 +132,9 @@ class SimEnv:
         self._shown: dict[str, str] = {}
         self._ev_ids: set[str] = set()
         self._ev_active: set[tuple[str, str]] = set()
+        self._vtypes: dict[str, str] = {}
+        self.departed: tuple = ()  # vehicle ids that departed / arrived in the last step
+        self.arrived: tuple = ()
         self._sumo_version = "unknown"
         self.summary: dict | None = None
         self._in_step = False  # True while a step runs; stays True if the step raised
@@ -134,6 +148,7 @@ class SimEnv:
         for stale in (SUMMARY_FILE, PARTIAL_SUMMARY_FILE):  # a summary here must come from this run
             (self.output_dir / stale).unlink(missing_ok=True)
         self.routes_path = self.scenario.build_routes(self.output_dir / "routes.rou.xml", self.seed)
+        self._vtypes = _route_vtypes(self.routes_path)
         self.tripinfo_path = self.output_dir / "tripinfo.xml"
         cmd = [
             binary("sumo"),
@@ -155,6 +170,7 @@ class SimEnv:
             self.supervisor = SafetySupervisor(list(self.topology.tls_ids))
             self.sensors = SensorSuite(self.conn, self.topology, coverage=self.coverage, sampling=self.sampling, seed=self.seed)
             self.coverage = self.sensors.coverage  # the share the sensors really use
+            self._feed = self.sensors.feed
             self.metrics = MetricsCollector(self.conn, self.topology, warmup=self.scenario.warmup, end_time=self.end_time)
             cfg = self.run_config()
             self.controller.reset(cfg, self.seed, self.topology)
@@ -239,13 +255,16 @@ class SimEnv:
         self._apply(self.supervisor.apply_safe_action(safe, t, preempt))
         self.conn.simulationStep()
         self.supervisor.tick(self.step_length)
-        self.t = self.conn.simulation.getTime()
-        departed = self.conn.simulation.getDepartedIDList()
-        arrived = self.conn.simulation.getArrivedIDList()
+        self.t, departed, arrived = self._feed.step_values()  # subscribed: no round trips
+        self.departed, self.arrived = departed, arrived
+        vtypes = self._vtypes
         for vid in departed:
             if self.frames:
                 self.conn.vehicle.subscribe(vid, VEHICLE_VARS)
-            if self.conn.vehicle.getTypeID(vid) in EV_TYPES:
+            vtype = vtypes.get(vid)
+            if vtype is None:  # added during the run (e.g. dispatch_ev): ask SUMO
+                vtype = self.conn.vehicle.getTypeID(vid)
+            if vtype in EV_TYPES:
                 self._ev_ids.add(vid)
         for vid in arrived:
             if vid in self._ev_ids:
