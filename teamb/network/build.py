@@ -16,17 +16,31 @@ east–west corridor). N1–N4 are unsignalized priority junctions. Edge ids are
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import re
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
 from teamb import config
+from teamb.fsutil import atomic_write_text
 from teamb.sumo_paths import DEVNULL, binary
 
-NETWORK_VERSION = "1"
+NETWORK_VERSION = "1"  # bump only for changes the build digest cannot see (e.g. netconvert's own defaults)
 E2_LENGTH_M = 100.0  # lane-area detector length upstream of each stop line
 E1_SETBACK_M = 25.0  # induction loop distance from the stop line
+NETCONVERT_OPTIONS = (
+    "--no-turnarounds", "true",
+    "--offset.disable-normalization", "true",
+    "--tls.default-type", "static",
+    "--junctions.corner-detail", "5",
+    "--no-warnings", "true",
+)
+_XML_COMMENT = re.compile(rb"<!--.*?-->", re.S)
 
 
 @dataclass(frozen=True)
@@ -80,14 +94,14 @@ def edge_kind(edge_id: str) -> str:
     return "cross"
 
 
-def _write_plain(out: Path) -> tuple[Path, Path]:
-    nod, edg = out / "corridor.nod.xml", out / "corridor.edg.xml"
-    nod.write_text(
+def _plain_xml() -> tuple[str, str]:
+    """The netconvert inputs (node and edge files) as text."""
+    nod = (
         "<nodes>\n"
         + "".join(f'  <node id="{n}" x="{x}" y="{y}" type="{t}"/>\n' for n, x, y, t in _nodes())
         + "</nodes>\n"
     )
-    edg.write_text(
+    edg = (
         "<edges>\n"
         + "".join(
             f'  <edge id="{e}" from="{a}" to="{b}" numLanes="{n}" speed="{s}" priority="{p}"/>\n'
@@ -96,6 +110,20 @@ def _write_plain(out: Path) -> tuple[Path, Path]:
         + "</edges>\n"
     )
     return nod, edg
+
+
+def build_digest(nod: str | None = None, edg: str | None = None) -> str:
+    """Hash of everything the build uses: geometry (node/edge files), netconvert options, detector layout.
+
+    Stored in generated/VERSION, so a change to config geometry or to this file's build settings
+    rebuilds the network by itself, without a manual NETWORK_VERSION bump."""
+    if nod is None or edg is None:
+        nod, edg = _plain_xml()
+    h = hashlib.sha256()
+    for part in (NETWORK_VERSION, nod, edg, json.dumps(NETCONVERT_OPTIONS), repr(E2_LENGTH_M), repr(E1_SETBACK_M)):
+        h.update(part.encode())
+        h.update(b"\0")
+    return f"{NETWORK_VERSION}:{h.hexdigest()[:16]}"
 
 
 def _write_detectors(net_path: Path, out: Path) -> None:
@@ -121,37 +149,51 @@ def _write_detectors(net_path: Path, out: Path) -> None:
 
 
 def ensure_network(force: bool = False) -> NetworkPaths:
-    """Build the network once (or again when NETWORK_VERSION changes) and return its paths."""
+    """Build the network once (again when its build inputs change) and return its paths.
+
+    The files are built in a temporary folder and moved into place one by one, the stamp last,
+    so parallel workers on a fresh checkout never read a half-written network."""
     out = config.GENERATED
     out.mkdir(parents=True, exist_ok=True)
     paths = NetworkPaths(out / "corridor.net.xml", out / "detectors.add.xml")
     stamp = out / "VERSION"
-    if not force and paths.net.exists() and paths.detectors.exists() and stamp.exists() and stamp.read_text() == NETWORK_VERSION:
+    nod_text, edg_text = _plain_xml()
+    digest = build_digest(nod_text, edg_text)
+    if not force and paths.net.exists() and paths.detectors.exists() and stamp.exists() and stamp.read_text().strip() == digest:
         return paths
-    nod, edg = _write_plain(out)
-    subprocess.run(
-        [
-            binary("netconvert"),
-            "--node-files", str(nod),
-            "--edge-files", str(edg),
-            "--output-file", str(paths.net),
-            "--no-turnarounds", "true",
-            "--offset.disable-normalization", "true",
-            "--tls.default-type", "static",
-            "--junctions.corner-detail", "5",
-            "--no-warnings", "true",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    _write_detectors(paths.net, paths.detectors)
-    stamp.write_text(NETWORK_VERSION)
+    tmp = Path(tempfile.mkdtemp(prefix=".build-", dir=out))
+    try:
+        nod, edg = tmp / "corridor.nod.xml", tmp / "corridor.edg.xml"
+        nod.write_text(nod_text)
+        edg.write_text(edg_text)
+        net, detectors = tmp / paths.net.name, tmp / paths.detectors.name
+        subprocess.run(
+            [binary("netconvert"), "--node-files", str(nod), "--edge-files", str(edg), "--output-file", str(net),
+             *NETCONVERT_OPTIONS],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        _write_detectors(net, detectors)
+        for f in (nod, edg, net, detectors):
+            os.replace(f, out / f.name)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    atomic_write_text(stamp, digest)
     return paths
 
 
 def file_hash(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+
+
+def network_hash(path: Path) -> str:
+    """Hash of a SUMO XML file's content without its comments.
+
+    netconvert writes a header comment with the build time and the absolute input and output
+    paths, so the raw file hash changed with every rebuild and every checkout folder although
+    the network was the same (sim-core-5)."""
+    return hashlib.sha256(_XML_COMMENT.sub(b"", Path(path).read_bytes())).hexdigest()[:16]
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ import traci.constants as tc
 from teamb import config
 from teamb.controllers import make_controller
 from teamb.evaluation.metrics import EV_TYPES, MetricsCollector
-from teamb.network.build import ensure_network, file_hash
+from teamb.network.build import ensure_network, file_hash, network_hash
 from teamb.network.topology import load_topology
 from teamb.safety.supervisor import SafetySupervisor
 from teamb.scenarios import get_scenario
@@ -388,7 +388,7 @@ class SimEnv:
             "created_unix": round(time.time()),
             "code_revision": _git_revision(),
             "sumo_version": self._sumo_version,
-            "network_hash": file_hash(self._net_paths.net),
+            "network_hash": network_hash(self._net_paths.net),
             "demand_hash": file_hash(self.routes_path),
             "seed": self.seed,
             "config": self.run_config(),
