@@ -427,6 +427,13 @@ def check_resume(spec: RunSpec, runs_dir: str | Path) -> dict | None:
     return done
 
 
+def batch_traci_backend() -> str:
+    """Batch runs use libsumo when it is installed ("auto"): same outputs as traci, about 2x faster.
+
+    $TEAMB_TRACI_BACKEND overrides it (traci, libsumo or auto); worker processes inherit it."""
+    return os.environ.get("TEAMB_TRACI_BACKEND") or "auto"
+
+
 def run_one(spec_dict: dict, runs_dir: str, force: bool = False) -> dict:
     """Execute one run (in a worker process). Failures are reported and logged in error.json;
     only an interruption (KeyboardInterrupt, SystemExit) is re-raised, after writing error.json."""
@@ -455,6 +462,7 @@ def run_one(spec_dict: dict, runs_dir: str, force: bool = False) -> dict:
             scenario_params=spec.scenario_params or None,
             end_time=spec.end_time,
             output_dir=out,
+            traci_backend=batch_traci_backend(),
         )
         summary = env.run()
         atomic_write_text(out / "events.json", json.dumps(env.events, indent=1, default=str))

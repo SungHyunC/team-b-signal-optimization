@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import shutil
 import sys
@@ -91,6 +92,9 @@ def main(argv=None) -> int:
                           "with --backend modal: cloud containers (default 2)")
     run.add_argument("--backend", choices=("local", "modal"), default="local",
                      help="where runs execute: this machine, or Modal cloud containers (pip install modal; modal setup)")
+    run.add_argument("--traci-backend", choices=("traci", "libsumo", "auto"), default=None,
+                     help="how each run talks to SUMO (default: $TEAMB_TRACI_BACKEND, else auto = libsumo when installed; "
+                          "outputs are identical, libsumo is about 2x faster)")
     run.add_argument("--baseline", default="fixed_time", help="controller the others are compared with")
     run.add_argument("--force", action="store_true", help="re-run runs that already have results")
     run.add_argument("--no-report", action="store_true", help="only run, do not write the report")
@@ -147,6 +151,8 @@ def main(argv=None) -> int:
     workers = args.workers if args.workers is not None else default_workers(len(specs), args.backend)
     print(f"{len(specs)} runs -> {exp_dir} ({workers} {where})")
     command = "python -m teamb.experiments " + " ".join(shlex.quote(a) for a in (argv if argv is not None else sys.argv[1:]))
+    if args.traci_backend:
+        os.environ["TEAMB_TRACI_BACKEND"] = args.traci_backend  # read by every (spawned) worker
     record = run_matrix(specs, exp_dir, workers=workers, force=args.force, command=command, backend=args.backend)
     print(f"done in {record['wall_time_s']} s: {record['ok']} ok, {record['skipped']} skipped, {len(record['failed'])} failed")
     if args.strict_validation:
