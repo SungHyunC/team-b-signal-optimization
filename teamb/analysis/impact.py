@@ -25,8 +25,9 @@ Method (paired by seed, so every controller sees the identical demand)
                       mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
     delay_veh_h/h   = delay_s / 3600 / window_h
     stops/h         = stops_per_veh × completed / window_h
-  For every candidate run vs the baseline run with the same scenario, seed, coverage, sampling
-  and preemption setting:
+  For every candidate run vs the baseline run with the same scenario, seed, coverage, sampling,
+  preemption setting and run end (the effective end time; runs that end at different times are
+  never paired, merged or annualized together):
     delay saved     = baseline delay_veh_h/h − candidate delay_veh_h/h      (veh·h per hour)
     time value      = delay saved × [(1 − truck_share) × occupancy × VOT + truck_share × truck VOT]
     fuel saved      = delay saved × idle_fuel_gal_per_h + stops saved/h × fuel_per_stop_gal
@@ -40,9 +41,9 @@ Method (paired by seed, so every controller sees the identical demand)
   Annual benefit = Σ over scenarios of value per hour × ANNUAL_HOURS[scenario]; it is compared
   with the controller's deployment cost (capital annualized over the service life at the
   discount rate, plus O&M): B/C ratio, simple payback and NPV.
-  Each scenario's annual hours are counted once per controller setting: by the plain scenario
-  row, or by its only variant ('<scenario>-<hash>', e.g. a --scenario-params run) when there is
-  no plain row. Other variants and no-event counterfactual twins (events=[]) get 0 hours and a
+  Each scenario's annual hours are counted once per controller setting and run end: by the
+  plain scenario row, or by its only variant ('<scenario>-<hash>', e.g. a --scenario-params run)
+  when there is no plain row. Other variants and no-event counterfactual twins (events=[]) get 0 hours and a
   flag; set annual_hours["<scenario>-<hash>"] to annualize a variant explicitly.
   EV hours per year = the paired EV time saved in the claimed 'emergency' scenario rows
   (seed-weighted) × ev_trips_per_year; other EV scenarios (earthquake) are not routine trips.
@@ -130,6 +131,13 @@ def _normalize(summary: dict, run_dir: Path | None = None) -> dict:
         digest = hashlib.sha1(json.dumps(scenario_params, sort_keys=True).encode()).hexdigest()[:6]
         run["_scenario"] = f"{run.get('scenario')}-{digest}"
     run["_dir"] = str(run_dir) if run_dir else None
+    # does the folder carry today's name for its spec? (an older name: a leftover of the same run)
+    if run_dir is not None and spec:
+        from teamb.experiments.runner import canonical_run_name
+
+        run["_canonical"] = canonical_run_name(spec) == run_dir.name
+    else:
+        run["_canonical"] = None
     return run
 
 
@@ -243,8 +251,30 @@ def _summary_stat(values: list[float | None]) -> dict:
 
 
 # --- the analysis ----------------------------------------------------------------------------
+def _end(run: dict) -> float | None:
+    """The run's effective end time in s (None if unknown), as a pairing key."""
+    end = run.get("_end_time")
+    return float(end) if isinstance(end, (int, float)) and not isinstance(end, bool) else None
+
+
 def _setting(run: dict) -> tuple:
-    return (run["_scenario"], run.get("coverage"), run.get("sampling", "uniform"), bool(run.get("ev_preemption", True)))
+    """(scenario, coverage, sampling, preemption, run end): what must match for two runs to be paired."""
+    return (run["_scenario"], run.get("coverage"), run.get("sampling", "uniform"), bool(run.get("ev_preemption", True)),
+            _end(run))
+
+
+def _end_label(end: float | None) -> str:
+    return "unknown" if end is None else f"{end:g} s"
+
+
+def _prefer(old: dict, new: dict) -> tuple[dict, dict]:
+    """(kept, left out) for two runs of one setting and seed: the folder with today's run name,
+    then the first folder name (as the experiment report does); summaries without a folder keep
+    the last one."""
+    if old.get("_dir") and new.get("_dir"):
+        kept, dropped = sorted((old, new), key=lambda r: (not r.get("_canonical"), Path(r["_dir"]).name))
+        return kept, dropped
+    return new, old
 
 
 def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict | None = None) -> dict:
@@ -260,28 +290,36 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
             continue
         key = (*_setting(run), run["_variant"], run.get("seed"))
         if key in by_key:
-            notes.append(f"duplicate run for {key}; using the last one")
+            kept, dropped = _prefer(by_key[key], run)
+            if kept.get("_dir") and dropped.get("_dir"):
+                notes.append(f"duplicate run for {key}: using {Path(kept['_dir']).name}, "
+                             f"leaving out {Path(dropped['_dir']).name}")
+            else:
+                notes.append(f"duplicate run for {key}; using the last one")
+            run = kept
         by_key[key] = run
-    base_runs = {k: r for k, r in by_key.items() if k[4] == baseline}
-    base_any = defaultdict(dict)  # (scenario, preemption, seed) -> run, for coverage-independent baselines
-    for (scen, cov, samp, pre, _var, seed), r in base_runs.items():
-        base_any[(scen, pre, seed)].setdefault("run", r)
+    base_runs = {k: r for k, r in by_key.items() if k[5] == baseline}
+    # (scenario, preemption, run end, seed) -> run, for coverage-independent baselines
+    base_any = defaultdict(dict)
+    for (scen, cov, samp, pre, end, _var, seed), r in base_runs.items():
+        base_any[(scen, pre, end, seed)].setdefault("run", r)
     groups: dict[tuple, list[dict]] = defaultdict(list)
-    for (scen, cov, samp, pre, variant, seed), run in sorted(by_key.items(), key=lambda kv: str(kv[0])):
+    for (scen, cov, samp, pre, end, variant, seed), run in sorted(by_key.items(), key=lambda kv: str(kv[0])):
         if variant == baseline:
             continue
-        base = base_runs.get((scen, cov, samp, pre, baseline, seed))
+        base = base_runs.get((scen, cov, samp, pre, end, baseline, seed))
         fallback = False
-        if base is None and (scen, pre, seed) in base_any:
-            base, fallback = base_any[(scen, pre, seed)]["run"], True
+        if base is None and (scen, pre, end, seed) in base_any:
+            base, fallback = base_any[(scen, pre, end, seed)]["run"], True
         if base is None:
-            notes.append(f"no {baseline} run to pair with {variant} on {scen} seed {seed} (coverage {cov}, preemption {pre})")
+            notes.append(f"no {baseline} run to pair with {variant} on {scen} seed {seed} "
+                         f"(coverage {cov}, preemption {pre}, run end {_end_label(end)})")
             continue
         qb, qc = run_quantities(base, p), run_quantities(run, p)
         if qb is None or qc is None:
             notes.append(f"incomplete summary for {variant}/{scen}/seed {seed}")
             continue
-        groups[(scen, variant, cov, samp, pre)].append(
+        groups[(scen, variant, cov, samp, pre, end)].append(
             {**pair_effect(qb, qc, p), "seed": seed, "fallback": fallback, "mixed": qb["delay_method"] != qc["delay_method"]}
         )
 
@@ -290,7 +328,11 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
         if run.get("_scenario_params") is not None:
             params_of.setdefault(run["_scenario"], run["_scenario_params"])
     rows = []
-    for (scen, variant, cov, samp, pre), effects in sorted(groups.items(), key=lambda kv: str(kv[0])):
+    ends = sorted({k[4] for k in by_key}, key=lambda e: (e is None, e or 0.0))
+    if len(ends) > 1:
+        notes.append(f"runs end at different times ({', '.join(_end_label(e) for e in ends)}): each run end is "
+                     "paired, annualized and listed separately")
+    for (scen, variant, cov, samp, pre, end), effects in sorted(groups.items(), key=lambda kv: str(kv[0])):
         stats = {k: _summary_stat([e[k] for e in effects]) for k in effects[0] if k not in ("seed", "fallback", "mixed")}
         d_unf = stats["delta_unfinished_pp"]["mean"]
         flags = []
@@ -312,6 +354,7 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
                 "coverage": cov,
                 "sampling": samp,
                 "ev_preemption": pre,
+                "end_time": end,
                 "seeds": sorted(e["seed"] for e in effects),
                 "n": len(effects),
                 "stats": stats,
@@ -329,7 +372,7 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
         "runs": len(runs),
         "rows": rows,
         "annual": annualize(rows, p),
-        "preemption": preemption_effect([r for r in runs if not r.get("_incomplete")], p),
+        "preemption": preemption_effect(list(by_key.values()), p),
         "assumptions": assumption_table(p),
         "annual_hours": dict(p.annual_hours),
         "vot_usd_per_vehicle_hour": vot_per_vehicle_hour(p),
@@ -363,7 +406,8 @@ def _assign_annual_hours(rows: list[dict], p: ImpactParams) -> None:
     hours, or the only variant if there is no plain row; the others get 0. Every 0 is flagged."""
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in rows:
-        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"], r["scenario_name"])].append(r)
+        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"], r.get("end_time"),
+                r["scenario_name"])].append(r)
     for (*_, name), rs in groups.items():
         hours = p.annual_hours.get(name, 0.0)
         rest = []
@@ -399,13 +443,13 @@ def capital_recovery_factor(rate: float, years: float) -> float:
 
 
 def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
-    """Annual benefit per controller setting vs its deployment cost."""
+    """Annual benefit per controller setting (and run end) vs its deployment cost."""
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in rows:
-        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"])].append(r)
+        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"], r.get("end_time"))].append(r)
     out = []
     crf = capital_recovery_factor(p.discount_rate, p.service_life_years)
-    for (controller, cov, samp, pre), rs in sorted(groups.items(), key=lambda kv: str(kv[0])):
+    for (controller, cov, samp, pre, end), rs in sorted(groups.items(), key=lambda kv: str(kv[0])):
         parts = {"time": 0.0, "fuel": 0.0, "co2": 0.0}
         used, skipped = [], []
         for r in rs:
@@ -437,6 +481,7 @@ def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
                 "coverage": cov,
                 "sampling": samp,
                 "ev_preemption": pre,
+                "end_time": end,
                 "scenarios_used": used,
                 "scenarios_not_claimed": skipped,
                 "annual_benefit_usd": benefit,
@@ -456,19 +501,19 @@ def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
 
 
 def preemption_effect(runs: list[dict], p: ImpactParams) -> list[dict]:
-    """Same scenario, controller and seed with preemption on vs off: EV time saved and the
-    change in everyone else's delay (others_mean_delay_s, the non-EV trips; mean_delay_s only
+    """Same scenario, controller, seed and run end with preemption on vs off: EV time saved and
+    the change in everyone else's delay (others_mean_delay_s, the non-EV trips; mean_delay_s only
     for summaries that lack it)."""
     on, off = {}, {}
     for r in runs:
-        key = (r["_scenario"], r["_variant"], r.get("coverage"), r.get("sampling", "uniform"), r.get("seed"))
+        key = (r["_scenario"], r["_variant"], r.get("coverage"), r.get("sampling", "uniform"), _end(r), r.get("seed"))
         (on if r.get("ev_preemption", True) else off)[key] = r
     groups: dict[tuple, list[tuple]] = defaultdict(list)
     for key, r_off in off.items():
         if key in on:
-            groups[key[:4]].append((on[key], r_off))
+            groups[key[:5]].append((on[key], r_off))
     out = []
-    for (scen, variant, cov, samp), pairs in sorted(groups.items(), key=lambda kv: str(kv[0])):
+    for (scen, variant, cov, samp, end), pairs in sorted(groups.items(), key=lambda kv: str(kv[0])):
         ev_saved, delay_cost = [], []
         for r_on, r_off in pairs:
             if r_on.get("ev_mean_travel_time_s") is not None and r_off.get("ev_mean_travel_time_s") is not None:
@@ -482,6 +527,7 @@ def preemption_effect(runs: list[dict], p: ImpactParams) -> list[dict]:
                 "scenario": scen,
                 "controller": variant,
                 "coverage": cov,
+                "end_time": end,
                 "n": len(pairs),
                 "ev_time_saved_s": _summary_stat(ev_saved),
                 "others_extra_delay_s": _summary_stat(delay_cost),
@@ -521,8 +567,10 @@ def _stat(s: dict, digits: int = 1, signed: bool = False) -> str:
     return text + (f" ± {_f(s['ci95'], digits)}" if s.get("ci95") is not None else "")
 
 
-def _setting_label(r: dict) -> str:
+def _setting_label(r: dict, show_end: bool = False) -> str:
     bits = []
+    if show_end and r.get("end_time") is not None:
+        bits.append(f"end {r['end_time']:g} s")
     if r.get("coverage") not in (None, 1.0):
         bits.append(f"c{round(100 * r['coverage'])}")
     if r.get("sampling") not in (None, "uniform"):
@@ -534,6 +582,8 @@ def _setting_label(r: dict) -> str:
 
 def render_markdown(result: dict) -> str:
     base = result["baseline"]
+    # several run ends: say which one every row is (rows of one end are only compared with each other)
+    show_end = len({x.get("end_time") for part in ("rows", "annual", "preemption") for x in result.get(part) or []}) > 1
     lines = [
         "# Impact & cost-benefit",
         "",
@@ -553,7 +603,7 @@ def render_markdown(result: dict) -> str:
     for r in result["rows"]:
         s = r["stats"]
         lines.append(
-            f"| {r['scenario']} | {r['controller']}{_setting_label(r)} | {r['n']} | {_stat(s['delta_mean_delay_s'], 1, True)} "
+            f"| {r['scenario']} | {r['controller']}{_setting_label(r, show_end)} | {r['n']} | {_stat(s['delta_mean_delay_s'], 1, True)} "
             f"| {_stat(s['delay_saved_veh_h_per_h'], 2)} | {_stat(s['time_value_usd_per_h'], 0)} | {_stat(s['fuel_saved_gal_per_h'], 2)} "
             f"| {_stat(s['co2_avoided_kg_per_h'], 1)} | {_stat(s['total_value_usd_per_h'], 0)} | {_stat(s['ev_time_saved_s'], 1)} "
             f"| {_stat(s['delta_unfinished_pp'], 2, True)} |"
@@ -564,7 +614,7 @@ def render_markdown(result: dict) -> str:
     if flagged:
         lines += ["", "Flags:", ""]
         for r in flagged:
-            lines.append(f"- {r['scenario']} / {r['controller']}{_setting_label(r)}: " + "; ".join(r["flags"]))
+            lines.append(f"- {r['scenario']} / {r['controller']}{_setting_label(r, show_end)}: " + "; ".join(r["flags"]))
 
     n_junctions = next((int(a["value"]) for a in result["assumptions"] if a["name"] == "intersections"), 4)
     lines += [
@@ -578,7 +628,7 @@ def render_markdown(result: dict) -> str:
     for a in result["annual"]:
         parts = a["annual_benefit_parts_usd"]
         lines.append(
-            f"| {a['controller']}{_setting_label(a)} | {_f(a['annual_benefit_usd'], 0)} "
+            f"| {a['controller']}{_setting_label(a, show_end)} | {_f(a['annual_benefit_usd'], 0)} "
             f"| {_f(parts['time'], 0)} / {_f(parts['fuel'], 0)} / {_f(parts['co2'], 0)} | {_f(a['ev_hours_saved_per_year'], 1)} "
             f"| {_f(a['capex_usd'], 0)} | {_f(a['om_usd_per_year'], 0)} | {_f(a['annualized_cost_usd'], 0)} "
             f"| {_f(a['benefit_cost_ratio'], 2)} | {_f(a['payback_years'], 2)} | {_f(a['npv_usd'], 0)} |"
@@ -587,7 +637,7 @@ def render_markdown(result: dict) -> str:
         lines.append("| – | | | | | | | | | |")
     hours = ", ".join(f"{k} {v:g} h" for k, v in result["annual_hours"].items())
     lines += ["", f"Hours per year each scenario stands for (assumptions): {hours}. Each scenario's hours count "
-              "once per controller setting (the plain scenario, or its only variant); other variants and no-event "
+              "once per controller setting and run end (the plain scenario, or its only variant); other variants and no-event "
               "counterfactual twins are not annualized. EV hours per year use the claimed `emergency` rows only."]
 
     if result["preemption"]:
@@ -600,7 +650,7 @@ def render_markdown(result: dict) -> str:
         ]
         for e in result["preemption"]:
             lines.append(
-                f"| {e['scenario']} | {e['controller']} | {e['n']} | {_stat(e['ev_travel_time_on_s'])} | {_stat(e['ev_travel_time_off_s'])} "
+                f"| {e['scenario']} | {e['controller']}{_setting_label({'end_time': e.get('end_time')}, show_end)} | {e['n']} | {_stat(e['ev_travel_time_on_s'])} | {_stat(e['ev_travel_time_off_s'])} "
                 f"| {_stat(e['ev_time_saved_s'], 1)} | {_stat(e['others_extra_delay_s'], 2, True)} | {_f(e['ev_hours_saved_per_year'], 1)} |"
             )
 

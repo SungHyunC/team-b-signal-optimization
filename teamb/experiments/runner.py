@@ -277,6 +277,18 @@ SPEC_KEYS = ("scenario", "controller", "seed", "coverage", "sampling", "ev_preem
              "end_time", "controller_params", "scenario_params")
 
 
+def canonical_run_name(saved) -> str | None:
+    """The directory name today's runner gives the run a saved run_spec.json describes (None if
+    the spec cannot be read). A finished run in a folder with another name was made under an
+    older naming rule (before end_time and exact coverage were part of the name)."""
+    if not isinstance(saved, dict):
+        return None
+    try:
+        return RunSpec(**{k: saved[k] for k in SPEC_KEYS if k in saved}).name
+    except Exception:
+        return None
+
+
 def _same(a, b) -> bool:
     if isinstance(a, bool) or isinstance(b, bool):
         return a is b

@@ -252,3 +252,81 @@ def test_monetary_values_share_one_dollar_year():
     cand = impact.run_quantities(impact._normalize(S(controller="max_pressure", mean_delay_s=50.0)), p)
     eff = impact.pair_effect(base, cand, p)
     assert eff["co2_value_usd_per_h"] == pytest.approx(eff["co2_avoided_kg_per_h"] / 1000 * 190.0 * p.cpi_2020_to_2023)
+
+
+# --- run end: never pair or merge runs that end at different times (evaluation-2, ext-79) ----------
+def _run_folder(root, spec, summary: dict, end: float, *, folder: str | None = None):
+    """A run folder as the experiments runner writes it (folder = an older run name, if given)."""
+    import json
+    from dataclasses import asdict
+
+    d = root / "runs" / (folder or spec.name)
+    d.mkdir(parents=True)
+    (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": folder or spec.name, "variant": spec.variant}))
+    (d / "summary.json").write_text(json.dumps(summary))
+    (d / "manifest.json").write_text(json.dumps({"config": {"warmup": 900, "end_time": end}}))
+    return d
+
+
+def test_runs_with_another_end_are_neither_merged_nor_paired(tmp_path):
+    from teamb.experiments.runner import RunSpec
+
+    for seed in (1, 2):
+        _run_folder(tmp_path, RunSpec("rush_hour", "fixed_time", seed, 1.0), S(seed=seed, mean_delay_s=76.0 + seed), 4500.0)
+        _run_folder(tmp_path, RunSpec("rush_hour", "max_pressure", seed, 1.0),
+                    S(controller="max_pressure", seed=seed, mean_delay_s=31.8 + seed), 4500.0)
+        _run_folder(tmp_path, RunSpec("rush_hour", "max_pressure", seed, 1.0, end_time=2700.0),
+                    S(controller="max_pressure", seed=seed, sim_time_s=2700.0, mean_delay_s=10.0 + seed), 2700.0)
+    result = impact.analyze(tmp_path)
+    (row,) = result["rows"]  # the --end 2700 runs have no baseline at 2700: not priced against 4500
+    assert row["end_time"] == 4500.0 and row["n"] == 2
+    assert row["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(31.8 - 76.0)
+    assert not any("duplicate" in n for n in result["notes"])
+    assert any("no fixed_time run to pair with max_pressure" in n and "2700" in n for n in result["notes"])
+    for seed in (1, 2):
+        _run_folder(tmp_path, RunSpec("rush_hour", "fixed_time", seed, 1.0, end_time=2700.0),
+                    S(seed=seed, sim_time_s=2700.0, mean_delay_s=20.0 + seed), 2700.0)
+    result = impact.analyze(tmp_path)
+    rows = {r["end_time"]: r for r in result["rows"]}
+    assert set(rows) == {2700.0, 4500.0} and all(r["n"] == 2 for r in rows.values())
+    assert rows[2700.0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(10.0 - 20.0)
+    assert rows[4500.0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(31.8 - 76.0)
+    # each run end is annualized on its own, never summed into one controller total
+    annual = {a["end_time"]: a for a in result["annual"] if a["controller"] == "max_pressure"}
+    assert set(annual) == {2700.0, 4500.0}
+    for end, a in annual.items():
+        assert rows[end]["annual_hours"] == 500.0
+        assert a["annual_benefit_usd"] == pytest.approx(rows[end]["stats"]["total_value_usd_per_h"]["mean"] * 500.0)
+    assert any("different times" in n for n in result["notes"])
+    md = impact.render_markdown(result)
+    assert "end 2700 s" in md and "end 4500 s" in md
+
+
+def test_preemption_pairs_stay_within_one_run_end(tmp_path):
+    from teamb.experiments.runner import RunSpec
+
+    for end, (on_tt, off_tt) in ((4500.0, (120.0, 160.0)), (2700.0, (100.0, 110.0))):
+        for seed in (1, 2):
+            for pre, tt in ((True, on_tt), (False, off_tt)):
+                spec = RunSpec("emergency", "fixed_time", seed, 1.0, ev_preemption=pre, end_time=None if end == 4500.0 else end)
+                _run_folder(tmp_path, spec, S(scenario="emergency", seed=seed, ev_preemption=pre, sim_time_s=end,
+                                              ev_mean_travel_time_s=tt), end)
+    eff = {e["end_time"]: e for e in impact.analyze(tmp_path)["preemption"]}
+    assert set(eff) == {2700.0, 4500.0} and all(e["n"] == 2 for e in eff.values())
+    assert eff[4500.0]["ev_time_saved_s"]["mean"] == pytest.approx(40.0)
+    assert eff[2700.0]["ev_time_saved_s"]["mean"] == pytest.approx(10.0)
+
+
+def test_a_duplicate_run_folder_prefers_the_current_run_name(tmp_path):
+    from teamb.experiments.runner import RunSpec
+
+    for controller, delay, old in (("fixed_time", 70.0, 75.0), ("max_pressure", 30.0, 25.0)):
+        spec = RunSpec("rush_hour", controller, 1, 0.125)
+        _run_folder(tmp_path, spec, S(controller=controller, coverage=0.125, mean_delay_s=delay), 4500.0)
+        # the same run under the old name (coverage rounded to c12), from older code: sorts after c12.5
+        _run_folder(tmp_path, spec, S(controller=controller, coverage=0.125, mean_delay_s=old), 4500.0,
+                    folder=f"rush_hour__{controller}__s1__c12__uniform")
+    result = impact.analyze(tmp_path)
+    (row,) = result["rows"]
+    assert row["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(30.0 - 70.0)
+    assert any("duplicate" in n and "c12__uniform" in n for n in result["notes"])
