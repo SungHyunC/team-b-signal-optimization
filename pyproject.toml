@@ -1,9 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "teamb-signal-twin"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Team B: traffic signal optimization digital twin on SUMO (2026 Crimson Silicon Valley SW·AI Leaders)"
+readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    { name = "Joshua (Seong Hyeon) Kim" },
+    { name = "Doyoung Lee" },
+    { name = "Yunseong Lee" },
+    { name = "Aditya Tirunagaru" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+# Runtime only. requirements.txt mirrors this list (tests/test_packaging.py checks that they agree)
+# and requirements.lock pins the full tree for the Docker image and CI.
+dependencies = [
+    # Simulation. Every published result was produced with SUMO 1.28.0; keep the three in step.
+    "eclipse-sumo==1.28.0",  # bundles the sumo, netconvert and sumo-gui binaries
+    "traci==1.28.0",
+    "sumolib==1.28.0",
+    # Data, AI and evaluation
+    "numpy>=1.26,<3",
+    "pandas>=2.1,<4",  # not imported by teamb itself; `teamb doctor` still requires it
+    "optuna>=3.6,<6",
+    # Digital twin server
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.29,<1",
+    "python-multipart>=0.0.18,<1",  # login form of the hosted twin
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+cloud = ["modal>=1.0"]  # `teamb exp run --backend modal`
+fast = ["libsumo==1.28.0"]  # in-process SUMO (TEAMB_TRACI_BACKEND=libsumo); same version as eclipse-sumo
+
+[project.scripts]
+teamb = "teamb.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/SungHyunC/team-b-signal-optimization"
+Demo = "https://sunghyunc.github.io/team-b-signal-optimization/"
+
+[tool.setuptools.dynamic]
+version = { attr = "teamb.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["teamb*"]
+
+[tool.setuptools.package-data]
+# the twin's web app (vendor/ only exists after `teamb vendor`)
+"teamb.twin" = ["static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# bare `pytest` (IDEs, pre-commit) imports teamb from the checkout even without `pip install -e .`
+pythonpath = ["."]
 addopts = "-q"
+markers = [
+    "sumo: starts a real SUMO simulation (needs the eclipse-sumo binaries; deselect with -m 'not sumo')",
+    "slow: takes more than about ten seconds",
+]
