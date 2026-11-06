@@ -136,10 +136,12 @@ else:  # pragma: no cover
 
 def _safe_extract(blob: bytes, dest: Path, run_name: str) -> None:
     """Unpack one run archive; refuse anything outside ``dest/run_name``."""
+    run_root = (dest / run_name).resolve()
     with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
         for member in tar.getmembers():
             target = (dest / member.name).resolve()
-            if not (member.isfile() or member.isdir()) or not str(target).startswith(str((dest / run_name).resolve())):
+            inside = target == run_root or run_root in target.parents  # not a sibling like <run>_x
+            if not (member.isfile() or member.isdir()) or not inside:
                 raise ValueError(f"unexpected entry in run archive: {member.name}")
         try:
             tar.extractall(dest, filter="data")
@@ -169,31 +171,53 @@ def run_specs(specs, runs_dir: Path, *, workers: int, force: bool = False, git_r
         # call at a time. A dropped client stream (gRPC "Connection lost") only interrupts the
         # waiting, never the runs, unlike one long map() whose loss takes every pending run with it.
         with ThreadPoolExecutor(max_workers=8) as pool:
-            calls = list(pool.map(lambda spec: _spawn(fn, spec, git_revision), todo))
+            calls = list(pool.map(lambda spec: _spawn_or_failure(fn, spec, git_revision), todo))
         for spec, call in zip(todo, calls):
-            res, error = _collect(fn, spec, call, git_revision)
+            if isinstance(call, SpawnFailed):
+                res, error = None, str(call)
+            else:
+                res, error = _collect(fn, spec, call, git_revision)
+            if res is not None and res.get("run") != spec.name:  # never rmtree/unpack a folder we did not ask for
+                res, error = None, f"the result names run {str(res.get('run'))[:200]!r}, expected {spec.name!r}"
             if res is None:
                 yield {"run": spec.name, "status": "failed", "error": f"cloud: {error}"}
                 continue
             blob = res.pop("archive", None)
-            out = runs_dir / res["run"]
+            out = runs_dir / spec.name
             if out.exists():
                 shutil.rmtree(out)
             if blob:
-                _safe_extract(blob, runs_dir, res["run"])
+                _safe_extract(blob, runs_dir, spec.name)
             res["backend"] = "modal"
             yield res
 
 
+class SpawnFailed(Exception):
+    """A run could not be submitted: the client connection stayed down through every retry."""
+
+
 def _spawn(fn, spec, git_revision: str):
-    for wait in range(CLIENT_WAIT_RETRIES):
+    """Submit one run; retry dropped connections, then raise SpawnFailed (other errors as they are)."""
+    for wait in range(CLIENT_WAIT_RETRIES + 1):
         try:
             return fn.spawn(asdict(spec), git_revision)
         except Exception as exc:  # noqa: BLE001
             if not _transient(exc):
                 raise
+            if wait == CLIENT_WAIT_RETRIES:
+                raise SpawnFailed(f"could not submit {spec.name} after {wait + 1} attempts "
+                                  f"({type(exc).__name__}: {exc})") from exc
             time.sleep(min(30.0, 2.0 * (wait + 1)))
-    return fn.spawn(asdict(spec), git_revision)
+
+
+def _spawn_or_failure(fn, spec, git_revision: str):
+    """_spawn for the first submission: a run that cannot be submitted becomes its SpawnFailed,
+    so the runs already submitted are still collected. Any other error (authentication, a bad
+    image) still stops the whole matrix."""
+    try:
+        return _spawn(fn, spec, git_revision)
+    except SpawnFailed as exc:
+        return exc
 
 
 def _transient(exc: BaseException) -> bool:
@@ -203,13 +227,21 @@ def _transient(exc: BaseException) -> bool:
 
 
 def _collect(fn, spec, call, git_revision: str) -> tuple[dict | None, str | None]:
-    """Wait for one spawned run; re-wait on connection loss, re-spawn a run lost on Modal's side."""
+    """Wait for one spawned run; re-wait on connection loss, re-spawn a run lost on Modal's side.
+
+    Only the builtin TimeoutError means "no output within POLL_TIMEOUT_S, still running": modal's
+    own TimeoutError subclasses are final results of the call, which get() returns again at once.
+    FunctionTimeoutError (the run went past RUN_TIMEOUT_S, after Modal's retries) fails the run
+    without resubmitting it; OutputExpiredError counts as a lost run.
+    """
     attempts, waits = 1, 0
     while True:
         try:
             return call.get(timeout=POLL_TIMEOUT_S), None
-        except (TimeoutError, modal.exception.TimeoutError):
+        except TimeoutError:  # builtin (also an OSError, so it must come before _transient)
             continue  # still running
+        except modal.exception.FunctionTimeoutError as exc:
+            return None, f"FunctionTimeoutError: the run exceeded the {RUN_TIMEOUT_S} s limit ({exc})"
         except Exception as exc:  # noqa: BLE001 - classify below
             if _transient(exc) and waits < CLIENT_WAIT_RETRIES:
                 waits += 1
@@ -219,7 +251,12 @@ def _collect(fn, spec, call, git_revision: str) -> tuple[dict | None, str | None
                 attempts += 1
                 print(f"cloud: {spec.name} lost ({type(exc).__name__}: {str(exc)[:120]}); resubmitting "
                       f"(attempt {attempts}/{CLIENT_ATTEMPTS})", flush=True)
-                call = _spawn(fn, spec, git_revision)
+                try:
+                    call = _spawn(fn, spec, git_revision)
+                except SpawnFailed as spawn_exc:
+                    return None, str(spawn_exc)
+                except Exception as spawn_exc:  # noqa: BLE001 - fail this run, keep collecting the others
+                    return None, f"resubmission failed: {type(spawn_exc).__name__}: {spawn_exc}"
                 continue
             return None, f"{type(exc).__name__}: {exc}"
 

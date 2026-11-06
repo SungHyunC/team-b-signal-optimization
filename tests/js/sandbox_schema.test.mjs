@@ -11,12 +11,14 @@ import {
   EXPORT_FILE,
   experimentCommand,
   FALLBACK_SCHEMA,
+  HEADLESS_CONTROLLER_PARAMS,
   launchParams,
   launchUrl,
   loadSchema,
   nonIntegerFields,
   normalizeSchema,
   parseImport,
+  pyJsonDumps,
   sandboxRunCommand,
   shellQuote,
   validate,
@@ -45,6 +47,21 @@ test('the equivalent teamb exp run command matches teamb.sandbox.experiment_comm
   assert.equal(sandboxRunCommand(), 'teamb sandbox run sandbox_trial.json');
   assert.equal(EXPORT_FILE, 'sandbox_trial.json');
   assert.equal(experimentCommand(DEFAULTS).includes('--coverages'), false); // the scenario default coverage
+});
+
+test('a headless ai_recommender run auto-approves its plan, as teamb sandbox run does', () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(HEADLESS_CONTROLLER_PARAMS)), { ai_recommender: { auto_approve: true } });
+  const cmd = experimentCommand(validate({ controller: 'ai_recommender' }));
+  assert.ok(cmd.endsWith(` --controller-params '{"ai_recommender": {"auto_approve": true}}'`), cmd);
+  assert.equal(experimentCommand(DEFAULTS).includes('--controller-params'), false); // max_pressure needs none
+});
+
+test('pyJsonDumps writes what Python json.dumps writes (the run name hashes that text)', () => {
+  assert.equal(pyJsonDumps({ a: { b: true, c: null }, d: [1, 2.5, 'x'] }), '{"a": {"b": true, "c": null}, "d": [1, 2.5, "x"]}');
+  assert.equal(pyJsonDumps({ demand_scale: 1 }), '{"demand_scale": 1}');
+  assert.equal(pyJsonDumps('caf\u00e9 \u{1F6A6} "q"\n\u007f'), '"caf\\u00e9 \\ud83d\\udea6 \\"q\\"\\n\\u007f"');
+  assert.equal(pyJsonDumps({}), '{}');
+  assert.equal(pyJsonDumps([]), '[]');
 });
 
 test('contract 5: duration is blank or 1200-10800 s; the schema matches the endpoint shape', () => {

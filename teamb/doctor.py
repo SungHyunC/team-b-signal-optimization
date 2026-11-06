@@ -14,11 +14,28 @@ from importlib import metadata
 from pathlib import Path
 
 OK, FAIL, WARN = "ok", "FAIL", "warn"
+MARKS = {OK: "✓", FAIL: "✗", WARN: "!"}
+ASCII_MARKS = {OK: "ok", FAIL: "FAIL", WARN: "warn"}  # e.g. Windows with stdout redirected (cp1252)
+
+
+def _encodable(text: str, encoding: str) -> bool:
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
 
 
 def _line(status: str, name: str, detail: str) -> None:
-    mark = {OK: "✓", FAIL: "✗", WARN: "!"}[status]
-    print(f"  {mark} {name:<22s} {detail}")
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+    if not _encodable("", encoding):  # a codec name Python does not know
+        encoding = "ascii"
+    if _encodable("".join(MARKS.values()), encoding):
+        text = f"  {MARKS[status]} {name:<22s} {detail}"
+    else:
+        text = f"  {ASCII_MARKS[status]:<4s} {name:<22s} {detail}"
+    # anything else stdout cannot encode (e.g. a non-ASCII user name in a path) prints as '?'
+    print(text.encode(encoding, "replace").decode(encoding))
 
 
 def _version(dist: str) -> str | None:
@@ -90,10 +107,13 @@ def run_checks(simulate: bool = True) -> int:
             _line(FAIL, "smoke simulation", f"{type(exc).__name__}: {exc}")
 
     print("\noptional")
-    from teamb.twin.server import VENDOR_DIR
-
-    vendored = (Path(VENDOR_DIR) / "build" / "three.module.js").exists()
-    _line(OK if vendored else WARN, "offline three.js", "saved" if vendored else "not saved - `teamb vendor` before an offline demo")
+    try:  # the twin server imports fastapi, numpy, ...: a broken install must still reach the summary
+        from teamb.twin.server import VENDOR_DIR
+    except Exception as exc:  # noqa: BLE001 - the required checks above already name the missing module
+        _line(WARN, "offline three.js", f"not checked: the twin server does not import ({type(exc).__name__}: {exc})")
+    else:
+        vendored = (Path(VENDOR_DIR) / "build" / "three.module.js").exists()
+        _line(OK if vendored else WARN, "offline three.js", "saved" if vendored else "not saved - `teamb vendor` before an offline demo")
     modal_version = _version("modal")
     if modal_version:
         token = (Path.home() / ".modal.toml").exists()

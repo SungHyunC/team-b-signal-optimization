@@ -160,6 +160,28 @@ export function shellQuote(word) {
   return `'${s.replace(/'/g, `'"'"'`)}'`;
 }
 
+/** HEADLESS_CONTROLLER_PARAMS in teamb/sandbox.py: a sandbox run is headless, so nobody can
+ *  approve the AI recommender's plan; it is approved automatically (otherwise the run stays on
+ *  the starting plan). The command passes these as --controller-params. */
+export const HEADLESS_CONTROLLER_PARAMS = Object.freeze({
+  ai_recommender: Object.freeze({ auto_approve: true }),
+});
+
+/** Python's json.dumps(value) with its default separators (', ' and ': ') and ensure_ascii, for
+ *  the JSON in a command: the run name hashes it, so it must be the same text Python writes. */
+export function pyJsonDumps(value) {
+  if (Array.isArray(value)) return `[${value.map(pyJsonDumps).join(', ')}]`;
+  if (isPlainObject(value)) return `{${Object.entries(value).map(([k, v]) => `${pyJsonDumps(k)}: ${pyJsonDumps(v)}`).join(', ')}}`;
+  if (typeof value === 'string') return JSON.stringify(value).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return JSON.stringify(value);
+}
+
+/** --controller-params for a sandbox run of `controller` ({controller: {...}}), or null. */
+export function controllerParams(controller) {
+  const params = Object.prototype.hasOwnProperty.call(HEADLESS_CONTROLLER_PARAMS, controller) ? HEADLESS_CONTROLLER_PARAMS[controller] : null;
+  return params ? { [controller]: { ...params } } : null;
+}
+
 /** The `teamb exp run` command for this configuration (teamb.sandbox.experiment_command). */
 export function experimentCommand(cfg, name = 'sandbox_trial') {
   const parts = [
@@ -168,9 +190,11 @@ export function experimentCommand(cfg, name = 'sandbox_trial') {
     '--controllers', cfg.controller,
     '--seeds', String(cfg.seed),
     '--ev-preemption', cfg.ev_preemption ? 'on' : 'off',
-    '--scenario-params', `{"demand_scale": ${JSON.stringify(cfg.demand_scale)}}`,
+    '--scenario-params', pyJsonDumps({ demand_scale: cfg.demand_scale }),
   ];
   if (cfg.duration_s != null) parts.push('--end', String(cfg.duration_s));
+  const params = controllerParams(cfg.controller);
+  if (params) parts.push('--controller-params', pyJsonDumps(params));
   return parts.map(shellQuote).join(' ');
 }
 
