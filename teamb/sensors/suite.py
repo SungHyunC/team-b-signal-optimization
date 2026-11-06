@@ -28,9 +28,9 @@ import random
 
 import traci.constants as tc
 
-from teamb.network.build import edge_kind
+from teamb.network.build import E2_LENGTH_M, edge_kind
 from teamb.sensors.crosscheck import CrossCheck
-from teamb.sensors.feed import HALT_SPEED, get_feed
+from teamb.sensors.feed import E2_VARS, HALT_SPEED, get_feed
 from teamb.sensors.logs import ESTIMATION_EVERY_S, DetectorIntervals, RollingCount
 from teamb.sensors.sampling import ProbeSelector, parse_sampling
 
@@ -107,6 +107,7 @@ class SensorSuite:
         self.fake: dict[tuple[str, str], int] = {}  # (junction, approach) -> phantom reports
         self._phantom_cache: dict[tuple[str, str], tuple[int, dict]] = {}
         self.attacks: list[dict] = []  # attack log for the evaluation (never shown to controllers)
+        self._attack_excess: list[float] = []  # per attack: sum of (fused queue - true queue) while it ran
         self._alerts: list[dict] = []
         self._t = 0.0  # time of the last observation
         self._now = 0.0  # latest simulation time we heard of
@@ -119,6 +120,10 @@ class SensorSuite:
         self.feed = get_feed(conn, topology)
         self.feed.sensors = self
         self.check = CrossCheck.from_topology(topology)
+        self._zone_len = {
+            lane: min(E2_LENGTH_M, topology.lane_length(lane) - 1.0) for lane in self.feed.detector_lanes
+        }
+        self._zone_ids_ok = self._subscribe_zone_ids()
 
         # static description of every signalized approach and exit
         self._approaches = []  # (junction, side, lanes, kind)
@@ -144,6 +149,31 @@ class SensorSuite:
         self.estimation: list[tuple] = []  # rows, see logs.ESTIMATION_COLUMNS
         self._next_log = 0.0
         self.intervals = DetectorIntervals(self.feed.detector_lanes)
+
+    def _subscribe_zone_ids(self) -> bool:
+        """Which vehicles are inside each E2 zone (the cross-check splits probe reports by
+        position, crosscheck.py). Adds the vehicle id list to the feed's lane-area
+        subscriptions; a re-subscription replaces the variable set, so the feed's own
+        variables are kept in it. False if that is not possible (e.g. a stub feed)."""
+        if callable(getattr(self.feed, "e2_vehicles", None)):
+            return True
+        try:
+            lanearea = self.conn.lanearea
+            for lane in self.feed.detector_lanes:
+                lanearea.subscribe(f"e2_{lane}", list(E2_VARS) + [tc.LAST_STEP_VEHICLE_ID_LIST])
+        except Exception:  # noqa: BLE001 - optional: without it the zone split is skipped
+            return False
+        return True
+
+    def _zone_vehicles(self, lane: str):
+        """Vehicle ids inside the E2 zone of `lane` this step (None if unknown)."""
+        getter = getattr(self.feed, "e2_vehicles", None)
+        if callable(getter):
+            return getter(lane)
+        results = getattr(self.feed, "_e2", None)
+        if results is None:
+            return None
+        return (results.get(f"e2_{lane}") or {}).get(tc.LAST_STEP_VEHICLE_ID_LIST)
 
     # --- called by the env ------------------------------------------------
     def set_coverage(self, value: float) -> None:
@@ -240,9 +270,11 @@ class SensorSuite:
         for j, side, lanes, kind in self._approaches:
             key = (j, side)
             det, lane_stats = self._detector(lanes, cache)
-            probe, truth, extra = self._probe(t, key, lanes)
             zone_full = self.check.unverifiable(t, key, lane_stats)  # full now or in the last 60 s
-            failed = self.check.suspicious(key, probe["halted"], det["queue"], zone_full, extra["p_test"])
+            probe, truth, extra = self._probe(t, key, lanes, split=zone_full)
+            failed = self.check.suspicious(
+                key, probe["halted"], det["queue"], zone_full, extra["p_test"], extra["zone_halted"], extra["p_zone"]
+            )
             trusted = self.check.update(t, key, failed, probe["halted"])
             probe["trusted"] = trusted
             if not trusted:
@@ -259,7 +291,10 @@ class SensorSuite:
                         "since": st.since,
                     }
                 )
-            fused = self._fuse(det, probe, zone_full, trusted, self.check.approach_storage[key])
+            fused = self._fuse(det, probe, zone_full, trusted, self.check.approach_storage[key],
+                               extra["upstream_eff"], self.check.upstream_storage.get(key))
+            if key in self.fake:
+                self._account_attack(key, trusted, fused["queue"], truth[0])
             entry = {"detector": det, "probe": probe, "fused": fused}
             if source == "oracle":
                 entry["oracle"] = {"queue": truth[0], "count": truth[1]}
@@ -316,10 +351,23 @@ class SensorSuite:
         return cache[lanes]
 
     # --- probes (vehicles whose navigation app shares data) -------------------
-    def _probe(self, t: float, key: tuple, lanes: tuple):
-        """(probe block, ground truth (halted, count, flow veh/h), internals for the cross-check)
-        for one approach. Each probe is weighted by the coverage of its cohort (module doc)."""
+    def _probe(self, t: float, key: tuple, lanes: tuple, split: bool = False):
+        """(probe block, ground truth (halted, count, flow veh/h), internals for the cross-check
+        and the fusion) for one approach. Each probe is weighted by the coverage of its cohort
+        (module doc). With `split`, halted reports are also divided into inside the detector
+        zone and upstream of it (crosscheck.py), if the zone's vehicle ids are known."""
         feed, probes = self.feed, self.probes
+        zones = None
+        if split and self._zone_ids_ok:
+            zones = {}
+            for lane in lanes:
+                ids = self._zone_vehicles(lane)
+                if ids is None:
+                    zones = None
+                    break
+                zones[lane] = ids if isinstance(ids, (set, frozenset)) else set(ids)
+        zone_halted = 0
+        upstream_by: dict[float, int] = {}  # cohort coverage -> halted reports upstream of the zone
         speed_biased = self.spec.mechanism == "speed_biased"
         p_stopped = self.spec.stopped_report_prob
         rnd = self.report_rng.random
@@ -342,11 +390,21 @@ class SensorSuite:
                     if stopped:
                         halted += 1
                         halted_by[cohort] = halted_by.get(cohort, 0) + 1
+                        if zones is not None:
+                            if vid in zones[lane]:
+                                zone_halted += 1
+                            else:
+                                upstream_by[cohort] = upstream_by.get(cohort, 0) + 1
         c = self.coverage
         fake = self.fake.get(key, 0)
         if fake:  # phantom phones claim to be ordinary probes of the current coverage
             reported_by[c] = reported_by.get(c, 0) + fake
             halted_by[c] = halted_by.get(c, 0) + fake
+            if zones is not None:  # ... standing where phantom_layout puts them
+                layout = self._phantoms(key)
+                in_zone = sum(1 for lane, ds in layout["lanes"].items() for d in ds if d <= self._zone_len.get(lane, E2_LENGTH_M))
+                zone_halted += in_zone
+                upstream_by[c] = upstream_by.get(c, 0) + fake - in_zone
         # penetration = probe crossings (in current-coverage units) / loop counts, shrunk toward c
         crossings = sum((rc.total * (c / cohort) for cohort, rc in self._pen_probe[key].items()), 0.0)
         pen = (crossings + PENETRATION_PRIOR * c) / (self._pen_loop[key].total + PENETRATION_PRIOR)
@@ -367,20 +425,42 @@ class SensorSuite:
             "penetration_est": round(pen, 3),
             "n_est": round(sum((k / cohort for cohort, k in reported_by.items()), 0.0), 2),
         }
-        # the statistical test compares raw reports with p * Q_det: while probes of a cohort with a
-        # higher coverage are still on the road, the share of probes can be up to that much higher
+        # The statistical test compares raw reports with p * Q_det. It never assumes fewer probes
+        # than the coverage: an estimate below c is noise or a non-random set of crossers (after a
+        # closure, early in a run), and a too-low p turns genuine reports into alarms. While probes
+        # of a cohort with a higher coverage are still on the road, the share can be that much higher.
         c_max = max(self._cohorts, default=c)
-        p_test = pen if c_max <= c else min(1.0, pen * c_max / c)
+        p_test = max(pen, c) if c_max <= c else min(1.0, max(pen, c) * c_max / c)
         truth = (true_halted, true_count, self._true_counts[key].rate_vph(t))
-        return block, truth, {"p_test": round(p_test, 3)}
+        extra = {"p_test": round(p_test, 3), "zone_halted": None, "upstream_eff": None, "p_zone": None}
+        if zones is not None:
+            extra["zone_halted"] = zone_halted
+            # one queue may hold up to PENETRATION_BAND x the coverage in probes (crosscheck.py)
+            extra["p_zone"] = round(min(1.0, self._band_high * p_test), 3)
+            # halted cars upstream of the zone, estimated from the probes there
+            extra["upstream_eff"] = sum((k * (c / cohort) for cohort, k in upstream_by.items()), 0.0) / pen
+        return block, truth, extra
 
     @staticmethod
-    def _fuse(det: dict, probe: dict, zone_full: bool, trusted: bool, storage: float = float("inf")) -> dict:
+    def _fuse(
+        det: dict, probe: dict, zone_full: bool, trusted: bool, storage: float = float("inf"),
+        upstream: float | None = None, upstream_storage: float | None = None,
+    ) -> dict:
         """Detector queue; when the detector zone is (or was, in the last minute) full the queue
         may be longer than the detector can see, so trusted probes may extend it, but never past
-        what fits on the approach (`storage`, cars)."""
+        what fits on the approach (`storage`, cars).
+
+        With the zone split (`upstream` = halted cars beyond the zone estimated from the probes
+        there) the detector counts the zone and the probes only add what lies beyond it, up to
+        `upstream_storage`. Reports claiming the zone (where phantom phones stand) then cannot
+        inflate the queue, even while an attack is not detected. Without it: max(detector,
+        queue_est_adj)."""
         if zone_full and trusted:
-            queue = max(det["queue"], min(probe["queue_est_adj"], storage))
+            if upstream is not None:
+                extra = upstream if upstream_storage is None else min(upstream, upstream_storage)
+                queue = min(det["queue"] + extra, max(storage, det["queue"]))
+            else:
+                queue = max(det["queue"], min(probe["queue_est_adj"], storage))
             return {"queue": round(queue, 2), "flow_vph": det["flow_vph"], "source": "detector+probe"}
         return {"queue": det["queue"], "flow_vph": det["flow_vph"], "source": "detector"}
 
@@ -390,13 +470,31 @@ class SensorSuite:
         if key in self.fake:
             self._end_attack(key)
         self.fake[key] = int(n)
-        self.attacks.append({"junction": junction, "approach": approach, "n": int(n), "start": self._now, "end": None})
+        self.attacks.append(
+            {"junction": junction, "approach": approach, "n": int(n), "start": self._now, "end": None,
+             "observed_s": 0, "trusted_s": 0, "trusted_share": None, "fused_excess_mean": None}
+        )
+        self._attack_excess.append(0.0)
         self.feed.events.append({"t": self._now, "type": "attack_started", "junction": junction, "approach": approach, "n": int(n)})
 
     def clear_fake_reports(self) -> None:
         for key in list(self.fake):
             self._end_attack(key)
         self.fake.clear()
+
+    def _account_attack(self, key, trusted: bool, fused_queue: float, true_queue: int) -> None:
+        """How much the running attack got through (evaluation only, never observed): seconds
+        it was observed, seconds the attacked approach stayed trusted, and the mean excess of
+        the fused queue over the true queue while it ran."""
+        for i in range(len(self.attacks) - 1, -1, -1):
+            a = self.attacks[i]
+            if (a["junction"], a["approach"]) == key and a["end"] is None:
+                a["observed_s"] += 1
+                a["trusted_s"] += int(trusted)
+                self._attack_excess[i] += fused_queue - true_queue
+                a["trusted_share"] = round(a["trusted_s"] / a["observed_s"], 3)
+                a["fused_excess_mean"] = round(self._attack_excess[i] / a["observed_s"], 2)
+                return
 
     def _end_attack(self, key) -> None:
         for a in self.attacks:
