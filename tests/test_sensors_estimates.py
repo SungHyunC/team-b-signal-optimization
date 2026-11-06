@@ -140,3 +140,13 @@ def test_attack_accounting_reports_how_long_the_attack_stayed_trusted(topo):
     a = suite.attacks[0]
     assert (a["observed_s"], a["trusted_s"], a["trusted_share"]) == (4, 1, 0.25)
     assert a["fused_excess_mean"] == pytest.approx((20 + 2 - 1 + 1) / 4)
+
+
+def test_rolling_count_covers_exactly_the_window():
+    from teamb.sensors.logs import RollingCount
+
+    rc = RollingCount(300.0)
+    for t in range(1, 1201):  # one vehicle every second
+        rc.add(float(t), 1)
+    assert rc.total == 300  # was 301: window + 1 steps, every flow read 301/300 of the truth
+    assert rc.rate_vph(1200.0) == pytest.approx(3600.0)
