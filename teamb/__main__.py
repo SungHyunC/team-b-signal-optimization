@@ -141,6 +141,21 @@ def _json_arg(text: str | None, flag: str) -> dict | None:
     return value
 
 
+def _check_controller(name: str, params: dict | None) -> None:
+    """Refuse an unknown controller or parameter name, as `teamb exp run` does (validate_matrix):
+    controllers take **params and would silently run a misspelled parameter with its default."""
+    from teamb.controllers import REGISTRY
+    from teamb.experiments.runner import accepted_params
+
+    if name not in REGISTRY:
+        raise SystemExit(f"unknown controller '{name}' (registered: {', '.join(sorted(REGISTRY))})")
+    accepted = accepted_params(REGISTRY[name])
+    unknown = sorted(set(params or {}) - accepted)
+    if unknown:
+        raise SystemExit(f"--controller-params: unknown parameter(s) {', '.join(unknown)} for {name} "
+                         f"(accepted: {', '.join(sorted(accepted))})")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] in DELEGATES:
@@ -167,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
 
         controller_params = _json_arg(args.controller_params, "--controller-params")
         scenario_params = _json_arg(args.scenario_params, "--scenario-params")
+        _check_controller(args.controller, controller_params)
         if args.controller == "ai_recommender":
             if "auto_approve" not in (controller_params or {}):
                 # a headless run has no engineer to approve the plan, so it would stay fixed-time

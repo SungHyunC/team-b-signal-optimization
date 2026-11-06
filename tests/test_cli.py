@@ -78,3 +78,20 @@ def test_an_explicit_auto_approve_false_is_kept(fake_env, capsys):
                  "--end", "1200"]) == 0
     assert fake_env["controller_params"] == {"auto_approve": False}
     assert "starting plan" in capsys.readouterr().out
+
+
+def test_run_rejects_a_misspelled_controller_parameter(fake_env):
+    with pytest.raises(SystemExit, match="intervl"):
+        main(["run", "--controller", "max_pressure", "--controller-params", '{"intervl": 5}', "--end", "1200"])
+    assert not fake_env, "nothing ran"
+
+
+def test_run_accepts_a_real_controller_parameter(fake_env):
+    assert main(["run", "--controller", "max_pressure", "--controller-params", '{"interval": 5}', "--end", "1200"]) == 0
+    assert fake_env["controller_params"] == {"interval": 5}
+
+
+def test_run_rejects_an_unknown_controller(fake_env):
+    with pytest.raises(SystemExit, match="unknown controller 'max_presure'"):
+        main(["run", "--controller", "max_presure", "--end", "1200"])
+    assert not fake_env
