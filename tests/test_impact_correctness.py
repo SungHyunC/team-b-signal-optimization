@@ -176,6 +176,26 @@ def test_counterfactual_twins_are_not_annualized():
     assert not impact._is_counterfactual({"scenario_name": "rush_hour", "scenario": "rush_hour-x", "scenario_params": {"events": []}})
 
 
+def test_summary_level_scenario_params_name_the_variant():
+    # summaries that carry scenario_params but no scenario_variant (hand-made dicts, JSON lists):
+    # the twin must not collide with the plain runs nor pass for the plain scenario
+    from teamb.experiments.runner import short_hash
+
+    plain = _pairs(lambda **k: S(**k), scenario="road_closure")
+    twins = _pairs(lambda **k: S(scenario_params={"events": []}, **k), scenario="road_closure",
+                   base_delay=40.0, cand_delay=30.0)
+    result = impact.analyze(plain + twins)
+    assert not any("duplicate" in n for n in result["notes"])
+    rows = {r["scenario"]: r for r in result["rows"]}
+    twin_name = f"road_closure-{short_hash({'events': []})}"
+    assert set(rows) == {"road_closure", twin_name} and all(r["n"] == 2 for r in rows.values())
+    assert rows["road_closure"]["annual_hours"] == 6.0 and rows[twin_name]["annual_hours"] == 0
+    assert any("counterfactual" in f for f in rows[twin_name]["flags"])
+    # an explicit scenario_variant still names the run
+    named = [dict(r, scenario_variant="road_closure-abc123") for r in twins]
+    assert {r["scenario"] for r in impact.analyze(plain + named)["rows"]} == {"road_closure", "road_closure-abc123"}
+
+
 def test_scenario_variants_count_the_annual_hours_once():
     p = impact.ImpactParams()
     plain = _pairs(lambda **k: S(**k))

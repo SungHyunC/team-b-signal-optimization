@@ -53,7 +53,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import sys
 from collections import defaultdict
@@ -122,14 +121,16 @@ def _normalize(summary: dict, run_dir: Path | None = None) -> dict:
         elif isinstance(run["_end_time"], (int, float)) and isinstance(sim, (int, float)) and sim + 1e-6 < run["_end_time"]:
             run["_incomplete"] = f"stopped at sim_time_s {sim:g} before the end time {run['_end_time']:g}"
     run["_variant"] = spec.get("variant") or run.get("variant") or run.get("controller")
-    scenario_params = spec.get("scenario_params") or {}
     run["_scenario"] = run.get("scenario_variant") or run.get("scenario")
     # the variant's parameters if known (run_spec.json or the summary itself), else None
     known = spec.get("scenario_params") if "scenario_params" in spec else run.get("scenario_params")
     run["_scenario_params"] = known if isinstance(known, dict) else None
-    if scenario_params:  # same naming as the experiments runner (RunSpec.scenario_variant)
-        digest = hashlib.sha1(json.dumps(scenario_params, sort_keys=True).encode()).hexdigest()[:6]
-        run["_scenario"] = f"{run.get('scenario')}-{digest}"
+    # name the variant from the same parameters (RunSpec.scenario_variant's naming): run_spec.json
+    # always, the summary's own parameters unless it already names its scenario_variant
+    if run["_scenario_params"] and ("scenario_params" in spec or not run.get("scenario_variant")):
+        from teamb.experiments.runner import short_hash
+
+        run["_scenario"] = f"{run.get('scenario')}-{short_hash(run['_scenario_params'])}"
     run["_dir"] = str(run_dir) if run_dir else None
     # does the folder carry today's name for its spec? (an older name: a leftover of the same run)
     if run_dir is not None and spec:
