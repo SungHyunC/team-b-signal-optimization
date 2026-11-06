@@ -383,6 +383,15 @@ def test_run_search_with_zero_trials_keeps_the_current_plan(monkeypatch):
     assert result["trials"] == 0 and "no search trials" in result["note"]
 
 
+def test_ai_recommender_rejects_non_ascii_tokens_cleanly(topo):
+    ctl = ready("ai_recommender", topo, approval_token="s3cret")
+    plan = {"cycle": 70.0, "splits": {j: 0.7 for j in topo.tls_ids}, "offsets": {j: 0.0 for j in topo.tls_ids}}
+    ctl.recommendation = {"id": "rec1-t600", "status": "pending", "plan": plan}
+    reply = ctl.handle_command({"type": "approve", "id": "rec1-t600", "token": "비밀번호"})  # used to raise TypeError
+    assert reply == {"ok": False, "error": "not authorized (approval token missing or wrong)"}
+    assert ctl.recommendation["status"] == "pending"
+
+
 def test_ai_recommender_commands(topo):
     ctl = ready("ai_recommender", topo, approval_token="s3cret")
     assert ctl.pending_recommendation() is None

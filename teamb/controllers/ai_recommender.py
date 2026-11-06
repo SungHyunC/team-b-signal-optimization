@@ -170,7 +170,8 @@ class AIRecommenderController(Controller):
         if kind not in ("approve", "reject"):
             return None  # not ours: the env reports "unknown command"
         rec = self.recommendation
-        if self._token is not None and not hmac.compare_digest(str(command.get("token", "")), self._token):
+        given = str(command.get("token", "")).encode("utf-8", "surrogateescape")  # bytes: str with non-ASCII raises
+        if self._token is not None and not hmac.compare_digest(given, str(self._token).encode("utf-8", "surrogateescape")):
             self._audit(kind, command, ok=False)
             return {"ok": False, "error": "not authorized (approval token missing or wrong)"}
         if rec is None or rec["status"] != "pending":
