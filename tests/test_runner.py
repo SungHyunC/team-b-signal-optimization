@@ -303,7 +303,8 @@ def test_default_workers_uses_all_cores_but_one(monkeypatch):
 
 # Worker functions for the real spawn pools below: module level, so spawned workers can import them.
 def _crashing_run(spec_dict, runs_dir, force=False):
-    """Seed 2 kills its worker every time, seed 3 only the first time; the other runs take 0.5 s."""
+    """Seed 2 kills its worker every time, seed 5 (the last run, so it never shares a pool with
+    seed 2) only the first time; the other runs take 0.5 s."""
     import os
     import time
 
@@ -312,8 +313,7 @@ def _crashing_run(spec_dict, runs_dir, force=False):
     d.mkdir(parents=True, exist_ok=True)
     attempt = len(list(d.glob("attempt*"))) + 1
     (d / f"attempt{attempt}").write_text("")
-    if spec_dict["seed"] == 2 or (spec_dict["seed"] == 3 and attempt == 1):
-        time.sleep(0.2)
+    if spec_dict["seed"] == 2 or (spec_dict["seed"] == 5 and attempt == 1):
         os._exit(1)  # like a SUMO crash or an OOM kill: the process is gone, no result comes back
     time.sleep(0.5)
     return {"run": name, "status": "ok", "summary": {}}
@@ -344,7 +344,8 @@ def test_a_dead_worker_fails_only_its_own_run(tmp_path, monkeypatch):
     assert len(list((runs / specs[1].name).glob("attempt*"))) == 2  # retried once, alone, then failed
     err = json.loads((runs / specs[1].name / "error.json").read_text())
     assert "BrokenProcessPool" in err["error"] and err["interrupted"] is False
-    assert not (runs / specs[2].name / "error.json").exists()  # died once, then finished on its retry
+    assert not (runs / specs[4].name / "error.json").exists()  # died once, then finished on its retry
+    assert len(list((runs / specs[4].name).glob("attempt*"))) == 2
     assert all(len(list((runs / s.name).glob("attempt*"))) <= 2 for s in specs)
     meta = json.loads((tmp_path / "experiment.json").read_text())
     assert meta["invocations"][-1]["failed"] == [specs[1].name] and meta["invocations"][-1]["workers"] == 2
@@ -360,20 +361,27 @@ def test_ctrl_c_stops_a_parallel_matrix_and_counts_what_did_not_run(tmp_path, mo
 
     monkeypatch.setattr(runner, "run_one", _slow_run)
     monkeypatch.setattr(runner, "INTERRUPT_GRACE_S", 0.2)
+    # a background job may inherit SIGINT ignored; make it raise KeyboardInterrupt as in a terminal
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
     specs = [RunSpec("rush_hour", "fixed_time", s, 1.0) for s in range(1, 7)]
     runs = tmp_path / "runs"
     sent = {}
 
     def ctrl_c():  # Ctrl-C to the main process once both workers are busy
         deadline = time.time() + 60
-        while len(list(runs.glob("*/started"))) < 2 and time.time() < deadline:
+        while len(list(runs.glob("*/started"))) < 2 and time.time() < deadline and "over" not in sent:
             time.sleep(0.05)
-        sent["t"] = time.time()
-        signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+        if "over" not in sent:  # never after the test: a stray KeyboardInterrupt would stop pytest
+            sent["t"] = time.time()
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
 
     threading.Thread(target=ctrl_c, daemon=True).start()
-    with pytest.raises(KeyboardInterrupt):
-        runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    finally:
+        sent["over"] = True
+        signal.signal(signal.SIGINT, previous)
     assert time.time() - sent["t"] < 15  # the 20-s runs in flight were stopped, not waited for
     time.sleep(1.0)  # a queued run that still started would show up now
     started = sorted(p.parent.name for p in runs.glob("*/started"))
