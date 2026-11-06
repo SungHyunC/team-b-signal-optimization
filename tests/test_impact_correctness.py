@@ -117,3 +117,20 @@ def test_summaries_without_the_perf01_detail_use_the_old_formula_and_are_flagged
     legacy = {k: v for k, v in base.items() if k not in ("inserted_in_window", "never_inserted", "mean_delay_incl_unfinished_s")}
     row = impact.analyze([legacy, cand])["rows"][0]
     assert any("different formulas" in f for f in row["flags"])
+
+
+# --- preemption: others' delay excludes the EVs (evaluation-10) -----------------------------------
+def test_others_extra_delay_excludes_the_emergency_vehicles():
+    runs = []
+    for seed in (1, 2):
+        # preemption raises everyone else's delay by 5 s but cuts the EVs' own delay, so the
+        # all-vehicle mean falls
+        runs.append(S(scenario="emergency", seed=seed, ev_preemption=True, ev_mean_travel_time_s=120.0,
+                      mean_delay_s=59.0, others_mean_delay_s=65.0))
+        runs.append(S(scenario="emergency", seed=seed, ev_preemption=False, ev_mean_travel_time_s=160.0,
+                      mean_delay_s=60.0, others_mean_delay_s=60.0))
+    eff = impact.analyze(runs)["preemption"][0]
+    assert eff["others_extra_delay_s"]["mean"] == pytest.approx(5.0)
+    for r in runs:
+        r.pop("others_mean_delay_s")
+    assert impact.analyze(runs)["preemption"][0]["others_extra_delay_s"]["mean"] == pytest.approx(-1.0)  # fallback

@@ -381,7 +381,8 @@ def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
 
 def preemption_effect(runs: list[dict], p: ImpactParams) -> list[dict]:
     """Same scenario, controller and seed with preemption on vs off: EV time saved and the
-    change in everyone else's delay."""
+    change in everyone else's delay (others_mean_delay_s, the non-EV trips; mean_delay_s only
+    for summaries that lack it)."""
     on, off = {}, {}
     for r in runs:
         key = (r["_scenario"], r["_variant"], r.get("coverage"), r.get("sampling", "uniform"), r.get("seed"))
@@ -396,8 +397,10 @@ def preemption_effect(runs: list[dict], p: ImpactParams) -> list[dict]:
         for r_on, r_off in pairs:
             if r_on.get("ev_mean_travel_time_s") is not None and r_off.get("ev_mean_travel_time_s") is not None:
                 ev_saved.append(r_off["ev_mean_travel_time_s"] - r_on["ev_mean_travel_time_s"])
-            if r_on.get("mean_delay_s") is not None and r_off.get("mean_delay_s") is not None:
-                delay_cost.append(r_on["mean_delay_s"] - r_off["mean_delay_s"])
+            # everyone else's delay: without the EVs, whose own delay preemption reduces (as in report.md)
+            k = "others_mean_delay_s" if r_on.get("others_mean_delay_s") is not None and r_off.get("others_mean_delay_s") is not None else "mean_delay_s"
+            if r_on.get(k) is not None and r_off.get(k) is not None:
+                delay_cost.append(r_on[k] - r_off[k])
         out.append(
             {
                 "scenario": scen,
