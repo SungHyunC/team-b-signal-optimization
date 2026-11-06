@@ -603,3 +603,19 @@ def test_trips_departing_after_a_reopening_take_free_flow_routes(tmp_path):
     """SUMO's insertion routing still remembers the jammed detour after a reopening; the
     runtime routes those departures on the static weights (scenarios-sensors-5)."""
     assert _departures_after_reopening(tmp_path) == []
+
+
+def test_corridor_demand_for_a_subset_of_junctions_uses_their_own_edges(topo):
+    from teamb.demand.corridor import CorridorDemand
+
+    edges = {e.getID() for e in topo.net.getEdges()}
+    full = CorridorDemand().flows()
+    subset = CorridorDemand(junctions=("J2", "J4")).flows()
+    for f in subset:
+        assert f.origin in edges and f.destination in edges, f
+    by_name = {f.name: f for f in subset}
+    assert (by_name["SB through at J2"].origin, by_name["SB through at J2"].destination) == ("NN2_N2", "J2_S2")
+    assert (by_name["NB right at J4"].origin, by_name["NB right at J4"].destination) == ("S4_J4", "J4_E5")
+    assert {f.name for f in subset} <= {f.name for f in full} and not any("J1" in f.name or "J3" in f.name for f in subset)
+    with pytest.raises(ValueError):
+        CorridorDemand(junctions=("J9",)).flows()
