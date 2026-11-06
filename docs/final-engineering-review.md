@@ -52,13 +52,22 @@ The selected experimental configuration (threshold 8 stopped vehicles, downstrea
 
 ## Reproduce locally
 
+On `main` (the original controllers only):
+
 ```bash
 python -m pytest
 python -m teamb twin
+python -m teamb.experiments run --name closure_demo --scenarios road_closure --controllers fixed_time,max_pressure --seeds 31-32 --workers 2 --scenario-params '{"demand_scale":1.25}' --baseline fixed_time --strict-validation
+```
+
+The rejected `max_pressure_spillback` controller is **not on `main`**. Its confirmation run needs the research commit, e.g. `git checkout 77ca85d` (branch `feature/validation-sandbox-explainability`, [draft PR #5](https://github.com/SungHyunC/team-b-signal-optimization/pull/5)):
+
+<!-- docs-check: skip (needs commit 77ca85d) -->
+```bash
 python -m teamb.experiments run --name confirmation_demo --scenarios road_closure --controllers max_pressure,max_pressure_spillback --seeds 31-32 --workers 2 --scenario-params '{"demand_scale":1.25}' --controller-params '{"max_pressure_spillback":{"congestion_threshold":8,"downstream_penalty":1.25}}' --baseline max_pressure --strict-validation
 ```
 
-The two-seed example above is an integration test, not a statistical replication. For the full 30-seed design, see [the workflow](../.github/workflows/independent-controller-confirmation.yml).
+The two-seed examples above are integration tests, not statistical replications. For the full 30-seed design, see [the confirmation workflow at 77ca85d](https://github.com/SungHyunC/team-b-signal-optimization/blob/77ca85d/.github/workflows/independent-controller-confirmation.yml).
 
 ## Limitations and honesty in reporting
 

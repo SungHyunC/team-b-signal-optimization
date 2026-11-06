@@ -6,7 +6,7 @@
 
 - [Successful calibration workflow #41968041524](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968041524)
 - [Prior high-demand controller pilot #41959366607](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41959366607)
-- Experimental design: [spillback-penalty-calibration.md](spillback-penalty-calibration.md)
+- Experimental design: [spillback-penalty-calibration.md](https://github.com/SungHyunC/team-b-signal-optimization/blob/77ca85d/docs/spillback-penalty-calibration.md) (on the research commit 77ca85d; the experimental controller is not on `main`)
 
 All **24/24** calibration runs passed strict validation, grouped into four six-run matrices. Tests, prior-pilot diagnostic extraction, and artifact upload succeeded. The data are based on **three new paired seeds (4–6)** for each experiment, so all performance comparisons are exploratory.
 
