@@ -31,7 +31,7 @@ git push -u origin <your-name>/<topic>     # then open a pull request
 | Folders | `teamb/network/`, `teamb/sim/`, `teamb/safety/`, `teamb/controllers/base.py`, `teamb/controllers/fixed_time.py`, `teamb/twin/` |
 | Tests | `tests/test_core.py` (NET-01, SIG-01, SIG-02, REP-01, PERF-01), `tests/test_twin.py`, `tests/test_site.py` |
 | Done when | one-command reproducible baseline on all four junctions · fixed-time vs coordinated comparison · validated signal transitions · exported results · setup README · demo recording |
-| Next | CI on GitHub Actions running `pytest` · a proper `SimEnv` "fast" option (no sensors / sparse KPIs) to replace the wrappers in `controllers/fast_env.py` · read departed/arrived/time from one simulation subscription · pedestrian phases and protected left turns · twin: split-screen A/B compare, several sessions, demo script for Nov 5 (`python -m teamb.twin.vendor` before going offline) |
+| Next | a proper `SimEnv` "fast" option (no sensors / sparse KPIs) to replace the wrappers in `controllers/fast_env.py` · read departed/arrived/time from one simulation subscription · pedestrian phases and protected left turns · twin: split-screen A/B compare, several sessions, demo script for Nov 5 (`python -m teamb.twin.vendor` before going offline) |
 | Notes | [`roles/twin.md`](roles/twin.md) |
 
 ## Doyoung — Data & evaluation · 데이터·평가

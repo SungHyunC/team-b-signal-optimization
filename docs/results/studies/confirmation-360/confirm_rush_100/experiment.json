@@ -1,0 +1,74 @@
+{
+  "name": "confirm_rush_100",
+  "created": "2026-11-05T04:44:12",
+  "invocations": [
+    {
+      "command": "python -m teamb.experiments run --name confirm_rush_100 --scenarios rush_hour --controllers max_pressure,max_pressure_spillback --seeds 31-60 --workers 2 --controller-params '{\"max_pressure_spillback\":{\"congestion_threshold\":8,\"downstream_penalty\":1.25}}' --baseline max_pressure --strict-validation",
+      "started": "2026-11-05T04:44:12",
+      "wall_time_s": 275.2,
+      "workers": 2,
+      "runs": 60,
+      "ok": 60,
+      "skipped": 0,
+      "failed": [],
+      "matrix": {
+        "scenarios": [
+          "rush_hour"
+        ],
+        "controllers": [
+          "max_pressure",
+          "max_pressure_spillback-44ec25"
+        ],
+        "seeds": [
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60
+        ],
+        "coverages": [
+          1.0
+        ],
+        "samplings": [
+          "uniform"
+        ],
+        "ev_preemption": [
+          true
+        ],
+        "end_time": [],
+        "controller_params": {
+          "max_pressure_spillback-44ec25": {
+            "congestion_threshold": 8,
+            "downstream_penalty": 1.25
+          }
+        },
+        "scenario_params": {}
+      }
+    }
+  ]
+}

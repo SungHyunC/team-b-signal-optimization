@@ -1,0 +1,47 @@
+{
+  "name": "congestion_pilot_heavy",
+  "created": "2026-11-05T03:06:25",
+  "invocations": [
+    {
+      "command": "python -m teamb.experiments run --name congestion_pilot_heavy --scenarios road_closure --controllers fixed_time,max_pressure,max_pressure_spillback --seeds 1-3 --workers 2 --scenario-params '{\"demand_scale\":1.25}' --strict-validation",
+      "started": "2026-11-05T03:06:25",
+      "wall_time_s": 150.5,
+      "workers": 2,
+      "runs": 9,
+      "ok": 9,
+      "skipped": 0,
+      "failed": [],
+      "matrix": {
+        "scenarios": [
+          "road_closure-5601c3"
+        ],
+        "controllers": [
+          "fixed_time",
+          "max_pressure",
+          "max_pressure_spillback"
+        ],
+        "seeds": [
+          1,
+          2,
+          3
+        ],
+        "coverages": [
+          1.0
+        ],
+        "samplings": [
+          "uniform"
+        ],
+        "ev_preemption": [
+          true
+        ],
+        "end_time": [],
+        "controller_params": {},
+        "scenario_params": {
+          "road_closure-5601c3": {
+            "demand_scale": 1.25
+          }
+        }
+      }
+    }
+  ]
+}

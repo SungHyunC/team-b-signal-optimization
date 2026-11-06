@@ -1,0 +1,558 @@
+[
+  {
+    "experiment": "confirm_closure_125",
+    "paired_seeds": 30,
+    "metrics": {
+      "mean_delay_s": {
+        "n": 30,
+        "baseline_mean": 120.806,
+        "candidate_mean": 107.0143,
+        "candidate_minus_baseline": {
+          "mean": -13.7917,
+          "ci95": [
+            -18.6711,
+            -8.9122
+          ]
+        }
+      },
+      "unfinished_pct": {
+        "n": 30,
+        "baseline_mean": 7.3843,
+        "candidate_mean": 8.1353,
+        "candidate_minus_baseline": {
+          "mean": 0.751,
+          "ci95": [
+            -0.1163,
+            1.6183
+          ]
+        }
+      },
+      "completed": {
+        "n": 30,
+        "baseline_mean": 4435.5333,
+        "candidate_mean": 4399.4667,
+        "candidate_minus_baseline": {
+          "mean": -36.0667,
+          "ci95": [
+            -77.6045,
+            5.4712
+          ]
+        }
+      },
+      "throughput_veh_h": {
+        "n": 30,
+        "baseline_mean": 3548.4267,
+        "candidate_mean": 3519.5733,
+        "candidate_minus_baseline": {
+          "mean": -28.8533,
+          "ci95": [
+            -62.0836,
+            4.3769
+          ]
+        }
+      },
+      "spillback_duration_s": {
+        "n": 30,
+        "baseline_mean": 307.5,
+        "candidate_mean": 94.3333,
+        "candidate_minus_baseline": {
+          "mean": -213.1667,
+          "ci95": [
+            -302.9248,
+            -123.4085
+          ]
+        }
+      },
+      "queue_p95_veh": {
+        "n": 30,
+        "baseline_mean": 15.3667,
+        "candidate_mean": 15.1333,
+        "candidate_minus_baseline": {
+          "mean": -0.2333,
+          "ci95": [
+            -0.8024,
+            0.3358
+          ]
+        }
+      },
+      "ev_mean_travel_time_s": {
+        "n": 0,
+        "available": false
+      }
+    },
+    "screens": {
+      "delay_no_gt_5pct_regression": true,
+      "unfinished_no_gt_1pp_regression": true,
+      "completed_no_gt_1pct_regression": true,
+      "emergency_no_gt_5pct_regression": true
+    },
+    "passes_directional_screens": true,
+    "notes": "Exploratory screening flags only; final decision needs the full statistical review."
+  },
+  {
+    "experiment": "confirm_rush_100",
+    "paired_seeds": 30,
+    "metrics": {
+      "mean_delay_s": {
+        "n": 30,
+        "baseline_mean": 29.1937,
+        "candidate_mean": 29.6423,
+        "candidate_minus_baseline": {
+          "mean": 0.4487,
+          "ci95": [
+            0.1055,
+            0.7918
+          ]
+        }
+      },
+      "unfinished_pct": {
+        "n": 30,
+        "baseline_mean": 2.6147,
+        "candidate_mean": 2.5973,
+        "candidate_minus_baseline": {
+          "mean": -0.0173,
+          "ci95": [
+            -0.0639,
+            0.0292
+          ]
+        }
+      },
+      "completed": {
+        "n": 30,
+        "baseline_mean": 3269.0667,
+        "candidate_mean": 3269.6667,
+        "candidate_minus_baseline": {
+          "mean": 0.6,
+          "ci95": [
+            -0.9615,
+            2.1615
+          ]
+        }
+      },
+      "throughput_veh_h": {
+        "n": 30,
+        "baseline_mean": 3269.0667,
+        "candidate_mean": 3269.6667,
+        "candidate_minus_baseline": {
+          "mean": 0.6,
+          "ci95": [
+            -0.9615,
+            2.1615
+          ]
+        }
+      },
+      "spillback_duration_s": {
+        "n": 30,
+        "baseline_mean": 0.0,
+        "candidate_mean": 0.0,
+        "candidate_minus_baseline": {
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "queue_p95_veh": {
+        "n": 30,
+        "baseline_mean": 3.1333,
+        "candidate_mean": 3.2333,
+        "candidate_minus_baseline": {
+          "mean": 0.1,
+          "ci95": [
+            -0.0795,
+            0.2795
+          ]
+        }
+      },
+      "ev_mean_travel_time_s": {
+        "n": 0,
+        "available": false
+      }
+    },
+    "screens": {
+      "delay_no_gt_5pct_regression": true,
+      "unfinished_no_gt_1pp_regression": true,
+      "completed_no_gt_1pct_regression": true,
+      "emergency_no_gt_5pct_regression": true
+    },
+    "passes_directional_screens": true,
+    "notes": "Exploratory screening flags only; final decision needs the full statistical review."
+  },
+  {
+    "experiment": "confirm_rush_125",
+    "paired_seeds": 30,
+    "metrics": {
+      "mean_delay_s": {
+        "n": 30,
+        "baseline_mean": 44.023,
+        "candidate_mean": 50.1697,
+        "candidate_minus_baseline": {
+          "mean": 6.1467,
+          "ci95": [
+            -0.0208,
+            12.3141
+          ]
+        }
+      },
+      "unfinished_pct": {
+        "n": 30,
+        "baseline_mean": 3.045,
+        "candidate_mean": 3.5153,
+        "candidate_minus_baseline": {
+          "mean": 0.4703,
+          "ci95": [
+            -0.4134,
+            1.3541
+          ]
+        }
+      },
+      "completed": {
+        "n": 30,
+        "baseline_mean": 4063.8667,
+        "candidate_mean": 4044.1667,
+        "candidate_minus_baseline": {
+          "mean": -19.7,
+          "ci95": [
+            -57.1156,
+            17.7156
+          ]
+        }
+      },
+      "throughput_veh_h": {
+        "n": 30,
+        "baseline_mean": 4063.8667,
+        "candidate_mean": 4044.1667,
+        "candidate_minus_baseline": {
+          "mean": -19.7,
+          "ci95": [
+            -57.1156,
+            17.7156
+          ]
+        }
+      },
+      "spillback_duration_s": {
+        "n": 30,
+        "baseline_mean": 19.8333,
+        "candidate_mean": 28.1667,
+        "candidate_minus_baseline": {
+          "mean": 8.3333,
+          "ci95": [
+            -53.0621,
+            69.7288
+          ]
+        }
+      },
+      "queue_p95_veh": {
+        "n": 30,
+        "baseline_mean": 6.2667,
+        "candidate_mean": 7.5667,
+        "candidate_minus_baseline": {
+          "mean": 1.3,
+          "ci95": [
+            0.0708,
+            2.5292
+          ]
+        }
+      },
+      "ev_mean_travel_time_s": {
+        "n": 0,
+        "available": false
+      }
+    },
+    "screens": {
+      "delay_no_gt_5pct_regression": false,
+      "unfinished_no_gt_1pp_regression": true,
+      "completed_no_gt_1pct_regression": true,
+      "emergency_no_gt_5pct_regression": true
+    },
+    "passes_directional_screens": false,
+    "notes": "Exploratory screening flags only; final decision needs the full statistical review."
+  },
+  {
+    "experiment": "confirm_emergency_100",
+    "paired_seeds": 30,
+    "metrics": {
+      "mean_delay_s": {
+        "n": 30,
+        "baseline_mean": 29.8767,
+        "candidate_mean": 30.6283,
+        "candidate_minus_baseline": {
+          "mean": 0.7517,
+          "ci95": [
+            0.432,
+            1.0714
+          ]
+        }
+      },
+      "unfinished_pct": {
+        "n": 30,
+        "baseline_mean": 2.6107,
+        "candidate_mean": 2.6523,
+        "candidate_minus_baseline": {
+          "mean": 0.0417,
+          "ci95": [
+            -0.0236,
+            0.107
+          ]
+        }
+      },
+      "completed": {
+        "n": 30,
+        "baseline_mean": 3278.9667,
+        "candidate_mean": 3277.5333,
+        "candidate_minus_baseline": {
+          "mean": -1.4333,
+          "ci95": [
+            -3.6296,
+            0.763
+          ]
+        }
+      },
+      "throughput_veh_h": {
+        "n": 30,
+        "baseline_mean": 3278.9667,
+        "candidate_mean": 3277.5333,
+        "candidate_minus_baseline": {
+          "mean": -1.4333,
+          "ci95": [
+            -3.6296,
+            0.763
+          ]
+        }
+      },
+      "spillback_duration_s": {
+        "n": 30,
+        "baseline_mean": 0.0,
+        "candidate_mean": 0.0,
+        "candidate_minus_baseline": {
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "queue_p95_veh": {
+        "n": 30,
+        "baseline_mean": 3.1667,
+        "candidate_mean": 3.4,
+        "candidate_minus_baseline": {
+          "mean": 0.2333,
+          "ci95": [
+            0.0451,
+            0.4215
+          ]
+        }
+      },
+      "ev_mean_travel_time_s": {
+        "n": 30,
+        "baseline_mean": 100.46,
+        "candidate_mean": 101.45,
+        "candidate_minus_baseline": {
+          "mean": 0.99,
+          "ci95": [
+            -0.5105,
+            2.4905
+          ]
+        }
+      }
+    },
+    "screens": {
+      "delay_no_gt_5pct_regression": true,
+      "unfinished_no_gt_1pp_regression": true,
+      "completed_no_gt_1pct_regression": true,
+      "emergency_no_gt_5pct_regression": true
+    },
+    "passes_directional_screens": true,
+    "notes": "Exploratory screening flags only; final decision needs the full statistical review."
+  },
+  {
+    "experiment": "confirm_emergency_125",
+    "paired_seeds": 30,
+    "metrics": {
+      "mean_delay_s": {
+        "n": 30,
+        "baseline_mean": 46.5587,
+        "candidate_mean": 51.9877,
+        "candidate_minus_baseline": {
+          "mean": 5.429,
+          "ci95": [
+            1.0774,
+            9.7806
+          ]
+        }
+      },
+      "unfinished_pct": {
+        "n": 30,
+        "baseline_mean": 2.9847,
+        "candidate_mean": 3.409,
+        "candidate_minus_baseline": {
+          "mean": 0.4243,
+          "ci95": [
+            -0.1389,
+            0.9876
+          ]
+        }
+      },
+      "completed": {
+        "n": 30,
+        "baseline_mean": 4076.1333,
+        "candidate_mean": 4058.2,
+        "candidate_minus_baseline": {
+          "mean": -17.9333,
+          "ci95": [
+            -41.9274,
+            6.0608
+          ]
+        }
+      },
+      "throughput_veh_h": {
+        "n": 30,
+        "baseline_mean": 4076.1333,
+        "candidate_mean": 4058.2,
+        "candidate_minus_baseline": {
+          "mean": -17.9333,
+          "ci95": [
+            -41.9274,
+            6.0608
+          ]
+        }
+      },
+      "spillback_duration_s": {
+        "n": 30,
+        "baseline_mean": 8.0,
+        "candidate_mean": 22.3333,
+        "candidate_minus_baseline": {
+          "mean": 14.3333,
+          "ci95": [
+            -20.9489,
+            49.6156
+          ]
+        }
+      },
+      "queue_p95_veh": {
+        "n": 30,
+        "baseline_mean": 6.8333,
+        "candidate_mean": 8.1667,
+        "candidate_minus_baseline": {
+          "mean": 1.3333,
+          "ci95": [
+            0.361,
+            2.3057
+          ]
+        }
+      },
+      "ev_mean_travel_time_s": {
+        "n": 30,
+        "baseline_mean": 112.6633,
+        "candidate_mean": 116.4233,
+        "candidate_minus_baseline": {
+          "mean": 3.76,
+          "ci95": [
+            -0.5848,
+            8.1048
+          ]
+        }
+      }
+    },
+    "screens": {
+      "delay_no_gt_5pct_regression": false,
+      "unfinished_no_gt_1pp_regression": true,
+      "completed_no_gt_1pct_regression": true,
+      "emergency_no_gt_5pct_regression": true
+    },
+    "passes_directional_screens": false,
+    "notes": "Exploratory screening flags only; final decision needs the full statistical review."
+  },
+  {
+    "experiment": "confirm_closure_075",
+    "paired_seeds": 30,
+    "metrics": {
+      "mean_delay_s": {
+        "n": 30,
+        "baseline_mean": 44.613,
+        "candidate_mean": 45.4327,
+        "candidate_minus_baseline": {
+          "mean": 0.8197,
+          "ci95": [
+            -0.1589,
+            1.7983
+          ]
+        }
+      },
+      "unfinished_pct": {
+        "n": 30,
+        "baseline_mean": 2.136,
+        "candidate_mean": 2.1437,
+        "candidate_minus_baseline": {
+          "mean": 0.0077,
+          "ci95": [
+            -0.0481,
+            0.0635
+          ]
+        }
+      },
+      "completed": {
+        "n": 30,
+        "baseline_mean": 2812.8333,
+        "candidate_mean": 2812.5667,
+        "candidate_minus_baseline": {
+          "mean": -0.2667,
+          "ci95": [
+            -1.8657,
+            1.3324
+          ]
+        }
+      },
+      "throughput_veh_h": {
+        "n": 30,
+        "baseline_mean": 2250.2667,
+        "candidate_mean": 2250.0533,
+        "candidate_minus_baseline": {
+          "mean": -0.2133,
+          "ci95": [
+            -1.4926,
+            1.0659
+          ]
+        }
+      },
+      "spillback_duration_s": {
+        "n": 30,
+        "baseline_mean": 0.8333,
+        "candidate_mean": 2.5,
+        "candidate_minus_baseline": {
+          "mean": 1.6667,
+          "ci95": [
+            -0.8493,
+            4.1826
+          ]
+        }
+      },
+      "queue_p95_veh": {
+        "n": 30,
+        "baseline_mean": 3.6,
+        "candidate_mean": 3.7,
+        "candidate_minus_baseline": {
+          "mean": 0.1,
+          "ci95": [
+            -0.0795,
+            0.2795
+          ]
+        }
+      },
+      "ev_mean_travel_time_s": {
+        "n": 0,
+        "available": false
+      }
+    },
+    "screens": {
+      "delay_no_gt_5pct_regression": true,
+      "unfinished_no_gt_1pp_regression": true,
+      "completed_no_gt_1pct_regression": true,
+      "emergency_no_gt_5pct_regression": true
+    },
+    "passes_directional_screens": true,
+    "notes": "Exploratory screening flags only; final decision needs the full statistical review."
+  }
+]
