@@ -45,3 +45,36 @@ def test_top_level_help_lists_the_research_commands(capsys):
     out = capsys.readouterr().out
     for command in ("twin", "run", "doctor", "exp", "sandbox", "train-rl", "site"):
         assert command in out
+
+
+@pytest.fixture
+def fake_env(monkeypatch):
+    """`teamb run` without SUMO: the environment records what it was built with."""
+    import teamb.sim.env as env_module
+
+    seen = {}
+
+    class FakeEnv:
+        output_dir = "fake-output"
+
+        def __init__(self, scenario, controller, **kwargs):
+            seen.update(scenario=scenario, controller=controller, **kwargs)
+
+        def run(self):
+            return {"mean_delay_s": 1.0}
+
+    monkeypatch.setattr(env_module, "SimEnv", FakeEnv)
+    return seen
+
+
+def test_headless_ai_recommender_run_auto_approves_by_default(fake_env, capsys):
+    assert main(["run", "--controller", "ai_recommender", "--end", "1200"]) == 0
+    assert fake_env["controller_params"] == {"auto_approve": True}
+    assert "auto_approve=true" in capsys.readouterr().out
+
+
+def test_an_explicit_auto_approve_false_is_kept(fake_env, capsys):
+    assert main(["run", "--controller", "ai_recommender", "--controller-params", '{"auto_approve": false}',
+                 "--end", "1200"]) == 0
+    assert fake_env["controller_params"] == {"auto_approve": False}
+    assert "starting plan" in capsys.readouterr().out

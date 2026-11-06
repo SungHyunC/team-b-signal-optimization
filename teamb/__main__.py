@@ -167,10 +167,13 @@ def main(argv: list[str] | None = None) -> int:
 
         controller_params = _json_arg(args.controller_params, "--controller-params")
         scenario_params = _json_arg(args.scenario_params, "--scenario-params")
-        if args.controller == "ai_recommender" and not (controller_params or {}).get("auto_approve"):
-            # a headless run has no engineer to approve the plan, so it would stay fixed-time
-            controller_params = {**(controller_params or {}), "auto_approve": True}
-            print("note: headless ai_recommender run -> auto_approve=true (nobody can approve the plan here)")
+        if args.controller == "ai_recommender":
+            if "auto_approve" not in (controller_params or {}):
+                # a headless run has no engineer to approve the plan, so it would stay fixed-time
+                controller_params = {**(controller_params or {}), "auto_approve": True}
+                print("note: headless ai_recommender run -> auto_approve=true (nobody can approve the plan here)")
+            elif not controller_params["auto_approve"]:
+                print("note: auto_approve=false in a headless run: nobody approves, so it stays on the starting plan")
         warmup = get_scenario(args.scenario, **(scenario_params or {})).warmup
         if args.end is not None and args.end <= warmup:
             raise SystemExit(f"--end {args.end:g} is inside the {warmup:g} s warm-up: nothing would be measured")
