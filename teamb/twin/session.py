@@ -112,7 +112,7 @@ def parse_speed(value) -> float:
         value = text
     try:
         speed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: a huge JSON integer such as 1e400 digits
         raise ValueError(f"invalid speed {value!r} (use a number of sim seconds per second, or 'max')") from None
     if math.isnan(speed) or speed < 0:
         raise ValueError(f"invalid speed {value!r}")

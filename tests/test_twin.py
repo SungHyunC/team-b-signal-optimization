@@ -82,7 +82,7 @@ def test_speed_parsing():
     assert parse_speed("5x") == 5
     assert parse_speed(2.5) == 2.5
     assert speed_label(math.inf) == "max" and speed_label(10.0) == 10
-    for bad in ("fast", -1, None, True):
+    for bad in ("fast", -1, None, True, 10**400):  # 10**400: float() raises OverflowError
         with pytest.raises(ValueError):
             parse_speed(bad)
 

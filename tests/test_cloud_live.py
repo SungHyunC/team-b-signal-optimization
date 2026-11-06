@@ -134,15 +134,19 @@ def test_ascii_secret_rejects_non_ascii_password(monkeypatch):
     {"action": 5}, {"action": True}, {"action": ["play"]},
     {"action": "jump", "t": []}, {"action": "jump", "t": {"a": 1}}, {"action": "jump", "t": True},
     {"action": "jump", "t": "soon"}, {"action": "jump", "t": "Infinity"}, {"action": "speed", "speed": [1]},
+    '{"action": "speed", "speed": 1' + "0" * 400 + '}',  # raw JSON: float() of it raises OverflowError
 ])
 def test_malformed_control_is_400(open_client, body):
-    r = open_client.post("/api/control", json=body)
+    if isinstance(body, str):
+        r = open_client.post("/api/control", content=body, headers={"content-type": "application/json"})
+    else:
+        r = open_client.post("/api/control", json=body)
     assert r.status_code == 400, (body, r.status_code, r.text)
 
 
 @pytest.mark.parametrize("raw", [
     '{"seed": Infinity}', '{"seed": 1e400}', '{"seed": [1]}', '{"end_time": NaN}', '{"end_time": Infinity}',
-    '{"start_at": Infinity}', '{"coverage": "lots"}',
+    '{"start_at": Infinity}', '{"coverage": "lots"}', '{"speed": 1' + "0" * 400 + '}',
 ])
 def test_malformed_session_is_400(open_client, raw):
     r = open_client.post("/api/session", content=raw, headers={"content-type": "application/json"})
