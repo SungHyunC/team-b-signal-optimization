@@ -68,3 +68,61 @@ def parse_sandbox_config(value: dict | str) -> SandboxConfig:
     if cfg.duration_s is not None and (type(cfg.duration_s) is not int or not 60 <= cfg.duration_s <= 10800):
         raise ValueError("duration_s must be 60–10800 seconds")
     return cfg
+
+
+def experiment_command(cfg: SandboxConfig, name: str = "sandbox_trial") -> str:
+    """The equivalent `teamb exp run` command line (what the sandbox page shows)."""
+    import shlex
+
+    parts = [
+        "teamb", "exp", "run", "--name", name, "--scenarios", cfg.scenario, "--controllers", cfg.controller,
+        "--seeds", str(cfg.seed), "--ev-preemption", "on" if cfg.ev_preemption else "off",
+        "--scenario-params", json.dumps({"demand_scale": cfg.demand_scale}),
+    ]
+    if cfg.duration_s is not None:
+        parts += ["--end", str(cfg.duration_s)]
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`teamb sandbox validate|run <export.json>`: check or execute a Scenario Sandbox export."""
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(prog="teamb sandbox", description="Validate or run a Scenario Sandbox JSON export.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    val = sub.add_parser("validate", help="check the file and print the equivalent experiment command")
+    val.add_argument("config", type=Path)
+    run = sub.add_parser("run", help="run the exported scenario in SUMO and write a report")
+    run.add_argument("config", type=Path)
+    run.add_argument("--name", default="sandbox_trial", help="experiment folder under results/experiments/")
+    run.add_argument("--backend", choices=("local", "modal"), default="local")
+    run.add_argument("--force", action="store_true", help="re-run even if results exist")
+    args = parser.parse_args(argv)
+
+    try:
+        cfg = parse_sandbox_config(args.config.read_text())
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"invalid sandbox file {args.config}: {exc}")
+        return 2
+    print(cfg.to_json())
+    command = experiment_command(cfg, getattr(args, "name", "sandbox_trial"))
+    if args.command == "validate":
+        print(f"\nvalid. equivalent command:\n  {command}")
+        return 0
+
+    from teamb.experiments.analysis import write_report
+    from teamb.experiments.runner import EXPERIMENTS_DIR, build_matrix, run_matrix
+
+    specs = build_matrix(**cfg.experiment_kwargs())
+    exp_dir = EXPERIMENTS_DIR / args.name
+    record = run_matrix(specs, exp_dir, workers=1, force=args.force, command=command, backend=args.backend)
+    if record["failed"]:
+        print(f"run failed: see {exp_dir / 'runs'}/*/error.json")
+        return 1
+    summary = json.loads(next((exp_dir / "runs").glob(f"{specs[0].name}/summary.json")).read_text())
+    keys = ("mean_delay_s", "completed", "unfinished_pct", "stops_per_veh", "max_queue_veh", "controller_errors")
+    print("\n" + "\n".join(f"  {k:<18s} {summary.get(k)}" for k in keys))
+    write_report(exp_dir, baseline=cfg.controller)
+    print(f"\nresults: {exp_dir}")
+    return 0
