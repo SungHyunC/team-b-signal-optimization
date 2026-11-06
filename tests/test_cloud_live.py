@@ -1,4 +1,6 @@
 """Cloud access gate and hosted sandbox contract; no SUMO processes needed."""
+import os
+
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 import pytest
@@ -94,6 +96,26 @@ def test_vendor_serves_local_copy_and_falls_back_to_cdn(open_client, tmp_path, m
     assert cdn.headers["location"] == server.THREE_CDN + "examples/jsm/controls/OrbitControls.js"
     escaped = open_client.get("/vendor/three/escape.js", follow_redirects=False)
     assert escaped.status_code == 404 and "OUTSIDE" not in escaped.text
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root reads any file")
+def test_vendor_copy_the_server_cannot_read_falls_back_to_cdn(open_client, tmp_path, monkeypatch):
+    """A vendored file owned by another user (e.g. a 0600 copy baked into the non-root Docker
+    image) must not break the page with a 500: send the browser to the pinned CDN instead."""
+    from teamb.twin import server
+
+    vendor = tmp_path / "vendor"
+    (vendor / "build").mkdir(parents=True)
+    module = vendor / "build" / "three.module.js"
+    module.write_text("export const REVISION = '160';")
+    module.chmod(0)
+    monkeypatch.setattr(server, "VENDOR_DIR", vendor)
+    try:
+        r = open_client.get("/vendor/three/build/three.module.js", follow_redirects=False)
+    finally:
+        module.chmod(0o644)
+    assert r.status_code == 307
+    assert r.headers["location"] == server.THREE_CDN + "build/three.module.js"
 
 
 def test_vendor_file_guard_unit(tmp_path):

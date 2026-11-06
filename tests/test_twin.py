@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import stat
 import time
 
 import anyio
@@ -508,10 +509,17 @@ def test_vendor_downloads_with_tls_context_and_skips_existing(vendor_mod, monkey
         return io.BytesIO(b"// " + url.encode())
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    assert vendor_mod.main([]) == 0
+    old_umask = os.umask(0o022)
+    try:
+        assert vendor_mod.main([]) == 0
+    finally:
+        os.umask(old_umask)
     assert len(calls) == len(vendor_mod.FILES)
     module = vendor_mod.VENDOR_DIR / "build" / "three.module.js"
     assert module.read_bytes().endswith(b"build/three.module.js")
+    # Readable like any downloaded file (0644 under umask 022), not mkstemp's 0600: the server may
+    # run as another user, e.g. the non-root user of the Docker image.
+    assert stat.S_IMODE(module.stat().st_mode) == 0o644
     assert not list(vendor_mod.VENDOR_DIR.rglob("*.tmp"))
     assert vendor_mod.main([]) == 0 and len(calls) == len(vendor_mod.FILES)  # already there: no download
     assert vendor_mod.main(["--force"]) == 0 and len(calls) == 2 * len(vendor_mod.FILES)

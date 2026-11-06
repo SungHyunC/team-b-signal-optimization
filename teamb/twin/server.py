@@ -203,7 +203,8 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         local = vendor_file(path)
         if local is None:
             raise HTTPException(404)
-        if local.is_file():
+        # A copy the server cannot read (vendored by another user) would fail mid-response: use the CDN.
+        if local.is_file() and os.access(local, os.R_OK):
             return FileResponse(local, media_type="text/javascript")
         return RedirectResponse(THREE_CDN + path, status_code=307)
 
