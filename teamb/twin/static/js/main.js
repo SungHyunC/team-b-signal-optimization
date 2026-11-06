@@ -39,6 +39,8 @@ import { CameraControl, ViewportChrome } from './ui/viewport.js';
 addKo({
   'Signal Twin · Team B': 'Signal Twin · B팀',
   'Team B · 4-junction corridor': 'B팀 · 교차로 4개 구간',
+  'Scenario Sandbox': '시나리오 샌드박스',
+  'Create and export a reproducible scenario': '재현 가능한 시나리오를 만들고 내보내요',
   Scenario: '시나리오',
   Controller: '신호 제어 방식',
   Seed: '시드',
