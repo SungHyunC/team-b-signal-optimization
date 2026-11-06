@@ -90,7 +90,7 @@ Optional extras, combinable as `pip install -e ".[dev,fast,cloud]"`:
 | Extra | Adds | For |
 |---|---|---|
 | `dev` | pytest, httpx | running the tests |
-| `fast` | `libsumo==1.28.0` | in-process SUMO instead of a TraCI socket: set `TEAMB_TRACI_BACKEND=libsumo` (or `auto`: libsumo if installed, else TraCI). The default stays TraCI. |
+| `fast` | `libsumo==1.28.0` | in-process SUMO instead of a TraCI socket (same numbers, about 2x faster). `teamb exp run` and `teamb sandbox run` use it automatically when it is installed; `--traci-backend libsumo\|auto\|traci` on `teamb run` or `teamb exp run`, or `TEAMB_TRACI_BACKEND=libsumo\|auto\|traci`, chooses it elsewhere or overrides it (`auto`: libsumo if installed, else TraCI). SimEnv, `teamb run` and the twin default to TraCI. |
 | `cloud` | `modal` | `teamb exp run --backend modal` (run `modal setup` once) |
 
 Per operating system:

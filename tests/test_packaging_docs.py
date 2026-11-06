@@ -197,6 +197,21 @@ def test_documented_node_test_commands_name_files():
     assert "node --test tests/js/*.test.mjs" in readme
 
 
+def test_fast_extra_row_says_which_commands_use_libsumo(monkeypatch):
+    """The README must not claim TraCI everywhere when batch runs switch to libsumo on their own."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    (row,) = [line for line in readme.splitlines() if line.startswith("| `fast` |")]
+    assert "TEAMB_TRACI_BACKEND" in row and "--traci-backend" in row, row
+    assert "SimEnv, `teamb run` and the twin default to TraCI" in row, row
+    from teamb.experiments import runner
+
+    batch_default = getattr(runner, "batch_traci_backend", None)
+    monkeypatch.delenv("TEAMB_TRACI_BACKEND", raising=False)
+    if batch_default is not None and batch_default() == "auto":
+        assert "`teamb exp run` and `teamb sandbox run` use it automatically" in row, row
+        assert "default stays TraCI" not in row, row
+
+
 def test_twin_environment_switches_are_documented():
     guide = (DOCS / "cloud-live-sumo-deployment.md").read_text(encoding="utf-8")
     names = set()
