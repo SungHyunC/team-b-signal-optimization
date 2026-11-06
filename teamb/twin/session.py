@@ -398,6 +398,10 @@ class TwinSession:
         self._thread = threading.Thread(target=self._run, name="teamb-sim", daemon=True)
         self._thread.start()
 
+    def thread_alive(self) -> bool | None:
+        """None before start_thread(); afterwards whether the sim thread still runs."""
+        return None if self._thread is None else self._thread.is_alive()
+
     def shutdown(self, timeout: float = 20.0) -> None:
         """Stop stepping, close SUMO (writes the run outputs) and join the thread."""
         self._stop.set()

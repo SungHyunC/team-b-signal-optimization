@@ -272,3 +272,15 @@ def test_websocket_in_flight_limit(open_client):
         busy = [ws.receive_json() for _ in range(extra)]
         assert [m["id"] for m in busy] == list(range(MAX_WS_INFLIGHT, MAX_WS_INFLIGHT + extra))
         assert all(m["ok"] is False and "busy" in m["error"] for m in busy)
+
+
+def test_healthz_reports_a_dead_sim_thread(open_client):
+    import threading
+
+    assert open_client.get("/healthz").json() == {"ok": True, "service": "team-b-live-sumo"}  # not started yet
+    dead = threading.Thread(target=lambda: None)
+    dead.start()
+    dead.join()
+    open_client.app.state.session._thread = dead
+    r = open_client.get("/healthz")
+    assert r.status_code == 503 and r.json()["ok"] is False

@@ -122,6 +122,11 @@ def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | 
 
     @app.get("/healthz", include_in_schema=False)
     def healthz():
+        # If the sim thread died, every request would queue forever: report it so the platform
+        # (Render's health check) restarts the instance.
+        if session.thread_alive() is False:
+            return JSONResponse({"ok": False, "service": "team-b-live-sumo", "error": "simulation thread stopped"},
+                                status_code=503)
         return {"ok": True, "service": "team-b-live-sumo"}
 
     @app.get("/login", include_in_schema=False)
