@@ -2,11 +2,13 @@
 
 Pairing rule (matched demand seeds)
 -----------------------------------
-A candidate group (scenario, controller variant, coverage, sampling, preemption) is
-compared with the baseline controller's runs of the same scenario and preemption setting,
-preferably with the same coverage and sampling ("exact"); if the baseline was only run at
+A candidate group (scenario, controller variant, coverage, sampling, preemption, run end) is
+compared with the baseline controller's runs of the same scenario, preemption setting and run
+end, preferably with the same coverage and sampling ("exact"); if the baseline was only run at
 another coverage/sampling (fine for fixed-time, which ignores sensor data) that run is used
-("scenario"). Only seeds present in both are paired.
+("scenario"). A baseline with another preemption setting or run end is never used: those
+change every controller's result. Only seeds present in both are paired. The run end is the
+effective one (the spec's end_time, else the scenario duration from the manifest).
 
 report.json schema (read by the twin; extra keys may be added, never removed)
 -----------------------------------------------------------------------------
@@ -49,7 +51,9 @@ DEFINITIONS = {
     "p_holm": "p_value after Holm–Bonferroni correction over the candidates of the same scenario.",
     "unfinished_pct": "100 × (trips still in the network at the end + trips never inserted) / (completed + unfinished) (PERF-01).",
     "ev_mean_travel_time_s": "Mean travel time of emergency vehicles that finished.",
-    "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage.",
+    "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage. "
+    "Always the same preemption setting and run end; null = no such baseline run.",
+    "end_time": "Effective run end in s (the --end given, else the scenario's duration).",
 }
 
 
@@ -82,6 +86,12 @@ def load_runs(exp_dir: Path) -> list[dict]:
         spec = spec if isinstance(spec, dict) else {}
         status, summary, error = run_status(d, expected_end=spec.get("end_time"))
         src = summary or {}
+        end_time = spec.get("end_time")
+        if end_time is None:  # the scenario's duration: from the manifest, else where the run stopped
+            manifest = read_json(d / "manifest.json", {})
+            end_time = ((manifest.get("config") or {}) if isinstance(manifest, dict) else {}).get("end_time")
+        if end_time is None:
+            end_time = src.get("sim_time_s")
         scenario = spec.get("scenario", src.get("scenario"))
         controller = spec.get("controller", src.get("controller"))
         row = {
@@ -95,7 +105,7 @@ def load_runs(exp_dir: Path) -> list[dict]:
             "coverage": spec.get("coverage", src.get("coverage")),
             "sampling": spec.get("sampling", src.get("sampling", "uniform")),
             "ev_preemption": spec.get("ev_preemption", src.get("ev_preemption", True)),
-            "end_time": spec.get("end_time", src.get("sim_time_s")),
+            "end_time": None if end_time is None else float(end_time),
             "status": status,
             "error": error,
             "wall_total_s": spec.get("wall_total_s"),
@@ -125,21 +135,25 @@ def write_summary_csv(runs: list[dict], path: Path) -> None:
 
 
 def _group_key(r: dict) -> tuple:
-    return (r["scenario_variant"], r["variant"], float(r["coverage"]), r["sampling"], bool(r["ev_preemption"]))
+    """(scenario_variant, variant, coverage, sampling, ev_preemption, end_time): runs that differ
+    only in the seed. end_time is the effective run end (float, or None if unknown)."""
+    end = r.get("end_time")
+    return (r["scenario_variant"], r["variant"], float(r["coverage"]), r["sampling"], bool(r["ev_preemption"]),
+            None if end is None else float(end))
 
 
 def _find_baseline(key: tuple, groups: dict, baseline: str) -> tuple[tuple | None, str | None]:
-    scen, _, cov, sampling, pre = key
-    cands = [k for k, rs in groups.items() if k[0] == scen and rs[0]["controller"] == baseline]
+    scen, _, cov, sampling, pre, end = key
+    # never across preemption or run end: both change the baseline's own result (evaluation-8, ext-79)
+    cands = [k for k, rs in groups.items() if k[0] == scen and k[4] == pre and k[5] == end and rs[0]["controller"] == baseline]
     if not cands:
         return None, None
     plain = [k for k in cands if k[1] == baseline] or cands  # prefer the baseline without custom params
-    exact = [k for k in plain if k[2] == cov and k[3] == sampling and k[4] == pre]
+    exact = [k for k in plain if k[2] == cov and k[3] == sampling]
     if exact:
         return exact[0], "exact"
-    same_pre = [k for k in plain if k[4] == pre] or plain
-    same_pre.sort(key=lambda k: (k[2] != 1.0, k[3] != "uniform", -k[2]))
-    return same_pre[0], "scenario"
+    plain.sort(key=lambda k: (k[2] != 1.0, k[3] != "uniform", -k[2]))
+    return plain[0], "scenario"
 
 
 def _by_seed(rs: list[dict], metric: str) -> dict:
@@ -158,7 +172,8 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
 
     def sort_key(k):
         rs = groups[k]
-        return (scen_order.index(k[0]), rs[0]["controller"] != baseline, ctrl_order.index(k[1]), -k[2], k[3], not k[4])
+        return (scen_order.index(k[0]), k[5] is None, k[5] or 0.0, rs[0]["controller"] != baseline,
+                ctrl_order.index(k[1]), -k[2], k[3], not k[4])
 
     rows = []
     for key in sorted(groups, key=sort_key):
@@ -197,6 +212,7 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
                 "scenario_variant": first["scenario_variant"],
                 "sampling": first["sampling"],
                 "ev_preemption": first["ev_preemption"],
+                "end_time": key[5],
                 "seeds": [r["seed"] for r in rs],
                 "is_baseline": is_base,
                 "baseline_match": "self" if is_base else match,
@@ -235,6 +251,13 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
     config = _first_manifest_value(exp_dir, "config") or {}
     report["matrix"]["warmup_s"] = config.get("warmup")
     report["commands"] = [i["command"] for i in meta.get("invocations", []) if i.get("command")]
+    warnings = []
+    if len(report["matrix"]["end_time"]) > 1:
+        warnings.append(
+            f"runs end at different times ({', '.join(f'{x:g}' for x in report['matrix']['end_time'])} s); "
+            "each run end is reported and paired separately"
+        )
+    report["warnings"] = warnings
     return report
 
 
@@ -269,8 +292,11 @@ def _coverage_sweep(groups: dict, rows: list[dict]) -> list[dict]:
     """Delay and estimation error by coverage, for every (scenario, controller, sampling) run at >= 2 coverages."""
     by_line: dict[tuple, list[tuple]] = {}
     for key in groups:
-        by_line.setdefault((key[0], key[1], key[3], key[4]), []).append(key)
-    delta = {(r["scenario_variant"], r["variant"], r["coverage"], r["sampling"], r["ev_preemption"]): r["delta_vs_baseline_pct"] for r in rows}
+        by_line.setdefault((key[0], key[1], key[3], key[4], key[5]), []).append(key)
+    delta = {
+        (r["scenario_variant"], r["variant"], r["coverage"], r["sampling"], bool(r["ev_preemption"]), r["end_time"]): r["delta_vs_baseline_pct"]
+        for r in rows
+    }
     out = []
     for line, keys in by_line.items():
         if len({k[2] for k in keys}) < 2:
@@ -335,7 +361,7 @@ def _security_table(groups: dict) -> list[dict]:
 
 def _twin_key(key: tuple, groups: dict) -> tuple | None:
     """The no-event counterfactual group of a disrupted group: same scenario (+ params) with
-    events=[], same controller variant, coverage, sampling and preemption."""
+    events=[], same controller variant, coverage, sampling, preemption and run end."""
     base = groups[key][0]
     want = {**(base.get("scenario_params") or {}), "events": []}
     for k, rs in groups.items():
@@ -416,7 +442,7 @@ def _ev_table(groups: dict) -> list[dict]:
             "ev_extra_delay_others_s": _stat([r.get("ev_extra_delay_others_s") for r in rs]),
         }
         if key[4]:  # preemption on: paired comparison with the same group without preemption, if run
-            off = groups.get((key[0], key[1], key[2], key[3], False))
+            off = groups.get((key[0], key[1], key[2], key[3], False, key[5]))
             if off:
                 ev = paired(_by_seed(off, "ev_mean_travel_time_s"), _by_seed(rs, "ev_mean_travel_time_s"))
                 oth = paired(_by_seed(off, "others_mean_delay_s"), _by_seed(rs, "others_mean_delay_s"))
@@ -507,9 +533,11 @@ def render_markdown(report: dict) -> str:
         f"Matrix: scenarios {', '.join(m['scenarios'])} · controllers {', '.join(m['controllers'])} · seeds {m['seeds']} · "
         f"coverage {', '.join(f'{x:g}' for x in m['coverages'])} · sampling {', '.join(m['samplings'])} · "
         f"EV preemption {', '.join('on' if x else 'off' for x in m['ev_preemption'])} · "
-        f"warm-up {m.get('warmup_s')} s · run end {', '.join(f'{x:g}' for x in m['end_time'])} s",
+        f"warm-up {m.get('warmup_s')} s · run end {', '.join(f'{x:g}' for x in m['end_time']) or 'default'} s",
         "",
     ]
+    for w in report.get("warnings") or []:
+        lines += [f"**Warning:** {w}.", ""]
     for label, params in (("Scenario parameters", m.get("scenario_params")), ("Controller parameters", m.get("controller_params"))):
         if params:
             lines += [f"{label}: " + " · ".join(f"`{k}` = `{json.dumps(v)}`" for k, v in sorted(params.items())), ""]
@@ -523,6 +551,7 @@ def render_markdown(report: dict) -> str:
         "Unfinished % must be read next to delay (PERF-01): a controller that keeps cars out of the network can look fast.",
         "",
     ]
+    several_ends = len(m["end_time"]) > 1
     for scen in m["scenarios"]:
         srows = [r for r in rows if r["scenario_variant"] == scen]
         lines += [f"## Scenario `{scen}`", ""]
@@ -531,6 +560,7 @@ def render_markdown(report: dict) -> str:
             mm = r["metrics"]
             body.append([
                 f"**{r['variant']}**" if r["is_baseline"] else r["variant"],
+                *([f"{r['end_time']:g}" if r.get("end_time") is not None else "–"] if several_ends else []),
                 f"{r['coverage']:g}", r["sampling"], "on" if r["ev_preemption"] else "off", r["n_seeds"],
                 _fmt(r["mean_delay_s"]),
                 "baseline" if r["is_baseline"] else _fmt(r["delta_vs_baseline_pct"], 1, pct=True),
@@ -540,12 +570,15 @@ def render_markdown(report: dict) -> str:
                 _fmt(mm["queue_p95_veh"]), _fmt(mm["spillback_duration_s"], 0), _fmt(r["ev_mean_travel_time_s"]),
             ])
         lines.append(_table(
-            ["controller", "cov", "sampling", "EV pre", "n", "delay s", "Δ vs base", "diff s", "p (Holm)", "p95 TT s",
-             "stops/veh", "unfinished", "arterial delay", "cross delay", "queue p95", "spillback s", "EV TT s"],
+            ["controller", *(["end s"] if several_ends else []), "cov", "sampling", "EV pre", "n", "delay s", "Δ vs base",
+             "diff s", "p (Holm)", "p95 TT s", "stops/veh", "unfinished", "arterial delay", "cross delay", "queue p95",
+             "spillback s", "EV TT s"],
             body,
         ))
         if any(r.get("baseline_match") == "scenario" for r in srows):
             lines += ["", "_Some rows are paired with a baseline run at another coverage/sampling (fixed-time ignores sensor data)._"]
+        if any(r.get("baseline_match") is None for r in srows):
+            lines += ["", "_Rows with Δ '–' have no baseline run with the same preemption setting and run end._"]
         lines.append("")
     if report["coverage_sweep"]:
         lines += ["## Coverage sweep (sampling bias)", "",
