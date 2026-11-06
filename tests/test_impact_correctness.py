@@ -223,6 +223,13 @@ def test_ev_hours_come_from_claimed_emergency_rows_only():
     ({"service_life_years": 10.9}, "whole number"),
     ({"discount_rate": -1}, "discount_rate"),
     ({"intersections": -1}, "intersections"),
+    ({"intersections": float("nan")}, "intersections"),
+    ({"intersections": float("inf")}, "intersections"),
+    ({"discount_rate": float("inf")}, "discount_rate"),
+    ({"service_life_years": float("inf")}, "service_life_years"),
+    ({"vehicle_occupancy": float("nan")}, "vehicle_occupancy"),
+    ({"annual_hours": {"rush_hour": float("nan")}}, "annual_hours"),
+    ({"annual_hours": {"rush_hour": -5}}, "annual_hours"),
 ])
 def test_impossible_overrides_are_rejected(override, message):
     with pytest.raises(ValueError, match=message):

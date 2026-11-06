@@ -13,6 +13,7 @@ where my.json is {"vehicle_occupancy": 1.2, "annual_hours": {"rush_hour": 750}, 
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -205,13 +206,19 @@ class ImpactParams:
     def validate(self) -> None:
         """Reject values the cost-benefit formulas cannot use (ValueError naming the parameter)."""
         v = self.values
+        for name, value in v.items():  # NaN or inf (e.g. a NaN literal in a --params file) poisons every total
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number, not {value:g}")
+        for name, hours in self.annual_hours.items():
+            if not (math.isfinite(hours) and hours >= 0):
+                raise ValueError(f"annual_hours[{name!r}] must be a finite number >= 0, not {hours:g}")
         life = v["service_life_years"]
         if not life > 0 or life != int(life):
             # the NPV sums whole years while the capital recovery factor would use a fractional one
             raise ValueError(f"service_life_years must be a whole number of years > 0, not {life:g}")
         if not v["discount_rate"] > -1:
             raise ValueError(f"discount_rate must be > -1, not {v['discount_rate']:g}")
-        if v["intersections"] < 0:
+        if not v["intersections"] >= 0:
             raise ValueError(f"intersections must be >= 0, not {v['intersections']:g}")
 
     def cost_of(self, controller: str) -> tuple[float, float, str]:
