@@ -46,12 +46,22 @@ def download(url: str, timeout: float = 30.0) -> bytes:
         return response.read()
 
 
+def _umask() -> int:
+    mask = os.umask(0)  # the only portable way to read it is to set it
+    os.umask(mask)
+    return mask
+
+
 def _write_atomic(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+        # mkstemp creates 0600 and os.replace keeps it. Give the file the mode open() would
+        # (0644 under the usual umask): the server may run as another user, e.g. the Docker
+        # image's non-root user, and could not read three.js at all.
+        os.chmod(tmp, 0o666 & ~_umask())
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

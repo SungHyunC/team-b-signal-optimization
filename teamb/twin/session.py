@@ -98,6 +98,17 @@ class SessionBusy(RuntimeError):
     """The sim thread cannot take more work right now (queue full, or the thread is not running)."""
 
 
+class Request(concurrent.futures.Future):
+    """A future for one sim-thread request.
+
+    `superseded` is set when a newer restart replaced this one while it was still queued, so a
+    waiter can tell that cancellation apart from its own (asyncio.wrap_future also cancels the
+    request when the waiting task is cancelled, and Task.cancelling() only exists from 3.11 on).
+    """
+
+    superseded = False
+
+
 # --- small helpers -------------------------------------------------------------
 def parse_speed(value) -> float:
     """1, 2.5, "5", "5x", "max" -> float. "max" (or 0 / inf) means as fast as SUMO can go."""
@@ -235,6 +246,7 @@ class SessionConfig:
     def from_dict(cls, data: dict | None) -> "SessionConfig":
         from teamb.controllers import REGISTRY as CONTROLLERS
         from teamb.scenarios import REGISTRY as SCENARIOS
+        from teamb.sensors.sampling import parse_sampling
 
         data = dict(data or {})
         unknown = sorted(set(data) - {f.name for f in fields(cls)})
@@ -264,7 +276,13 @@ class SessionConfig:
             raise ValueError("controller_params and scenario_params must be objects")
         cfg.ev_preemption = _as_bool(cfg.ev_preemption)
         cfg.autoplay = _as_bool(cfg.autoplay)
-        cfg.sampling = str(cfg.sampling)
+        # The sampling text is part of SimEnv.run_id, i.e. the run folder name: check it here (400)
+        # instead of after SUMO already wrote routes, wherever a "/" in it pointed.
+        cfg.sampling = "uniform" if cfg.sampling is None else str(cfg.sampling).strip() or "uniform"
+        try:
+            parse_sampling(cfg.sampling)
+        except ValueError as exc:  # e.g. "could not convert string to float" for 'approach_biased:x'
+            raise ValueError(str(exc) if "sampling" in str(exc) else f"invalid sampling '{cfg.sampling}': {exc}") from None
         cfg.speed = speed_label(parse_speed(cfg.speed))
         return cfg
 
@@ -361,7 +379,7 @@ class TwinSession:
         self.fps = fps
         self._requests: queue.Queue = queue.Queue(maxsize=MAX_QUEUED_REQUESTS)
         self._restart_lock = threading.Lock()
-        self._pending_restart: concurrent.futures.Future | None = None
+        self._pending_restart: Request | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         # Everything below is written only by the sim thread; other threads just read it.
@@ -414,9 +432,9 @@ class TwinSession:
             self._thread.join(timeout)
 
     # --- public API (any thread) --------------------------------------------------
-    def submit(self, fn: Callable[[], Any]) -> concurrent.futures.Future:
+    def submit(self, fn: Callable[[], Any]) -> Request:
         """Run fn() on the sim thread between two steps."""
-        fut: concurrent.futures.Future = concurrent.futures.Future()
+        fut = Request()
         if threading.current_thread() is self._thread:  # already on the sim thread: no queue round trip
             try:
                 fut.set_result(fn())
@@ -435,20 +453,21 @@ class TwinSession:
         """Blocking version of submit() for synchronous callers (e.g. FastAPI's thread pool)."""
         return self.submit(fn).result(timeout)
 
-    def restart(self, cfg: SessionConfig) -> concurrent.futures.Future:
+    def restart(self, cfg: SessionConfig) -> Request:
         """Queue a restart. A newer restart supersedes (cancels) one that is still waiting, so
         N quick clicks or scripted calls cost at most one running plus one queued SUMO start."""
         with self._restart_lock:
             fut = self.submit(lambda: self._restart(cfg))
             previous, self._pending_restart = self._pending_restart, fut
         if previous is not None:
+            previous.superseded = True  # before cancel(): the waiter it wakes must already see it
             previous.cancel()  # only succeeds while it is still queued
         return fut
 
-    def control(self, action: str, speed=None, t=None) -> concurrent.futures.Future:
+    def control(self, action: str, speed=None, t=None) -> Request:
         return self.submit(lambda: self._control(action, speed, t))
 
-    def command(self, command: dict) -> concurrent.futures.Future:
+    def command(self, command: dict) -> Request:
         return self.submit(lambda: self._command(command))
 
     def status(self) -> dict:
@@ -493,14 +512,18 @@ class TwinSession:
             self._cancel_queued()
 
     def _cancel_queued(self) -> None:
-        """The thread is leaving: let everyone still waiting on a request know right away."""
+        """The thread is leaving: let everyone still waiting on a request know right away.
+
+        The requests fail with SessionBusy (HTTP 503) rather than being cancelled: a cancelled
+        request reads as "superseded by a newer restart" (409), which hides that the thread is gone.
+        """
         while True:
             try:
                 item = self._requests.get_nowait()
             except queue.Empty:
                 return
-            if item is not None:
-                item[1].cancel()
+            if item is not None and item[1].set_running_or_notify_cancel():  # False: already cancelled
+                item[1].set_exception(SessionBusy("the simulation thread stopped (see the server log)"))
 
     def _stepping(self) -> bool:
         return self.env is not None and self.state != "loading" and (self.playing or self.ff_target is not None)
@@ -616,7 +639,7 @@ class TwinSession:
                 end_time=cfg.end_time,
                 frames=True,
             )
-            env.output_dir = self.runs_dir / env.run_id  # keep twin runs apart from experiment runs
+            env.output_dir = self._run_dir(env.run_id)  # keep twin runs apart from experiment runs
             self._prune_runs()
             self.env = env  # set before start() so a failed start still gets closed
             env.start()
@@ -771,6 +794,14 @@ class TwinSession:
             _safe_close(env)
         self.playing, self.ff_target, self.state = False, None, "error"
         self._publish_status(message=self.error)
+
+    def _run_dir(self, run_id: str) -> Path:
+        """runs_dir/<run_id>, refusing an id that is not one plain folder name ("/", "..", an
+        absolute path): a run written anywhere else is never pruned and may overwrite files."""
+        out = self.runs_dir / run_id
+        if run_id in ("", ".", "..") or out.name != run_id or out.parent != self.runs_dir:
+            raise ValueError(f"refusing run id {run_id!r}: not a plain folder name inside {self.runs_dir}")
+        return out
 
     def _prune_runs(self) -> None:
         """Make room for the run about to start: keep the newest TWIN_KEEP_RUNS - 1 old ones."""

@@ -1,5 +1,6 @@
 // launch.js: URL settings -> session config, and when opening a link restarts the shared run
-// (frontend-1, twin-security-2, ext-178, frontend-2, frontend-3).
+// (frontend-1, twin-security-2, ext-178, frontend-2, frontend-3, and scenario defaults of a
+// sandbox launch link).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -56,6 +57,36 @@ test('a different demand, scenario or end time does restart', () => {
   assert.equal(configDiffers(urlConfig(q('?scenario=off_peak&demand=1.25&end=1200')), running), true);
   assert.equal(configDiffers(urlConfig(q('?scenario=rush_hour&demand=1.25&end=1800')), running), true);
   assert.equal(configDiffers(urlConfig(q('?scenario=rush_hour&demand=1.25&end=1200')), running), false);
+});
+
+// A sandbox launch link (sandbox_schema.js launchParams) names the whole run: a blank duration
+// means the scenario's own, it never names coverage, and it always sends demand.
+const META = { scenarios: [{ name: 'rush_hour', defaults: {} }, { name: 'fake_data_attack', defaults: { coverage: 0.25 } }] };
+const sandboxLink = (extra = '') => urlConfig(q(`?scenario=rush_hour&controller=max_pressure&seed=1&demand=1&ev=1&start=0&speed=2${extra}`));
+
+test("a link naming a scenario does not attach to a run with another duration or coverage", () => {
+  assert.equal(configDiffers(sandboxLink(), serverConfig({ end_time: 1200 }), META), true);
+  assert.equal(configDiffers(sandboxLink(), serverConfig({ coverage: 0.5 }), META), true);
+  assert.equal(configDiffers(sandboxLink('&end=1200'), serverConfig({ end_time: 1200, coverage: 0.5 }), META), true);
+  assert.equal(configDiffers(urlConfig(q('?scenario=rush_hour&controller=max_pressure')), serverConfig({ end_time: 1200 }), META), true);
+});
+
+test('demand 1 and the scenario coverage are the same run as leaving them out', () => {
+  assert.equal(configDiffers(sandboxLink(), serverConfig({ scenario_params: {} }), META), false);
+  assert.equal(configDiffers(sandboxLink(), serverConfig({ coverage: 1 }), META), false); // a form-started run
+  const attack = urlConfig(q('?scenario=fake_data_attack&controller=max_pressure&seed=1&demand=1'));
+  const attackRun = (over) => serverConfig({ scenario: 'fake_data_attack', ...over });
+  assert.equal(configDiffers(attack, attackRun({ coverage: 0.25 }), META), false);
+  assert.equal(configDiffers(attack, attackRun({ coverage: null }), META), false);
+  assert.equal(configDiffers(attack, attackRun({ coverage: 1 }), META), true);
+  assert.equal(configDiffers(urlConfig(q('?scenario=fake_data_attack&coverage=25')), attackRun({ coverage: null }), META), false);
+});
+
+test('a link without a scenario still leaves coverage, duration and demand to the running run', () => {
+  const running = serverConfig({ coverage: 0.5, end_time: 1200, scenario_params: { demand_scale: 1.25 } });
+  assert.equal(configDiffers(urlConfig(q('?speed=max&camera=J2')), running, META), false);
+  assert.equal(configDiffers(urlConfig(q('?controller=max_pressure&seed=1')), running, META), false);
+  assert.equal(configDiffers(urlConfig(q('?controller=fixed_time')), running, META), true);
 });
 
 test('speed and start time alone never restart; no running config never "differs"', () => {

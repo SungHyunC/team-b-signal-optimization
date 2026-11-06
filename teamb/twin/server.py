@@ -77,14 +77,21 @@ class Superseded(Exception):
 
 
 async def await_future(fut, timeout: float):
-    """Wait for a sim-thread future; Superseded if it was cancelled rather than this task."""
+    """Wait for a sim-thread future. Superseded if a newer restart cancelled it while it was
+    queued (session.Request.superseded); the waiter's own cancellation stays a CancelledError."""
     try:
         return await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
     except asyncio.CancelledError:
-        task = asyncio.current_task()
-        if fut.cancelled() and not (task is not None and task.cancelling()):
+        if fut.cancelled() and getattr(fut, "superseded", False) and not _cancelling(asyncio.current_task()):
             raise Superseded("superseded by a newer restart request") from None
         raise
+
+
+def _cancelling(task) -> bool:
+    """Whether `task` itself is being cancelled. Task.cancelling() is new in 3.11; on 3.10 the
+    request's superseded flag alone decides."""
+    cancelling = getattr(task, "cancelling", None)
+    return bool(cancelling and cancelling())
 
 
 def create_app(*, runs_dir: str | Path | None = None, results_dir: str | Path | None = None) -> FastAPI:
@@ -196,7 +203,8 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         local = vendor_file(path)
         if local is None:
             raise HTTPException(404)
-        if local.is_file():
+        # A copy the server cannot read (vendored by another user) would fail mid-response: use the CDN.
+        if local.is_file() and os.access(local, os.R_OK):
             return FileResponse(local, media_type="text/javascript")
         return RedirectResponse(THREE_CDN + path, status_code=307)
 

@@ -257,9 +257,8 @@ export class ViewportChrome {
         return show([h('div', { class: 'spinner' }), h('div', {}, message)], true);
       }
       case 'error': {
-        // A recording that failed to download part way: load that part again, where it stopped.
-        const retry = this.ctx.static && s.config ? () => this.ctx.socket.control('play') : () => this.ctx.topbar.start();
-        return show([h('div', { style: { maxWidth: '560px', color: '#ffd0d0' } }, s.error || t('Something went wrong.'))], false, [btn(t('Try again'), 'primary', retry)]);
+        // TopBar.retry, like Play / Space: a recording carries on where its download failed.
+        return show([h('div', { style: { maxWidth: '560px', color: '#ffd0d0' } }, s.error || t('Something went wrong.'))], false, [btn(t('Try again'), 'primary', () => this.ctx.topbar.retry())]);
       }
       case 'finished': {
         const sum = s.summary || {};

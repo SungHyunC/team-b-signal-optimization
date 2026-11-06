@@ -1,4 +1,6 @@
 """Cloud access gate and hosted sandbox contract; no SUMO processes needed."""
+import os
+
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 import pytest
@@ -94,6 +96,26 @@ def test_vendor_serves_local_copy_and_falls_back_to_cdn(open_client, tmp_path, m
     assert cdn.headers["location"] == server.THREE_CDN + "examples/jsm/controls/OrbitControls.js"
     escaped = open_client.get("/vendor/three/escape.js", follow_redirects=False)
     assert escaped.status_code == 404 and "OUTSIDE" not in escaped.text
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root reads any file")
+def test_vendor_copy_the_server_cannot_read_falls_back_to_cdn(open_client, tmp_path, monkeypatch):
+    """A vendored file owned by another user (e.g. a 0600 copy baked into the non-root Docker
+    image) must not break the page with a 500: send the browser to the pinned CDN instead."""
+    from teamb.twin import server
+
+    vendor = tmp_path / "vendor"
+    (vendor / "build").mkdir(parents=True)
+    module = vendor / "build" / "three.module.js"
+    module.write_text("export const REVISION = '160';")
+    module.chmod(0)
+    monkeypatch.setattr(server, "VENDOR_DIR", vendor)
+    try:
+        r = open_client.get("/vendor/three/build/three.module.js", follow_redirects=False)
+    finally:
+        module.chmod(0o644)
+    assert r.status_code == 307
+    assert r.headers["location"] == server.THREE_CDN + "build/three.module.js"
 
 
 def test_vendor_file_guard_unit(tmp_path):
@@ -283,6 +305,71 @@ def test_superseded_restart_answers_409(open_client):
     first.join(10)
     assert second.status_code == 200 and second.json()["config"]["seed"] == 2
     assert results["first"].status_code == 409 and "superseded" in results["first"].json()["detail"]
+
+
+def test_await_future_without_task_cancelling(monkeypatch):
+    """Python 3.10 has no Task.cancelling() (requires-python >= 3.10): a superseded restart is
+    still Superseded, and the waiter's own cancellation still propagates as CancelledError."""
+    import asyncio
+
+    from teamb.twin.server import Superseded, await_future
+    from teamb.twin.session import Hub, SessionConfig, TwinSession
+
+    class Py310Task:
+        """What asyncio.current_task() returns on 3.10: a Task without cancelling()."""
+
+        def __init__(self, task):
+            self._task = task
+
+        def __getattr__(self, name):
+            if name == "cancelling":
+                raise AttributeError(name)
+            return getattr(self._task, name)
+
+    real_current_task = asyncio.current_task
+    monkeypatch.setattr(asyncio, "current_task", lambda loop=None: Py310Task(real_current_task(loop)))
+
+    async def scenario():
+        session = TwinSession(Hub())  # no thread: requests stay queued
+        superseded = asyncio.ensure_future(await_future(session.restart(SessionConfig(seed=1)), 5))
+        await asyncio.sleep(0.05)
+        session.restart(SessionConfig(seed=2))
+        with pytest.raises(Superseded):
+            await superseded
+
+        own = asyncio.ensure_future(await_future(session.control("pause"), 5))
+        await asyncio.sleep(0.05)
+        own.cancel()  # e.g. the WebSocket closed while the request waited
+        with pytest.raises(asyncio.CancelledError):
+            await own
+
+    asyncio.run(scenario())
+
+
+def test_requests_queued_when_the_sim_thread_crashes_answer_503(open_client):
+    """A crash is not a newer restart: waiters get 503 'thread stopped', not 409 'superseded'."""
+    import threading
+
+    session = open_client.app.state.session
+    results = {}
+    waiting = threading.Thread(target=lambda: results.update(r=open_client.post("/api/control", json={"action": "pause"})))
+    waiting.start()
+    for _ in range(100):  # until the control request is queued
+        if session._requests.qsize():
+            break
+        threading.Event().wait(0.02)
+    assert session._requests.qsize() == 1
+
+    def crash(timeout):
+        raise RuntimeError("boom")
+
+    session._drain = crash
+    session.start_thread()
+    waiting.join(10)
+    r = results["r"]
+    assert r.status_code == 503 and "superseded" not in r.json()["detail"]
+    assert "stopped" in r.json()["detail"]
+    assert session.thread_alive() is False
 
 
 def test_websocket_in_flight_limit(open_client):
