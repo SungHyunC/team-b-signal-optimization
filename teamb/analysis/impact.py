@@ -77,8 +77,29 @@ def _normalize(summary: dict, run_dir: Path | None = None) -> dict:
                     target.update(json.loads(p.read_text()))
                 except (OSError, json.JSONDecodeError):
                     pass
-    warmup = run.get("warmup") or (manifest.get("config") or {}).get("warmup")
+    warmup = run.get("warmup")
+    if warmup is None:  # an explicit warmup of 0 is a value, not "missing"
+        warmup = (manifest.get("config") or {}).get("warmup")
     run["_warmup"] = float(warmup) if warmup is not None else float(config.WARMUP_S)
+    # did the run finish? (contract 2: summaries of interrupted runs must not be priced)
+    end = run.get("end_time")
+    if end is None:
+        end = (manifest.get("config") or {}).get("end_time")
+    if end is None:
+        end = spec.get("end_time")
+    run["_end_time"] = _to_number(end) if isinstance(end, str) else end
+    if run_dir is not None:
+        from teamb.experiments.runner import run_status
+
+        status, _, reason = run_status(run_dir, expected_end=run["_end_time"])
+        run["_incomplete"] = None if status == "ok" else reason
+    else:
+        run["_incomplete"] = None
+        sim = run.get("sim_time_s")
+        if run.get("complete") is False or str(run.get("complete")).lower() == "false":
+            run["_incomplete"] = "summary is marked complete: false"
+        elif isinstance(run["_end_time"], (int, float)) and isinstance(sim, (int, float)) and sim + 1e-6 < run["_end_time"]:
+            run["_incomplete"] = f"stopped at sim_time_s {sim:g} before the end time {run['_end_time']:g}"
     run["_variant"] = spec.get("variant") or run.get("variant") or run.get("controller")
     scenario_params = spec.get("scenario_params") or {}
     run["_scenario"] = run.get("scenario_variant") or run.get("scenario")
@@ -100,7 +121,12 @@ def load_runs(source) -> list[dict]:
                 return [_normalize(row) for row in csv.DictReader(fh)]
         data = json.loads(path.read_text())
         if isinstance(data, dict):
-            data = data.get("runs") or data.get("summaries") or [data]
+            if "runs" in data:
+                data = data["runs"]
+            elif "summaries" in data:
+                data = data["summaries"]
+            else:
+                data = [data]
         return [_normalize(s.get("summary", s) if isinstance(s, dict) else s) for s in data]
     if not path.is_dir():
         raise FileNotFoundError(f"no such file or folder: {path}")
@@ -118,12 +144,16 @@ def load_runs(source) -> list[dict]:
 
 # --- per-run quantities -----------------------------------------------------------------
 def run_quantities(run: dict, p: ImpactParams) -> dict | None:
-    """Per-hour delay and stops of one run (None if the summary lacks the basics)."""
+    """Per-hour delay and stops of one run (None if the summary lacks the basics, or if the run
+    stopped before its end time or before the warm-up ended: no measurement window to price)."""
     completed = run.get("completed")
     sim_time = run.get("sim_time_s")
-    if completed is None or sim_time is None:
+    if completed is None or sim_time is None or run.get("_incomplete"):
         return None
-    window_h = max(1e-9, (float(sim_time) - run["_warmup"]) / 3600.0)
+    window_s = float(sim_time) - run["_warmup"]
+    if window_s <= 0:
+        return None
+    window_h = window_s / 3600.0
     unfinished = float(run.get("unfinished") or 0)
     mean_delay = run.get("mean_delay_s")
     delay_s = (float(mean_delay) * completed if mean_delay is not None else 0.0) + unfinished * p.unfinished_trip_delay_s
@@ -190,6 +220,10 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
     notes: list[str] = []
     by_key: dict[tuple, dict] = {}
     for run in runs:
+        if run.get("_incomplete"):
+            notes.append(f"incomplete/interrupted run for {run['_variant']}/{run['_scenario']}/seed {run.get('seed')} "
+                         f"left out ({run['_incomplete']})")
+            continue
         key = (*_setting(run), run["_variant"], run.get("seed"))
         if key in by_key:
             notes.append(f"duplicate run for {key}; using the last one")
@@ -250,7 +284,7 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
         "runs": len(runs),
         "rows": rows,
         "annual": annualize(rows, p),
-        "preemption": preemption_effect(runs, p),
+        "preemption": preemption_effect([r for r in runs if not r.get("_incomplete")], p),
         "assumptions": assumption_table(p),
         "annual_hours": dict(p.annual_hours),
         "vot_usd_per_vehicle_hour": vot_per_vehicle_hour(p),
