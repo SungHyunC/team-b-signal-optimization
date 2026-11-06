@@ -59,8 +59,8 @@ approach's term becomes closure_weight · (x_up − x_down) instead of (x_up −
 Without a closure nothing changes: the evidence never builds up while cars reach the exit.
 
 Tunable: measure, down_measure, weighted, margin (cars), rho, rho_cap (cars), interval (5 s),
-min_green, max_green, source, defense, closure_aware, closure_weight, closure_detect_s,
-closure_min_queue.
+min_green, max_green, source, defense, closure_aware, closure_weight (0..1), closure_detect_s (> 0 s),
+closure_min_queue (>= 0 cars).
 """
 from __future__ import annotations
 
@@ -110,6 +110,9 @@ class MaxPressureController(AdaptiveController):
             raise ValueError("rho and rho_cap must be >= 0")
         if not 0.0 <= float(closure_weight) <= 1.0:
             raise ValueError("closure_weight must be between 0 and 1")
+        # closure_detect_s <= 0 would count an open exit (evidence 0.0) as closed at every approach
+        if not float(closure_detect_s) > 0 or not float(closure_min_queue) >= 0:
+            raise ValueError("closure_detect_s must be > 0 s and closure_min_queue >= 0 cars")
         super().__init__(source=source, defense=defense, measure=measure, down_measure=down_measure, weighted=weighted,
                          margin=margin, interval=interval, min_green=min_green, max_green=max_green, rho=rho,
                          rho_cap=rho_cap, closure_aware=closure_aware, closure_weight=closure_weight,

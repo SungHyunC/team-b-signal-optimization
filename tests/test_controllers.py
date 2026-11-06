@@ -161,6 +161,16 @@ def test_max_pressure_closure_aware_infers_a_closed_exit_from_detectors(topo):
     assert not ctl.through_closed("J2", "W") and ctl.pressure("J2", "EW") == 11 - 1  # x_down = 1 stopped car
 
 
+def test_max_pressure_rejects_closure_settings_that_close_every_exit():
+    # closure_detect_s <= 0: the 0.0 evidence of an open exit already reached the threshold, so every
+    # through movement counted as blocked and (closure_weight 0) max-pressure stopped working.
+    for bad in ({"closure_detect_s": 0}, {"closure_detect_s": -5}, {"closure_detect_s": float("nan")},
+                {"closure_min_queue": -1}, {"closure_min_queue": float("nan")}):
+        with pytest.raises(ValueError, match="closure_"):
+            make_controller("max_pressure", closure_aware=True, **bad)
+    make_controller("max_pressure", closure_aware=True, closure_detect_s=5, closure_min_queue=0)
+
+
 def test_max_pressure_closure_aware_is_a_no_op_while_cars_reach_the_exit(topo):
     plain, aware = ready("max_pressure", topo), ready("max_pressure", topo, closure_aware=True)
     for i in range(40):
