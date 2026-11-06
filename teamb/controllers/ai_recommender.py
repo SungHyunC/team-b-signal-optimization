@@ -16,13 +16,16 @@ the search inside `log()` — outside the controller's 0.25 s budget, which only
 observe/propose_action — so batch results do not depend on wall-clock speed.
 
 Recommendation (pending_recommendation(), also shown as frame["recommendation"]):
-    {"id", "status": "searching" | "pending" | "approved" | "rejected", "created_t",
+    {"id", "status": "searching" | "pending" | "approved" | "rejected" | "cancelled", "created_t",
      "plan": {"cycle", "splits": {J: share}, "offsets": {J: s}} | null while searching,
      "current_plan": {...},
      "expected": {"mean_delay_s", "baseline_mean_delay_s", "improvement_pct", ...} | null,
      "based_on": {"coverage", "window_s", "trials", "estimated_flows": {J: {side: veh/h}}, ...},
      "progress": {"done", "total"}, "note", "error", "decided_by", "decided_t"}
 A failed search is reported as status "rejected" with decided_by "system" and an "error".
+A background search still running when the run ends is reported as "cancelled" (decided_by
+"system"). Headless runs (`teamb run`, experiments) have nobody to approve: pass
+auto_approve=true there, otherwise the run stays on the starting plan (`plan_applied` false).
 
 Commands (handle_command): {"type": "approve", "id"}, {"type": "reject", "id"}, {"type": "optimize"}.
 With `approval_token` set, approve/reject must carry the same "token" (a stand-in for the
@@ -43,6 +46,9 @@ from teamb.controllers.defense import ObservationGuard
 from teamb.controllers.demand_model import ProbeDemandModel, nested, od_flows
 from teamb.controllers.fixed_time import TimingPlan
 from teamb.controllers import optimizer
+
+CANCELLED_NOTE = "run ended before the search finished"
+HEADLESS_HINT = "nobody can approve in a headless run: pass auto_approve=true (it also searches synchronously)"
 
 
 @register
@@ -106,20 +112,37 @@ class AIRecommenderController(Controller):
         self._seq = 0
 
     def close(self) -> None:
+        """Stop a background search that is still running; its recommendation becomes "cancelled"."""
         if self._job is not None:
             self._job.cancel()
             self._job = None
+            rec = getattr(self, "recommendation", None)
+            if rec is not None and rec.get("status") == "searching":
+                rec.update(self._cancelled())
+                self.events.append({"t": self.t, "type": "recommendation_cancelled", "id": rec["id"], "note": rec["note"]})
+
+    def _cancelled(self) -> dict:
+        note = CANCELLED_NOTE if self.auto_approve else CANCELLED_NOTE + "; " + HEADLESS_HINT
+        return {"status": "cancelled", "note": note, "decided_by": "system", "decided_t": self.t}
 
     # --- every step -----------------------------------------------------------------
     def observe(self, observation: dict) -> None:
+        """Feed fresh probe data to the demand model.
+
+        The controller's clock (`self.t`) follows the simulation (propose_action's state["t"]),
+        never the observation's own timestamp: an observation older than the clock by more than
+        the guard's max age is "stale" (frozen feed), one older than the last accepted is
+        "replayed". Neither reaches the demand model, and neither can move the clock backwards.
+        """
         super().observe(observation)
         if observation and observation.get("t") is not None:
-            self.t = float(observation["t"])
-            if self.guard.check_observation(observation, self.t) is None:  # fresh, not replayed
+            now = max(self.t, float(observation["t"]))
+            if self.guard.check_observation(observation, now) is None:  # fresh, not replayed
                 self.demand.add(observation)
 
     def propose_action(self, state: dict) -> dict[str, str | None]:
         t = state["t"]
+        self.t = max(self.t, float(t))  # the simulation clock; only moves forward
         return {j: self.plan.axis_at(j, t) for j in state["junctions"]}
 
     def log(self, step: int) -> None:
@@ -163,9 +186,21 @@ class AIRecommenderController(Controller):
         return {"ok": True, "id": rec["id"], "status": rec["status"], "plan": rec["plan"]}
 
     def summary(self) -> dict:
-        """For experiments: every recommendation of the run and how the probe data looked."""
+        """For experiments: every recommendation of the run and how the probe data looked.
+
+        SimEnv asks for the summary before close(), so a search that is still running here
+        is reported as "cancelled" already (the run ends before it can finish).
+        `plan_applied` is False when the run never left its starting plan, e.g. a headless run
+        without auto_approve, where nobody can approve.
+        """
         keep = ("id", "status", "created_t", "plan", "expected", "note", "error", "decided_by", "decided_t")
-        return {"recommendations": [{k: r.get(k) for k in keep} for r in self.history],
+        recs = []
+        for r in self.history:
+            row = {k: r.get(k) for k in keep}
+            if r is self.recommendation and self._job is not None and r.get("status") == "searching":
+                row.update(self._cancelled())
+            recs.append(row)
+        return {"recommendations": recs, "plan_applied": any(r["status"] == "approved" for r in recs),
                 "ignored_untrusted": self.demand.ignored, "audit": list(self.audit)}
 
     def drain_events(self) -> list[dict]:

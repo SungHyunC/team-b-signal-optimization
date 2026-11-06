@@ -20,6 +20,10 @@ exactly as for local runs. Runs that already have a ``summary.json`` are skipped
 
 Keep every run of one paired comparison on the same backend: SUMO's Linux and macOS builds
 are not guaranteed to produce bit-identical trajectories.
+
+RL training uses the same image: ``teamb train-rl --backend modal --workers 64 ...`` runs each
+training round's episodes as :func:`rl_episode_remote` calls (see :func:`rl_episode_runner`)
+and does the Q-learning updates locally.
 """
 from __future__ import annotations
 
@@ -31,6 +35,7 @@ import sys
 import tarfile
 import tempfile
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from importlib import metadata
 from pathlib import Path
@@ -49,6 +54,7 @@ RUNTIME_PACKAGES = ("eclipse-sumo", "traci", "sumolib", "numpy", "pandas", "optu
 CPU_PER_RUN = 1.0
 MEMORY_MB = 2048
 RUN_TIMEOUT_S = 3600
+RL_EPISODE_TIMEOUT_S = 3600
 
 
 def _pinned(packages=RUNTIME_PACKAGES) -> list[str]:
@@ -103,9 +109,24 @@ if modal is not None:
                 tar.add(Path(tmp) / res["run"], arcname=res["run"])
             res["archive"] = buf.getvalue()
         return res
+
+    @app.function(
+        image=_image,
+        cpu=CPU_PER_RUN,
+        memory=MEMORY_MB,
+        timeout=RL_EPISODE_TIMEOUT_S,
+        retries=modal.Retries(max_retries=2, initial_delay=2.0),
+        max_containers=256,
+    )
+    def rl_episode_remote(job: dict) -> dict:
+        """One RL training episode (rl_train.run_episode) in the container: its transitions and stats."""
+        from teamb.controllers.rl_train import run_episode
+
+        return run_episode(job)
 else:  # pragma: no cover
     app = None
     run_remote = None
+    rl_episode_remote = None
 
 
 def _safe_extract(blob: bytes, dest: Path, run_name: str) -> None:
@@ -157,3 +178,32 @@ def run_specs(specs, runs_dir: Path, *, workers: int, force: bool = False, git_r
     for spec in todo:  # runs lost to infrastructure errors still get a named failure
         if spec.name not in returned:
             yield {"run": spec.name, "status": "failed", "error": "cloud: " + (errors[0] if errors else "no result returned")}
+
+
+@contextmanager
+def rl_episode_runner(workers: int):
+    """RL training on Modal (``teamb train-rl --backend modal``): yield ``run_round(jobs)``.
+
+    ``run_round`` runs every job of one training round as its own container call (at most
+    ``workers`` at a time, same image as the experiment runs) and returns
+    ``(results in job order, error messages)``; an episode lost to an infrastructure error after
+    the retries is reported in the messages instead of stopping the training. The app stays up
+    for the whole training, so containers are reused between rounds.
+    """
+    _require_modal()
+    with modal.enable_output(), app.run():
+        fn = rl_episode_remote.with_options(max_containers=max(1, int(workers)))
+
+        def run_round(jobs: list[dict]) -> tuple[list[dict], list[str]]:
+            results, errors = [], []
+            # consume the whole map before zipping: an unfinished Modal generator is closed later
+            # from the wrong event loop ("aclose(): asynchronous generator is already running")
+            outputs = list(fn.map(jobs, order_outputs=True, return_exceptions=True))
+            for job, res in zip(jobs, outputs):
+                if isinstance(res, BaseException):
+                    errors.append(f"seed {job['seed']} ({job['scenario']}): cloud: {type(res).__name__}: {res}")
+                else:
+                    results.append(res)
+            return results, errors
+
+        yield run_round

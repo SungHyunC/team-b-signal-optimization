@@ -33,7 +33,8 @@ from pathlib import Path
 from teamb import config
 from teamb.controllers.fixed_time import FixedTimeController, TimingPlan
 
-SEARCH_VERSION = 1  # bump when the evaluation changes, so old cache files are not reused
+SEARCH_VERSION = 2  # bump when the evaluation changes, so old cache files are not reused
+# 2: relative offsets for the Webster seed trials, fixed-cycle green clamp in TimingPlan
 CACHE_DIR = config.RESULTS / "cache" / "ai_recommender"
 
 
@@ -97,8 +98,10 @@ def plan_to_params(plan: TimingPlan, spec: SearchSpec) -> dict:
     params = {"cycle": cycle}
     for j in spec.junctions:
         params[f"split_{j}"] = min(s_hi, max(s_lo, plan.splits.get(j, 0.5)))
+    # suggest_plan pins the first junction at offset 0, so express the others relative to it
+    ref = plan.offsets.get(spec.junctions[0], 0.0)
     for j in spec.junctions[1:]:
-        params[f"offset_{j}"] = (plan.offsets.get(j, 0.0) / cycle) % 1.0
+        params[f"offset_{j}"] = ((plan.offsets.get(j, 0.0) - ref) / cycle) % 1.0
     return params
 
 
@@ -195,12 +198,16 @@ def run_search(spec: SearchSpec, progress=None) -> dict:
             progress(trial.number + 2, total, min(study.best_value, baseline["objective"]))
 
     study.optimize(objective, n_trials=spec.trials, callbacks=[report])
-    best = study.best_trial
-    better = best.value < baseline["objective"]
+    ranked = sorted((t for t in study.trials if t.value is not None), key=lambda t: t.value)
+    best = study.best_trial if ranked else None  # trials=0: nothing to compare, keep the current plan
+    better = best is not None and best.value < baseline["objective"]
     chosen = best.user_attrs["result"] if better else baseline
     base_delay, new_delay = baseline["mean_delay_s"], chosen["mean_delay_s"]
     improvement = 100.0 * (base_delay - new_delay) / base_delay if base_delay and new_delay is not None else 0.0
-    ranked = sorted((t for t in study.trials if t.value is not None), key=lambda t: t.value)
+    if best is None:
+        note = "no search trials were run; keep the current plan"
+    else:
+        note = "" if better else "no candidate beat the current plan; keep it"
     return {
         "plan": best.user_attrs["plan"] if better else current.to_dict(),
         "expected": {
@@ -211,7 +218,7 @@ def run_search(spec: SearchSpec, progress=None) -> dict:
             "baseline_objective": baseline["objective"],
             "unfinished": chosen["unfinished"],
         },
-        "note": "" if better else "no candidate beat the current plan; keep it",
+        "note": note,
         "top_trials": [{"number": t.number, "objective": round(t.value, 2), **t.user_attrs["plan"]} for t in ranked[:5]],
         "trials": len(study.trials),
         "wall_s": round(time.time() - wall0, 1),
@@ -265,14 +272,20 @@ class SearchJob:
 
     def poll(self) -> list[tuple]:
         """All messages that arrived since the last poll (never blocks)."""
+        # Check liveness *before* draining: a worker that was already dead has flushed everything
+        # it sent into the pipe, so an empty drain really means "no result". Checking after the
+        # drain could miss a result put just before the worker exited.
+        alive = self.process.is_alive()
         messages = []
         while True:
             try:
                 messages.append(self.queue.get_nowait())
             except queue_mod.Empty:
                 break
-        if not messages and not self.process.is_alive():  # a finished worker has flushed its queue
-            messages.append(("error", f"search process ended without a result (exit code {self.process.exitcode})"))
+        if not alive:
+            self.process.join(timeout=0)  # reap it, no zombie
+            if not messages:
+                messages.append(("error", f"search process ended without a result (exit code {self.process.exitcode})"))
         return messages
 
     def cancel(self) -> None:

@@ -105,6 +105,75 @@ def test_max_pressure_follows_pressure_with_margin(topo):
     assert ctl.propose_action(make_state(topo, 112)) == {}, "decides only every 5 s"
 
 
+def test_max_pressure_rho_asks_a_bigger_lead_under_heavy_pressure(topo):
+    obs = make_obs(topo, 100, count={("J2", "W"): 10, ("J2", "N"): 13})  # P_EW 10, P_NS 13, margin 2
+    for params, want in (({}, {"J2": "NS"}),  # 13 > 10 + 2
+                         ({"rho": 0.25}, {}),  # 13 <= 10 + 2 + 2.5
+                         ({"rho": 0.25, "rho_cap": 0.5}, {"J2": "NS"})):  # 13 > 10 + 2 + 0.5
+        ctl = ready("max_pressure", topo, **params)
+        ctl.observe(obs)
+        assert ctl.propose_action(make_state(topo, 100)) == want, params
+    ctl = ready("max_pressure", topo, rho=0.25)
+    assert ctl.hysteresis(-4.0) == 0.0 and ctl.hysteresis(8.0) == 2.0
+    assert ctl.params["rho"] == 0.25 and ctl.params["rho_cap"] is None
+    with pytest.raises(ValueError):
+        make_controller("max_pressure", rho=-0.1)
+
+
+def test_max_pressure_saturated_arterial_ends_only_at_max_green(topo):
+    ctl = ready("max_pressure", topo)
+    ctl.observe(make_obs(topo, 100, count={("J2", "W"): 26, ("J2", "N"): 1}))
+    assert ctl.propose_action(make_state(topo, 100, green_s=89)) == {}, "NS cannot beat the margin"
+    ctl.observe(make_obs(topo, 105, count={("J2", "W"): 26, ("J2", "N"): 1}))
+    assert ctl.propose_action(make_state(topo, 105, green_s=91)) == {"J2": "NS"}, "max-out bounds starvation"
+
+
+def test_max_pressure_closure_aware_does_not_count_a_closed_exit_as_room(topo):
+    obs = make_obs(topo, 100, count={("J2", "W"): 20})
+    obs["junctions"]["J2"]["exits"]["E"]["closed"] = True  # J2_J3 closed (flood)
+    plain = ready("max_pressure", topo)
+    plain.observe(obs)
+    assert plain.pressure("J2", "EW") == 20, "default: the empty closed road looks like room"
+    aware = ready("max_pressure", topo, closure_aware=True)
+    aware.observe(obs)
+    assert aware.pressure("J2", "EW") == 0, "the through movement has nowhere to go"
+    half = ready("max_pressure", topo, closure_aware=True, closure_weight=0.5)
+    half.observe(obs)
+    assert half.pressure("J2", "EW") == 10
+    listed = make_obs(topo, 100, count={("J2", "W"): 20})
+    listed["closed_edges"] = ["J2_J3"]
+    aware.observe(listed)
+    assert aware.pressure("J2", "EW") == 0 and aware.pressure("J1", "EW") == 0
+
+
+def test_max_pressure_closure_aware_infers_a_closed_exit_from_detectors(topo):
+    ctl = ready("max_pressure", topo, closure_aware=True)  # closure_detect_s 30 = six 5 s decisions
+    stuck = dict(count={("J2", "W"): 11}, queue={("J2", "W"): 8})  # cars stopped on a green, exit zone empty
+    for i in range(6):
+        t = 100 + 5 * i
+        ctl.observe(make_obs(topo, t, **stuck))
+        ctl.propose_action(make_state(topo, t, green_s=20 + 5 * i))
+        assert ctl.through_closed("J2", "W") == (i == 5), i
+    assert ctl.pressure("J2", "EW") == 0 and ctl.stats["closure_adjusted"] > 0
+    assert not ctl.through_closed("J1", "W"), "no stopped cars at J1: no evidence"
+    ctl.observe(make_obs(topo, 130, **stuck, exit_count={("J2", "E"): 1}))  # a car gets onto J2_J3 again
+    ctl.propose_action(make_state(topo, 130, green_s=50))
+    assert not ctl.through_closed("J2", "W") and ctl.pressure("J2", "EW") == 11 - 1  # x_down = 1 stopped car
+
+
+def test_max_pressure_closure_aware_is_a_no_op_while_cars_reach_the_exit(topo):
+    plain, aware = ready("max_pressure", topo), ready("max_pressure", topo, closure_aware=True)
+    for i in range(40):
+        t = 100 + 5 * i
+        obs = make_obs(topo, t, count={("J2", "W"): 11, ("J2", "N"): 4 + i % 9}, queue={("J2", "W"): 8},
+                       exit_count={("J2", "E"): i % 3})  # the exit zone is empty now and then, never for long
+        state = make_state(topo, t, green_s=20 + 5 * i)
+        for ctl in (plain, aware):
+            ctl.observe(obs)
+        assert plain.propose_action(state) == aware.propose_action(state), i
+    assert aware.stats["closure_adjusted"] == 0
+
+
 def test_fake_probe_queue_fools_blind_controller_not_defended_one(topo):
     attack = dict(count={("J2", "W"): 8, ("J2", "E"): 4}, probe_n={("J2", "N"): 99 + 1}, untrusted=[("J2", "N")])
     blind = ready("max_pressure_probe", topo)
@@ -132,6 +201,60 @@ def test_stale_or_replayed_observations_fall_back_to_fixed_time(topo):
         ctl.observe(make_obs(topo, 198))  # fresh enough, but older than the last accepted one: replay
         assert ctl.propose_action(make_state(topo, 205)) == {j: plan.axis_at(j, 205) for j in topo.tls_ids}
         assert ctl.guard.rejected["stale"] == 1 and ctl.guard.rejected["replayed"] == 1
+
+
+# --- timing plans (fixed-time / coordinated / AI plans) ------------------------------------
+def test_timing_plan_greens_always_fill_exactly_one_cycle():
+    from teamb import config
+
+    for cycle in range(60, 151, 5):
+        for split in (0.15, 0.25, 0.5, 0.84, 0.85, 0.95):
+            plan = TimingPlan(cycle=cycle, splits={"J1": split})
+            ew, ns = plan.greens("J1")
+            assert ew >= config.MIN_GREEN_S and ns >= config.MIN_GREEN_S, (cycle, split, ew, ns)
+            assert ew + ns + 2 * config.LOST_TIME_PER_SWITCH_S == pytest.approx(cycle, abs=1e-9), (cycle, split)
+    with pytest.raises(ValueError, match="cycle"):
+        TimingPlan(cycle=20)
+
+
+def _ew_request_starts(plan, junction, t_end, dt=0.5):
+    """Times at which the plan starts asking for EW (= NS yellow begins)."""
+    starts, prev = [], None
+    for i in range(int(t_end / dt)):
+        t = i * dt
+        axis = plan.axis_at(junction, t)
+        if axis == "EW" and prev == "NS":
+            starts.append(t)
+        prev = axis
+    return starts
+
+
+def test_timing_plan_greens_start_at_the_offset_without_drift():
+    from teamb import config
+
+    lost = config.LOST_TIME_PER_SWITCH_S
+    # J2's 0.85 share at a 60 s cycle needs the NS minimum green: it used to stretch J2 to 60.5 s
+    plan = TimingPlan(cycle=60, splits={"J1": 0.5, "J2": 0.85}, offsets={"J1": 0.0, "J2": 24.0})
+    for j in ("J1", "J2"):
+        starts = _ew_request_starts(plan, j, 3600)
+        assert len(starts) >= 55
+        assert all(b - a == pytest.approx(60.0) for a, b in zip(starts, starts[1:])), j
+        # EW green starts `lost` seconds after the request, exactly at the offset (mod cycle)
+        assert all((t + lost - plan.offsets[j]) % 60 == pytest.approx(0.0, abs=1e-6) or
+                   (t + lost - plan.offsets[j]) % 60 == pytest.approx(60.0, abs=1e-6) for t in starts), j
+
+
+def test_fixed_time_and_coordinated_record_every_parameter(topo):
+    kw = {"cycle": 120, "split": 0.7, "offsets": {"J2": 10.0}}
+    assert make_controller("fixed_time", **kw).params == kw
+    coord = make_controller("coordinated", progression_speed=10.0, split=0.7)
+    assert coord.params == {"cycle": 90, "split": 0.7, "offsets": {}, "progression_speed": 10.0}
+    coord.reset({}, 1, topo)
+    assert coord.plan.offsets["J1"] == 0.0 and coord.plan.offsets["J2"] == pytest.approx(30.0)  # 300 m / 10 m/s
+    # an explicit offset wins over the computed green wave for that junction only
+    mixed = ready("coordinated", topo, offsets={"J3": 5.0})
+    assert mixed.plan.offsets["J3"] == 5.0 and mixed.plan.offsets["J2"] == pytest.approx(24.0)
+    assert mixed.params["offsets"] == {"J3": 5.0}
 
 
 # --- AI recommender: demand model, Webster, cache, commands -------------------------------
@@ -174,6 +297,25 @@ def test_webster_plan_gives_the_heavy_axis_more_green():
     assert plan.offsets["J1"] == 0 and plan.offsets["J2"] == pytest.approx(24.0)
 
 
+def test_webster_seed_trial_keeps_relative_offsets_for_a_westbound_wave():
+    import optuna
+
+    from teamb.controllers.optimizer import plan_to_params, suggest_plan
+
+    demand = {(j, s): v for j in ("J1", "J2", "J3", "J4") for s, v in (("W", 600), ("E", 900), ("N", 150), ("S", 150))}
+    lanes = {(j, s): (2 if s in "WE" else 1) for j, s in demand}
+    plan = webster_plan(demand, lanes)  # westbound heavier: the reference is J4, so J1's offset is not 0
+    assert plan.offsets["J4"] == 0 and plan.offsets["J1"] != 0
+    spec = SearchSpec(flows=[], current=TimingPlan().to_dict(), junctions=["J1", "J2", "J3", "J4"])
+    again = suggest_plan(optuna.trial.FixedTrial(plan_to_params(plan, spec)), spec)
+    assert again.cycle == plan.cycle and again.offsets["J1"] == 0.0
+    for j in ("J2", "J3", "J4"):
+        want = (plan.offsets[j] - plan.offsets["J1"]) % plan.cycle
+        got = (again.offsets[j] - again.offsets["J1"]) % again.cycle
+        assert min(abs(want - got), plan.cycle - abs(want - got)) < 0.1, (j, want, got)
+    assert again.splits == pytest.approx({j: min(0.85, max(0.25, v)) for j, v in plan.splits.items()}, abs=1e-3)
+
+
 def test_search_cache_round_trip(tmp_path):
     spec = SearchSpec(flows=[{"origin": "W0_J1", "destination": "J4_E5", "veh_per_hour": 900.0}],
                       current=TimingPlan(splits={"J1": 0.5}).to_dict(), trials=3)
@@ -182,6 +324,63 @@ def test_search_cache_round_trip(tmp_path):
     assert load_cache(spec, tmp_path) == result
     other = SearchSpec(**{**spec.__dict__, "trials": 4})
     assert load_cache(other, tmp_path) is None
+
+
+class _FakeProcess:
+    def __init__(self, alive=True):
+        self.alive, self.exitcode, self.joined = alive, None if alive else 1, 0
+
+    def is_alive(self):
+        return self.alive
+
+    def join(self, timeout=None):
+        self.joined += 1
+
+
+class _RacyQueue:
+    """Empty on the first read; right after it the worker puts its result and exits."""
+
+    def __init__(self, process, result=("result", {"plan": {"cycle": 70.0}})):
+        self.items, self.process, self.result = [], process, result
+
+    def get_nowait(self):
+        import queue
+
+        if self.items:
+            return self.items.pop(0)
+        if self.result is not None:
+            self.items.append(self.result)
+            self.result = None
+            self.process.alive, self.process.exitcode = False, 0
+        raise queue.Empty
+
+
+def _fake_job(process, q):
+    job = SearchJob.__new__(SearchJob)  # no real process
+    job.process, job.queue = process, q
+    return job
+
+
+def test_search_job_poll_never_loses_a_result_put_just_before_exit():
+    process = _FakeProcess()
+    job = _fake_job(process, _RacyQueue(process))
+    messages = job.poll() + job.poll()
+    assert [m[0] for m in messages] == ["result"], messages
+    assert process.joined >= 1, "a finished worker is reaped"
+    dead = _FakeProcess(alive=False)
+    lost = _fake_job(dead, _RacyQueue(dead, result=None)).poll()
+    assert [m[0] for m in lost] == ["error"] and "without a result" in lost[0][1]
+
+
+def test_run_search_with_zero_trials_keeps_the_current_plan(monkeypatch):
+    from teamb.controllers import optimizer
+
+    monkeypatch.setattr(optimizer, "evaluate_plan", lambda plan, spec: {
+        "objective": 50.0, "mean_delay_s": 50.0, "p95_travel_time_s": 90.0, "completed": 100, "unfinished": 0})
+    spec = SearchSpec(flows=[], current=TimingPlan(splits={"J1": 0.5}).to_dict(), trials=0)
+    result = optimizer.run_search(spec)
+    assert result["plan"] == spec.current and result["expected"]["improvement_pct"] == 0.0
+    assert result["trials"] == 0 and "no search trials" in result["note"]
 
 
 def test_ai_recommender_commands(topo):
@@ -200,6 +399,64 @@ def test_ai_recommender_commands(topo):
     assert [a["ok"] for a in ctl.audit] == [False, True, True]
 
 
+def test_ai_recommender_rejects_stale_observations_against_the_sim_clock(topo):
+    ctl = ready("ai_recommender", topo)
+    ctl.propose_action(make_state(topo, 100))
+    ctl.observe(make_obs(topo, 50))  # 50 s behind the simulation: a frozen / lagging feed
+    assert ctl.guard.rejected["stale"] == 1 and not ctl.demand.samples
+    assert ctl.t == 100, "an old observation must not rewind the controller's clock"
+    ctl.observe(make_obs(topo, 100))
+    assert len(ctl.demand.samples) == 1
+    ctl.propose_action(make_state(topo, 115))
+    ctl.observe(make_obs(topo, 100))  # the feed froze at t=100 while the simulation moved on
+    assert ctl.guard.rejected["stale"] == 2 and ctl.t == 115
+
+
+class _StubJob:
+    def __init__(self):
+        self.cancelled = 0
+
+    def cancel(self):
+        self.cancelled += 1
+
+    def poll(self):
+        return []
+
+
+def test_ai_recommender_reports_a_search_cut_off_by_the_end_of_the_run(topo):
+    ctl = ready("ai_recommender", topo)
+    ctl.propose_action(make_state(topo, 600))
+    rec = {"id": "rec1-t600", "status": "searching", "created_t": 600.0, "plan": None, "note": ""}
+    ctl.recommendation = rec
+    ctl.history.append(rec)
+    ctl._job = job = _StubJob()
+    summary = ctl.summary()  # SimEnv asks for the summary before close()
+    row = summary["recommendations"][0]
+    assert row["status"] == "cancelled" and "auto_approve" in row["note"] and row["decided_by"] == "system"
+    assert summary["plan_applied"] is False
+    ctl.close()
+    assert ctl._job is None and job.cancelled == 1
+    assert rec["status"] == "cancelled" and rec["decided_t"] == 600.0
+    assert [e["type"] for e in ctl.drain_events()] == ["recommendation_cancelled"]
+
+
+def test_ai_recommender_auto_approve_applies_the_plan(topo, monkeypatch):
+    from teamb.controllers import optimizer
+
+    plan = {"cycle": 70.0, "splits": {j: 0.6 for j in topo.tls_ids}, "offsets": {j: 0.0 for j in topo.tls_ids}}
+    monkeypatch.setattr(optimizer, "run_search", lambda spec, progress=None: {
+        "plan": plan, "expected": {"mean_delay_s": 30.0, "baseline_mean_delay_s": 40.0, "improvement_pct": 25.0},
+        "note": "", "trials": spec.trials, "wall_s": 0.0})
+    ctl = ready("ai_recommender", topo, auto_approve=True, search_at=10, cache=False)
+    assert ctl.sync, "auto_approve searches synchronously by default"
+    for t in range(0, 12):
+        ctl.observe(make_obs(topo, t))
+        ctl.propose_action(make_state(topo, t))
+        ctl.log(t)
+    assert ctl.recommendation["status"] == "approved" and ctl.plan.cycle == 70.0
+    assert ctl.summary()["plan_applied"] is True
+
+
 # --- RL ------------------------------------------------------------------------------------
 def test_qtable_file_is_checked(tmp_path):
     table = QTable()
@@ -215,6 +472,116 @@ def test_qtable_file_is_checked(tmp_path):
         QTable.load(path)
     with pytest.raises(FileNotFoundError, match="rl_train"):
         QTable.load(tmp_path / "missing.json")
+
+
+def test_qtable_visits_count_experience_not_replays():
+    import numpy as np
+
+    from teamb.controllers.rl_train import replay
+
+    table = QTable()
+    transitions = [(5, 1, -0.4, 1, 6), (5, 1, -0.2, 1, 6), (6, 0, -0.1, 2, 7)]
+    table.count_visits(transitions)
+    assert table.visits[5, 1] == 2 and table.visits[6, 0] == 1 and table.visits.sum() == 3
+    replay(table, [transitions], sweeps=3, alpha=0.1, gamma=0.9, rng=np.random.default_rng(0))
+    assert table.visits.sum() == 3, "replay sweeps are not new visits"
+    assert table.q[5, 1] < 0 and table.q[6, 0] < 0, "but they do update Q"
+
+
+def test_rl_train_epsilon_reaches_eps_end_whatever_the_batch_size():
+    from teamb.controllers.rl_train import epsilon_at
+
+    assert epsilon_at(0, 60, 0.3, 0.02) == 0.3
+    assert epsilon_at(59, 60, 0.3, 0.02) == pytest.approx(0.02)  # the last job of a 2-worker batch at done=58
+    assert epsilon_at(70, 60, 0.3, 0.02) == pytest.approx(0.02) and epsilon_at(0, 1, 0.3, 0.02) == 0.3
+
+
+def _rl_with(topo, table, **params):
+    ctl = make_controller("rl", **params)
+    ctl.table = table  # reset() loads the model file only when no table is set
+    ctl.reset({}, 1, topo)
+    return ctl
+
+
+def test_rl_never_acts_on_an_untrained_action(topo):
+    s = encode_state("EW", 9, 2, 20)  # J1: 9 cars on the green axis, 2 waiting on the red one
+    table = QTable()
+    table.q[s] = [-1.0, 0.0]  # 'switch' was never tried, so its Q stayed 0 and beats every learned value
+    table.visits[s] = [5, 0]
+    obs = make_obs(topo, 100, count={("J1", "W"): 9}, queue={("J1", "N"): 2})
+    old = _rl_with(topo, table, fallback_min_visits=0)
+    old.observe(obs)
+    assert old.propose_action(make_state(topo, 100)) == {"J1": "NS"}, "the original bug: the untried action wins"
+    ctl = _rl_with(topo, table)
+    ctl.observe(obs)
+    assert ctl.propose_action(make_state(topo, 100)) == {}, "max-pressure: 9 cars served vs 2 waiting, keep"
+    summary = ctl.summary()
+    assert summary["low_confidence_decisions"] == 1 and summary["low_confidence_share"] == 1.0
+    assert summary["model"]["visit_unit"] == "replay_updates"  # no meta: a file from before visit counting
+
+
+def test_rl_follows_the_table_where_it_was_trained(topo):
+    s = encode_state("EW", 9, 2, 20)
+    table = QTable()
+    table.q[s] = [-1.0, -0.5]
+    table.visits[s] = [50, 50]
+    ctl = _rl_with(topo, table)
+    ctl.observe(make_obs(topo, 100, count={("J1", "W"): 9}, queue={("J1", "N"): 2}))
+    assert ctl.propose_action(make_state(topo, 100)) == {"J1": "NS"}, "trusted table beats the rule"
+    assert ctl.summary()["low_confidence_decisions"] == 0
+
+
+def test_rl_unvisited_flood_state_switches_like_max_pressure(topo):
+    ctl = _rl_with(topo, QTable())  # nothing visited: every row is a 0 / 0 tie that used to mean 'keep'
+    ctl.observe(make_obs(topo, 100, count={("J1", "W"): 2}, queue={("J1", "N"): 15}))
+    assert ctl.propose_action(make_state(topo, 100, green_s=35)) == {"J1": "NS"}
+    assert ctl.summary()["low_confidence_decisions"] == 1
+
+
+def test_committed_rl_model_never_picks_a_zero_visit_action_in_deploy_mode():
+    if not MODEL_PATH.exists():
+        pytest.skip("RL model not trained yet")
+    table = QTable.load(MODEL_PATH)
+    ctl = make_controller("rl")
+    untrusted = [s for s in range(N_STATES) if table.visits[s, table.best(s)] < ctl.fallback_min_visits]
+    zero = [s for s in range(N_STATES) if table.visits[s, table.best(s)] == 0]
+    assert zero and set(zero) <= set(untrusted), "every zero-visit pick goes to the fallback"
+
+
+def test_first_rl_model_stays_loadable_by_path(topo, tmp_path, monkeypatch):
+    from teamb.controllers.rl import V1_MODEL_PATH
+
+    v1 = QTable.load(V1_MODEL_PATH)
+    assert v1.meta["scenario"] == "rush_hour" and v1.meta["episodes"] == 60
+    monkeypatch.chdir(tmp_path)  # a relative path also resolves from the repo root
+    ctl = ready("rl", topo, model_path="models/rl_qtable_v1_rush_hour.json")
+    assert ctl.model_path == V1_MODEL_PATH and (ctl.table.q == v1.q).all()
+
+
+def test_rl_feature_sets_are_versioned_by_the_model_file(topo, tmp_path):
+    from teamb.controllers.rl import FEATURES_V2, _checksum, decode_state, n_states
+
+    assert n_states() == N_STATES == 288 and n_states(FEATURES_V2) == 576
+    s1 = encode_state("NS", 7, 12, 40)
+    s2 = encode_state("NS", 7, 12, 40, True, FEATURES_V2)
+    assert s2 == s1 + 288 and decode_state(s2, FEATURES_V2) == {**decode_state(s1), "green_blocked": True}
+    assert encode_state("NS", 7, 12, 40, True) == s1, "v1 ignores the extra bit"
+    v2 = QTable(features=FEATURES_V2)
+    v2.q[encode_state("EW", 10, 2, 20, True, FEATURES_V2)] = [-3.0, -1.0]  # blocked: switch
+    v2.visits[:] = 50
+    loaded = QTable.load(v2.save(tmp_path / "v2.json"))
+    assert loaded.version == "v2" and loaded.q.shape == (576, 2)
+    ctl = _rl_with(topo, loaded)
+    ctl.observe(make_obs(topo, 100, count={("J1", "W"): 10}, queue={("J1", "W"): 8, ("J1", "N"): 2}))
+    assert ctl.propose_action(make_state(topo, 100, green_s=20)) == {"J1": "NS"}, "8 of 10 cars stuck on green"
+    ctl.observe(make_obs(topo, 105, count={("J1", "W"): 10}, queue={("J1", "W"): 1, ("J1", "N"): 2}))
+    assert ctl.propose_action(make_state(topo, 105, green_s=25)) == {}, "discharging: the unblocked row keeps"
+    assert ctl.summary()["model"]["features"] == "v2"
+    data = json.loads((tmp_path / "v2.json").read_text())
+    data["features"] = {**FEATURES_V2, "version": 3}  # an unknown future feature set, correctly checksummed
+    data["sha256"] = _checksum({k: data[k] for k in ("format", "features", "q", "visits")})
+    with pytest.raises(ValueError, match="different features"):
+        QTable.from_dict(data)
 
 
 def test_rl_masks_and_trained_table(topo):
@@ -248,10 +615,14 @@ def run_env(name, tmp_path, *, end=240.0, coverage=0.25, params=None, on_step=No
     env.controller.propose_action = checked
     env.start()
     tls.update(env.topology.tls_ids)
-    while env.t < env.end_time:
-        env.step()
-        if on_step:
-            on_step(env)
+    try:
+        while env.t < env.end_time:
+            env.step()
+            if on_step:
+                on_step(env)
+    except BaseException:
+        env.close()  # never leave a SUMO process behind when a step fails
+        raise
     return env, env.close()
 
 
@@ -315,6 +686,15 @@ def test_ai_recommender_sync_search_then_approve(tmp_path):
     env = SimEnv("rush_hour", "ai_recommender", seed=3, coverage=0.5, end_time=200, controller_params=params,
                  output_dir=tmp_path / "ai")
     env.start()
+    try:
+        _sync_search_then_approve(env)
+    finally:
+        summary = env.close()  # never leave SUMO running if an assertion fails
+    assert summary["controller_errors"] == 0 and summary["fallback_steps"] == 0
+    assert any(p.suffix == ".json" for p in (tmp_path / "cache").iterdir())
+
+
+def _sync_search_then_approve(env):
     ctl = env.controller
     while env.t < 125:
         env.step()
@@ -334,9 +714,6 @@ def test_ai_recommender_sync_search_then_approve(tmp_path):
         env.step()
         state = env.supervisor.state(env.t)
         assert ctl.propose_action(state) == {j: ctl.plan.axis_at(j, env.t) for j in state["junctions"]}
-    summary = env.close()
-    assert summary["controller_errors"] == 0 and summary["fallback_steps"] == 0
-    assert any(p.suffix == ".json" for p in (tmp_path / "cache").iterdir())
 
 
 def test_search_job_runs_in_a_background_process():
