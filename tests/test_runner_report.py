@@ -7,14 +7,17 @@ import json
 import pytest
 from dataclasses import asdict
 
+from teamb.evaluation.stats import mean_ci
 from teamb.experiments.analysis import build_report, load_runs, render_markdown
 from teamb.experiments.runner import RunSpec
 
 
-def make_run(root, spec: RunSpec, delay: float, *, sim_time=None, manifest_end=None, **summary):
-    d = root / "runs" / spec.name
+def make_run(root, spec: RunSpec, delay: float, *, sim_time=None, manifest_end=None, folder=None, **summary):
+    """A finished run folder; folder = the name an older runner gave it (default: spec.name)."""
+    name = folder or spec.name
+    d = root / "runs" / name
     d.mkdir(parents=True)
-    (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": spec.name, "variant": spec.variant}))
+    (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": name, "variant": spec.variant}))
     sim = sim_time if sim_time is not None else (spec.end_time or manifest_end)
     body = {"mean_delay_s": delay, "completed": 100, "unfinished": 0, "unfinished_pct": 0.0, **summary}
     if sim is not None:
@@ -131,3 +134,44 @@ def test_report_shows_depart_delay(tmp_path):
     md = render_markdown(report)
     assert "depart delay s" in md and "(lower bound)" in md
     assert "mean_delay_incl_depart_s" in report["definitions"]
+
+
+def _legacy_name(spec: RunSpec) -> str:
+    """The run name before evaluation-2/ext-89: no end time, coverage rounded to whole percent."""
+    pre = "" if spec.ev_preemption else "__nopre"
+    return f"{spec.scenario_variant}__{spec.variant}__s{spec.seed}__c{round(spec.coverage * 100)}__{spec.sampling}{pre}"
+
+
+def test_a_legacy_folder_and_its_rerun_count_once(tmp_path):
+    # an experiment made with --end 2700 before the run end was in the name, re-run with the same command
+    new = {"fixed_time": (61.0, 66.0, 74.0), "max_pressure": (30.0, 33.0, 38.0)}
+    for controller, delays in new.items():
+        for seed, delay in zip((1, 2, 3), delays):
+            spec = RunSpec("rush_hour", controller, seed, 1.0, end_time=2700.0)
+            make_run(tmp_path, spec, delay + 20.0, folder=_legacy_name(spec), est_samples=10, est_queue_mae=1.0)
+            make_run(tmp_path, spec, delay, est_samples=10, est_queue_mae=1.0)
+    report = build_report(tmp_path)
+    ft = rows_by(report, controller="fixed_time")[0]
+    mp = rows_by(report, controller="max_pressure")[0]
+    assert ft["n_seeds"] == 3 and ft["seeds"] == [1, 2, 3] and mp["n_paired"] == 3
+    expected = mean_ci(new["fixed_time"])
+    assert ft["mean_delay_s"] == {"mean": round(expected["mean"], 3), "ci95": round(expected["ci95"], 3)}
+    assert mp["mean_delay_diff_s"]["mean"] == pytest.approx(-100.0 / 3, abs=1e-3)  # the re-run values, not the old ones
+    assert report["estimation"][0]["n_runs"] == 6
+    dups = report["duplicate_runs"]
+    assert len(dups) == 6 and all(d["kept"].endswith("__e2700") and not d["name"].endswith("__e2700") for d in dups)
+    assert any("6 run folders" in w for w in report["warnings"])
+    md = render_markdown(report)
+    assert "## Duplicate run folders" in md and _legacy_name(RunSpec("rush_hour", "fixed_time", 1, 1.0)) in md
+
+
+def test_a_default_run_and_an_explicit_end_of_the_same_length_count_once(tmp_path):
+    for seed in (1, 2):
+        make_run(tmp_path, RunSpec("rush_hour", "fixed_time", seed, 1.0), 60.0 + seed, manifest_end=4500.0)
+        make_run(tmp_path, RunSpec("rush_hour", "fixed_time", seed, 1.0, end_time=4500.0), 60.0 + seed, manifest_end=4500.0)
+        make_run(tmp_path, RunSpec("rush_hour", "max_pressure", seed, 1.0), 30.0 + seed, manifest_end=4500.0)
+    report = build_report(tmp_path)
+    ft = rows_by(report, controller="fixed_time")[0]
+    assert ft["n_seeds"] == 2 and rows_by(report, controller="max_pressure")[0]["n_paired"] == 2
+    assert [d["kept"] for d in report["duplicate_runs"]] == [RunSpec("rush_hour", "fixed_time", s, 1.0).name for s in (1, 2)]
+    assert report["compute"]["runs_ok"] == 6 and report["compute"]["runs_duplicate"] == 2

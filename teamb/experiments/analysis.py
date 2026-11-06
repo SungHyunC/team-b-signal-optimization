@@ -10,6 +10,11 @@ another coverage/sampling (fine for fixed-time, which ignores sensor data) that 
 change every controller's result. Only seeds present in both are paired. The run end is the
 effective one (the spec's end_time, else the scenario duration from the manifest).
 
+Each run counts once: when two finished folders hold the same group and seed (a folder named
+under an older naming rule next to its re-run, or a default run next to an --end of the same
+length), the folder whose name is today's RunSpec name is kept, then the first folder name;
+the others are listed under "duplicate_runs" with a warning.
+
 report.json schema (read by the twin; extra keys may be added, never removed)
 -----------------------------------------------------------------------------
 {"name", "created", "baseline": "fixed_time",
@@ -30,7 +35,7 @@ import time
 from pathlib import Path
 
 from teamb.evaluation.stats import holm, mean_ci, paired
-from teamb.experiments.runner import run_status
+from teamb.experiments.runner import canonical_run_name, run_status
 from teamb.fsutil import atomic_write_json, atomic_write_text, read_json
 
 ROW_METRICS = ("mean_delay_s", "p95_travel_time_s", "stops_per_veh", "unfinished_pct", "ev_mean_travel_time_s")
@@ -119,6 +124,7 @@ def load_runs(exp_dir: Path) -> list[dict]:
             "bytes": spec.get("bytes"),
             "scenario_params": spec.get("scenario_params", {}),
             "run_dir": str(d),
+            "current_name": canonical_run_name(spec) == d.name,  # False: an older run name
         }
         for k, v in src.items():
             if k not in row and _scalar(v):
@@ -131,7 +137,7 @@ def write_summary_csv(runs: list[dict], path: Path) -> None:
     cols = list(IDENTITY)
     for r in runs:
         for k, v in r.items():
-            if k not in cols and _scalar(v) and k not in ("error", "run_dir"):
+            if k not in cols and _scalar(v) and k not in ("error", "run_dir", "current_name"):
                 cols.append(k)
     cols.append("error")
     buf = io.StringIO()
@@ -164,6 +170,24 @@ def _find_baseline(key: tuple, groups: dict, baseline: str) -> tuple[tuple | Non
     return plain[0], "scenario"
 
 
+def _one_run_per_seed(ok: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(runs, duplicates): one finished run per (group key, seed), in the original order.
+
+    Two folders can hold the same run: one named under an older naming rule (before the run end
+    and exact coverage were part of the name) next to its re-run, or a default run next to an
+    --end equal to the scenario's duration. Counting both would double the seeds and shrink the
+    confidence intervals. Kept: the folder whose name is today's RunSpec name, then the first."""
+    by_key: dict[tuple, list[dict]] = {}
+    for r in ok:
+        by_key.setdefault((*_group_key(r), r["seed"]), []).append(r)
+    keep, dups = set(), []
+    for rs in by_key.values():
+        rs = sorted(rs, key=lambda r: (not r.get("current_name"), Path(r["run_dir"]).name))
+        keep.add(id(rs[0]))
+        dups += [{"name": Path(d["run_dir"]).name, "kept": Path(rs[0]["run_dir"]).name, "seed": d["seed"]} for d in rs[1:]]
+    return [r for r in ok if id(r) in keep], sorted(dups, key=lambda d: d["name"])
+
+
 def _by_seed(rs: list[dict], metric: str) -> dict:
     return {r["seed"]: r.get(metric) for r in rs}
 
@@ -171,7 +195,7 @@ def _by_seed(rs: list[dict], metric: str) -> dict:
 def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
     exp_dir = Path(exp_dir)
     runs = load_runs(exp_dir)
-    ok = [r for r in runs if r["status"] == "ok"]
+    ok, duplicates = _one_run_per_seed([r for r in runs if r["status"] == "ok"])
     groups: dict[tuple, list[dict]] = {}
     for r in ok:
         groups.setdefault(_group_key(r), []).append(r)
@@ -250,7 +274,8 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
         "recovery": _recovery_table(groups),
         "emergency": _ev_table(groups),
         "perf01": _perf_table(groups),
-        "compute": _compute(runs, meta),
+        "compute": {**_compute(runs, meta), "runs_duplicate": len(duplicates)},
+        "duplicate_runs": duplicates,
         "failed_runs": [{"name": r["name"], "error": r["error"]} for r in runs if r["status"] == "failed"],
         "incomplete_runs": [{"name": r["name"], "reason": r["error"]} for r in runs if r["status"] == "incomplete"],
         "code_revision": _first_manifest_value(exp_dir, "code_revision"),
@@ -264,6 +289,14 @@ def build_report(exp_dir: Path, baseline: str = "fixed_time") -> dict:
         warnings.append(
             f"runs end at different times ({', '.join(f'{x:g}' for x in report['matrix']['end_time'])} s); "
             "each run end is reported and paired separately"
+        )
+    if duplicates:
+        n = len(duplicates)
+        warnings.append(
+            f"{n} run folder{'s' if n > 1 else ''} repeat{'' if n > 1 else 's'} a run that is already counted "
+            f"(same settings, run end and seed), e.g. `{duplicates[0]['name']}` repeats `{duplicates[0]['kept']}`; "
+            "each run is counted once (the folder with the current run name is kept, else the first) and the "
+            "others are listed under duplicate_runs: delete them to clear this warning"
         )
     report["warnings"] = warnings
     return report
@@ -692,7 +725,9 @@ def render_markdown(report: dict) -> str:
         "",
         "## Compute cost",
         "",
-        f"{c['runs_ok']} runs ok, {c['runs_failed']} failed, {c.get('runs_incomplete', 0)} incomplete · experiment wall time {c['experiment_wall_time_s']} s with "
+        f"{c['runs_ok']} runs ok"
+        + (f" ({c['runs_duplicate']} of them duplicates, not in the statistics)" if c.get("runs_duplicate") else "")
+        + f", {c['runs_failed']} failed, {c.get('runs_incomplete', 0)} incomplete · experiment wall time {c['experiment_wall_time_s']} s with "
         f"{c['workers']} worker(s) · sum of run wall times {c['sum_run_wall_time_s']} s · "
         f"{c['sim_speedup']}× faster than real time per run · data {c['data_bytes'] / 1e6:.1f} MB "
         f"({c['data_mb_per_run']} MB/run, {c['data_mb_per_sim_hour']} MB per simulated hour).",
@@ -703,6 +738,9 @@ def render_markdown(report: dict) -> str:
     ]
     if report["failed_runs"]:
         lines += ["## Failed runs", ""] + [f"- `{f['name']}`: {f['error']}" for f in report["failed_runs"]] + [""]
+    if report.get("duplicate_runs"):
+        lines += ["## Duplicate run folders (not in the statistics)", ""]
+        lines += [f"- `{d['name']}`: the same run as `{d['kept']}`" for d in report["duplicate_runs"]] + [""]
     if report.get("incomplete_runs"):
         lines += ["## Incomplete runs (not in the statistics)", ""]
         lines += [f"- `{f['name']}`: {f['reason']}" for f in report["incomplete_runs"]] + [""]
