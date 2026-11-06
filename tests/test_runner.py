@@ -331,6 +331,111 @@ def _slow_run(spec_dict, runs_dir, force=False):
     return {"run": name, "status": "ok", "summary": {}}
 
 
+def _worker_dies_at_start(spec_dict, runs_dir, force=False):
+    """A worker that dies before run_one touches the run, like the workers of a script that fail
+    at import (module-level code with no __main__ guard)."""
+    import os
+
+    os._exit(1)
+
+
+def _worker_slow_to_start(spec_dict, runs_dir, force=False):
+    """A worker that takes 20 s before run_one touches the run; says it is up with a file next to
+    the runs folder (never inside the run folder)."""
+    import time
+
+    name = RunSpec(**spec_dict).name
+    (Path(runs_dir).parent / f"up-{name}").write_text("")
+    time.sleep(20)
+    return {"run": name, "status": "skipped", "summary": {}}
+
+
+def _finished_run(runs_dir: Path, spec: RunSpec) -> dict:
+    """A run folder an earlier invocation finished: run_spec.json plus a complete summary.json."""
+    d = runs_dir / spec.name
+    d.mkdir(parents=True)
+    (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": spec.name, "variant": spec.variant}))
+    summary = {"mean_delay_s": 5.0, "sim_time_s": spec.end_time, "complete": True}
+    (d / "summary.json").write_text(json.dumps(summary))
+    assert check_resume(spec, runs_dir)["status"] == "skipped"
+    return summary
+
+
+def _assert_still_finished(runs_dir: Path, spec: RunSpec, summary: dict) -> None:
+    d = runs_dir / spec.name
+    assert json.loads((d / "summary.json").read_text()) == summary
+    assert not (d / "error.json").exists()
+    assert run_status(d, expected_end=spec.end_time)[0] == "ok"
+    assert check_resume(spec, runs_dir)["status"] == "skipped"
+
+
+def _ctrl_c_when(ready, sent: dict) -> None:
+    """In a thread: Ctrl-C to the main process once ready() holds (gives up after 60 s)."""
+    import signal
+    import threading
+    import time
+
+    def ctrl_c():
+        deadline = time.time() + 60
+        while not ready() and time.time() < deadline and "over" not in sent:
+            time.sleep(0.05)
+        if "over" not in sent:  # never after the test: a stray KeyboardInterrupt would stop pytest
+            sent["t"] = time.time()
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+
+    threading.Thread(target=ctrl_c, daemon=True).start()
+
+
+def test_workers_that_die_at_start_keep_finished_runs(tmp_path, monkeypatch):
+    # a resumed experiment whose spawned workers die before run_one starts: every spec is lost
+    # twice, but the runs finished in an earlier invocation must keep their results
+    import teamb.experiments.runner as runner
+
+    monkeypatch.setattr(runner, "run_one", _worker_dies_at_start)
+    runs = tmp_path / "runs"
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0, end_time=600.0) for s in (1, 2, 3)]
+    finished = {s.name: _finished_run(runs, s) for s in specs[:2]}
+    killed = runs / specs[2].name  # killed mid-run in an earlier invocation: run_spec.json only
+    killed.mkdir()
+    (killed / "run_spec.json").write_text(json.dumps({**asdict(specs[2]), "name": specs[2].name}))
+    record = runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    assert sorted(record["failed"]) == sorted(s.name for s in specs)  # this invocation ran none of them
+    for spec in specs[:2]:
+        _assert_still_finished(runs, spec, finished[spec.name])
+    err = json.loads((killed / "error.json").read_text())
+    assert "BrokenProcessPool" in err["error"] and err["interrupted"] is False
+    assert run_status(killed)[0] == "failed"
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "pthread_kill"), reason="needs POSIX signals")
+def test_ctrl_c_before_workers_start_keeps_finished_runs(tmp_path, monkeypatch):
+    # Ctrl-C while the workers are still starting: the runs in flight are finished runs that
+    # run_one would have skipped, so stopping their workers must leave their folders alone
+    import signal
+    import time
+
+    import teamb.experiments.runner as runner
+
+    monkeypatch.setattr(runner, "run_one", _worker_slow_to_start)
+    monkeypatch.setattr(runner, "INTERRUPT_GRACE_S", 0.2)
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    runs = tmp_path / "runs"
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0, end_time=600.0) for s in (1, 2, 3)]
+    finished = {s.name: _finished_run(runs, s) for s in specs}
+    sent: dict = {}
+    _ctrl_c_when(lambda: len(list(tmp_path.glob("up-*"))) >= 2, sent)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    finally:
+        sent["over"] = True
+        signal.signal(signal.SIGINT, previous)
+    assert time.time() - sent["t"] < 15  # the workers were stopped, not waited for
+    assert sorted(p.name[3:] for p in tmp_path.glob("up-*")) == sorted(s.name for s in specs[:2])
+    for spec in specs:
+        _assert_still_finished(runs, spec, finished[spec.name])
+
+
 def test_a_dead_worker_fails_only_its_own_run(tmp_path, monkeypatch):
     # a real spawn pool: one dead worker breaks the pool and fails every run in flight, so the
     # runner must retry those runs instead of reporting the whole rest of the matrix as failed

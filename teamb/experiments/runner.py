@@ -505,20 +505,28 @@ INTERRUPT_GRACE_S = 5.0  # after Ctrl-C: time the runs in flight get to stop on 
 
 
 def _mark_failed(run_dir: Path, error: str, *, interrupted: bool) -> None:
-    """Leave the marker run_one leaves for a failed run (error.json, no summary.json) for a run
-    whose worker process died or was stopped before run_one could write it."""
-    if not run_dir.is_dir():
+    """Leave the marker run_one leaves for a failed run (error.json) for a run whose worker
+    process died or was stopped before run_one could write it.
+
+    The worker may have died before run_one touched the folder (it fails at import, or Ctrl-C
+    came while it was starting), so the folder can hold a finished run from an earlier
+    invocation, or another spec's results that run_one would have refused to reuse. A run
+    run_one started here has no summary.json: run_one starts from an empty folder and SimEnv
+    writes summary.json last, atomically, only for a complete run. So a folder with a
+    summary.json is left alone (a finished run, from before or just before the kill), and only
+    a folder without one is marked failed."""
+    if not run_dir.is_dir() or (run_dir / "summary.json").exists():
         return
     with contextlib.suppress(OSError):
-        (run_dir / "summary.json").unlink(missing_ok=True)
         atomic_write_json(run_dir / "error.json", {"error": error, "interrupted": interrupted})
 
 
 def _stop_runs(pool: ProcessPoolExecutor, running: dict, runs_dir: Path, report) -> None:
     """After Ctrl-C: give the runs in flight INTERRUPT_GRACE_S to stop (a Ctrl-C in the terminal
     reaches the workers too, and run_one then writes error.json), report the runs that finished
-    meanwhile, then kill the workers that are still busy and mark their runs interrupted.
-    A second Ctrl-C skips the wait."""
+    meanwhile, then kill the workers that are still busy and mark their runs interrupted (see
+    :func:`_mark_failed`: a folder that already holds a finished run is kept). A second Ctrl-C
+    skips the wait."""
     procs = list((getattr(pool, "_processes", None) or {}).values())
     try:
         done, not_done = wait(running, timeout=INTERRUPT_GRACE_S)
