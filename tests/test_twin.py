@@ -94,6 +94,16 @@ def test_session_config_validation():
             SessionConfig.from_dict(bad)
 
 
+def test_session_config_redacts_secrets():
+    cfg = SessionConfig.from_dict({"controller": "ai_recommender",
+                                   "controller_params": {"approval_token": "tok-XYZ", "search_at": None, "nested": {"api_key": "k-1"}}})
+    shown = json.dumps(cfg.to_dict())
+    assert "tok-XYZ" not in shown and "k-1" not in shown
+    assert cfg.to_dict()["controller_params"]["approval_token"] == "<redacted>"
+    assert cfg.to_dict()["controller_params"]["search_at"] is None
+    assert cfg.controller_params["approval_token"] == "tok-XYZ"  # the sim thread still gets the real value
+
+
 # --- REST -------------------------------------------------------------------------------
 def test_meta(client):
     meta = client.get("/api/meta").json()
@@ -214,6 +224,26 @@ def test_live_session_over_websocket(client):
         ws.send_json({"type": "control", "id": 6, "action": "jump", "t": target})
         assert recv_until(ws, lambda m: is_reply(m, 6), "jump reply")["ok"]
         recv_until(ws, lambda m: is_frame(m, sid, t_min=target), "the jump target")
+
+
+def test_approval_token_never_reaches_clients(client):
+    """twin-security-1: the token is in no reply, status or hello, yet the controller still uses it."""
+    secret = "tok-XYZ-approver"
+    started = client.post("/api/session?wait=1", json={
+        "scenario": "rush_hour", "controller": "ai_recommender", "speed": "max", "end_time": 120, "autoplay": False,
+        "controller_params": {"approval_token": secret, "search_at": None},
+    })
+    assert started.status_code == 200 and started.json()["ok"], started.text
+    assert secret not in started.text
+    assert secret not in client.get("/api/state").text
+    with client.websocket_connect("/ws") as ws:
+        hello = recv_until(ws, lambda m: m["type"] == "hello", "hello")
+        assert hello["status"]["config"]["controller"] == "ai_recommender"
+        assert secret not in json.dumps(hello)
+    wrong = client.post("/api/command", json={"type": "approve", "token": "wrong"}).json()
+    assert wrong["ok"] is False and "not authorized" in wrong["error"]
+    right = client.post("/api/command", json={"type": "approve", "token": secret}).json()
+    assert right["ok"] is False and "no recommendation" in right["error"]  # got past the token check
 
 
 def test_run_finishes_cleanly(client):

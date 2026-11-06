@@ -112,6 +112,25 @@ def dumps(obj) -> str:
         return json.dumps(jsonable(obj), separators=(",", ":"), allow_nan=False)
 
 
+SECRET_PARAM_KEYS = frozenset(("approval_token", "token", "password", "secret", "api_key"))
+REDACTED = "<redacted>"
+
+
+def is_secret_key(key) -> bool:
+    """Controller parameters that must never reach a browser (status, replies, hello)."""
+    k = str(key).lower()
+    return k in SECRET_PARAM_KEYS or k.endswith(("_token", "_secret", "_password"))
+
+
+def redact_secrets(value):
+    """A copy of `value` with every secret-looking key's value replaced by "<redacted>"."""
+    if isinstance(value, dict):
+        return {k: (REDACTED if is_secret_key(k) and v is not None else redact_secrets(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_secrets(v) for v in value]
+    return value
+
+
 def _as_bool(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "on")
@@ -172,7 +191,12 @@ class SessionConfig:
         return cfg
 
     def to_dict(self) -> dict:
-        return jsonable(asdict(self))
+        """JSON for browsers and API replies. Secrets such as the AI recommender's approval_token
+        are redacted: the sim thread builds SimEnv from the object itself, never from this dict."""
+        d = jsonable(asdict(self))
+        d["controller_params"] = redact_secrets(d["controller_params"])
+        d["scenario_params"] = redact_secrets(d["scenario_params"])
+        return d
 
 
 # --- fan-out to browsers --------------------------------------------------------
@@ -548,7 +572,7 @@ class TwinSession:
         try:
             reply = env.handle_command(dict(command))
         except Exception as exc:
-            log.warning("command %s failed: %s", command, exc)
+            log.warning("command %s failed: %s", redact_secrets(command), exc)
             reply = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         if not isinstance(reply, dict):
             reply = {"ok": True, "result": reply}
