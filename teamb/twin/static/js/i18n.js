@@ -23,7 +23,7 @@ export function isLang(code) {
 }
 
 function detect() {
-  // globalThis.*: the pure modules that import this one also run under `node --test tests/js/`.
+  // globalThis.*: the pure modules that import this one also run under `node --test tests/js/*.test.mjs`.
   const asked = new URLSearchParams(globalThis.location?.search || '').get('lang');
   if (isLang(asked)) return asked;
   try {

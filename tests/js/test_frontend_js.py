@@ -1,8 +1,10 @@
 """Frontend logic tests and the Python halves of the browser <-> Python contracts.
 
-The JavaScript tests live next to this file (tests/js/*.test.mjs) and run with plain Node 20,
-no npm install:  node --test tests/js/
-test_node_suite() runs them from pytest (skipped when node is not installed).
+The JavaScript tests live next to this file (tests/js/*.test.mjs) and run with plain Node 20.6
+or later, no npm install:  node --test tests/js/*.test.mjs
+(Name the files: Node 21+ reads each argument as a glob, so a bare directory runs as one failing
+"test".) test_node_suite() runs them from pytest; it is skipped when node is missing or older
+than 20.6, which the suite needs for module.register().
 
 Shared fixtures, checked from both languages:
 - fixtures/vehicles.json: frames encoded by teamb.twin.site.encode_vehicles. replay.test.mjs
@@ -107,9 +109,42 @@ def test_sandbox_page_built_in_lists_match_python():
     assert _js_list("controllers") == set(sandbox.CONTROLLERS)
 
 
+NODE_MIN = (20, 6)  # module.register(), used by the tests that stub three.js
+
+
+def parse_node_version(text: str) -> tuple[int, int] | None:
+    """(major, minor) from `node --version` output such as 'v24.19.0'; None if it is not one."""
+    m = re.match(r"\s*v?(\d+)\.(\d+)", text)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def node_test_files() -> list[str]:
+    """The suite's files, relative to the repo root, for `node --test <files>`."""
+    return sorted(p.relative_to(ROOT).as_posix() for p in HERE.glob("*.test.mjs"))
+
+
+def test_parse_node_version():
+    assert parse_node_version("v24.19.0\n") == (24, 19)
+    assert parse_node_version("v20.6.0") == (20, 6)
+    assert parse_node_version("20.20.2") == (20, 20)
+    assert parse_node_version("") is None
+    assert parse_node_version("node: command not found") is None
+
+
+def test_node_test_files_names_every_test_file():
+    files = node_test_files()
+    assert files and all(f.startswith("tests/js/") and f.endswith(".test.mjs") for f in files)
+    assert len(files) == len(list(HERE.glob("*.test.mjs")))
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_node_suite():
-    proc = subprocess.run(["node", "--test", "tests/js/"], cwd=ROOT, capture_output=True, text=True, timeout=300)
+    version = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=30).stdout
+    found = parse_node_version(version)
+    if found is not None and found < NODE_MIN:
+        pytest.skip(f"node {version.strip()} is older than {NODE_MIN[0]}.{NODE_MIN[1]} (module.register)")
+    # Explicit files, not the directory: Node 21+ treats a directory argument as a single test file.
+    proc = subprocess.run(["node", "--test", *node_test_files()], cwd=ROOT, capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, proc.stdout[-6000:] + proc.stderr[-3000:]
 
 
