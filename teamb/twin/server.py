@@ -126,10 +126,14 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
         if not next_path.startswith("/") or next_path.startswith("//") or "\\\\" in next_path:
             next_path = "/"
         response = RedirectResponse(next_path, status_code=303)
+        # Lax, not Strict: the GitHub Pages sandbox (and shared links) open the twin with a
+        # cross-site top-level navigation, which Strict would answer with a fresh login every time.
+        # Lax still keeps the cookie off cross-site POSTs, fetches and WebSocket handshakes, and
+        # every state-changing endpoint here is a POST or the WebSocket.
         response.set_cookie(
             access.COOKIE, access.expected_cookie(access.configured_secret()),
             httponly=True, secure=os.getenv("TWIN_COOKIE_INSECURE") != "1",
-            samesite="strict", max_age=60 * 60 * 12, path="/",
+            samesite="lax", max_age=60 * 60 * 12, path="/",
         )
         return response
 

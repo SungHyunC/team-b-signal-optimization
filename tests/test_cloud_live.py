@@ -212,3 +212,15 @@ def test_origin_allowed_unit(monkeypatch):
     assert not ok("not a url", ("127.0.0.1:8000",))
     monkeypatch.setenv("TWIN_ALLOWED_ORIGINS", "*")
     assert ok("https://evil.example", ("127.0.0.1:8000",))
+
+
+# --- login cookie (twin-security-10) ---------------------------------------------------------
+def test_login_cookie_is_lax_httponly_and_secure(monkeypatch):
+    monkeypatch.setenv("TWIN_ACCESS_TOKEN", "test-only-long-secret")
+    client = TestClient(create_app(), base_url="https://testserver")
+    good = client.post("/login", data={"password": "test-only-long-secret"}, follow_redirects=False)
+    cookie = good.headers["set-cookie"].lower()
+    assert "samesite=lax" in cookie and "httponly" in cookie and "secure" in cookie
+    # Lax sends the cookie on cross-site GET navigations, so no GET may change the simulation.
+    for path in ("/api/session", "/api/control", "/api/command"):
+        assert client.get(path).status_code == 405, path
