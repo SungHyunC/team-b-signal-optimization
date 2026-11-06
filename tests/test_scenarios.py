@@ -95,6 +95,54 @@ def test_static_detours(topo):
     assert route and "J2_J3" not in route and route[0] == "W0_J1" and route[-1] == "J4_E5"
 
 
+def test_stranded_pairs_and_closure_check(topo):
+    # cutting both ways into J4 from the west strands the eastbound through trips
+    assert routing.stranded_pairs(topo, [("W0_J1", "J4_E5")], {"J3_J4", "N3_N4"}) == [("W0_J1", "J4_E5")]
+    assert routing.stranded_pairs(topo, [("W0_J1", "J4_E5")], {"J2_J3"}) == []
+    # a closed origin or destination strands its trips, even if it is an inner edge
+    assert routing.stranded_pairs(topo, [("N3_J3", "J3_S3"), ("N3_J3", "J3_S3")], {"N3_J3"}) == [("N3_J3", "J3_S3")]
+    # all three roads into N2: nobody can reach the exit N2_NN2 any more
+    assert routing.stranded_pairs(topo, [("W0_J1", "N2_NN2")], {"J2_N2", "N1_N2", "N3_N2"}) == [("W0_J1", "N2_NN2")]
+    assert routing.stranded_pairs(topo, [("NOPE", "J4_E5")], set()) == []  # unknown edges are validate()'s job
+    pairs = {("W0_J1", "J4_E5"): "EB through"}
+    assert routing.closure_error(topo, ["J2_J3"], (), list(pairs), pairs) is None
+    assert "entry/exit" in routing.closure_error(topo, ["W0_J1"], (), list(pairs), pairs)
+    assert "unknown edge" in routing.closure_error(topo, ["NOPE"], (), list(pairs), pairs)
+    msg = routing.closure_error(topo, ["N3_N4"], {"J3_J4"}, list(pairs), pairs)
+    assert msg and "EB through" in msg and "no route" in msg
+    # pairs that earlier closures already cut off do not block an unrelated closure
+    assert routing.closure_error(topo, ["J1_J2"], {"J3_J4", "N3_N4"}, list(pairs), pairs) is None
+
+
+def test_scenario_closure_check_and_validate_replay_events(topo):
+    special = get_scenario("special_event")
+    assert "Stadium" in special.closure_error(topo, ["N3_J3"])  # the stadium garage exit is a flow origin
+    rush = get_scenario("rush_hour")
+    assert rush.closure_error(topo, ["J2_N2", "N2_J2"]) is None  # the sinkhole closure is fine
+    assert rush.closure_error(topo, ["N3_N2"], {"J2_N2", "N1_N2"})  # ... the third road into N2 is not
+    events = [
+        {"time": 50, "kind": "close_road", "params": {"edge": "J3_J4", "both_directions": True}},
+        {"time": 51, "kind": "close_road", "params": {"edge": "N3_N4"}},  # cuts J4 off from the west
+        {"time": 60, "kind": "reopen_road", "params": {"edge": "J3_J4", "both_directions": True}},
+        {"time": 61, "kind": "close_road", "params": {"edge": "N3_N4"}},  # fine once the bridge is open again
+        {"time": 70, "kind": "start_attack", "params": {"junction": "J2", "approach": "X"}},
+        {"time": 71, "kind": "start_attack", "params": {"junction": "J2", "approach": "N", "n": 0}},
+        {"time": 72, "kind": "start_attack", "params": {"junction": "J2", "approach": "N", "n": "many"}},
+        {"time": 80, "kind": "close_road", "params": {"edge": "J2-J3"}},
+    ]
+    problems = get_scenario("rush_hour", events=events).validate(topo)
+    assert len(problems) == 5, problems
+    assert problems[0].startswith("event at 51:") and "no route" in problems[0]
+    assert "no approach X" in problems[1] and "between 1 and 500" in problems[2] and "integer" in problems[3]
+    assert "unknown edge J2-J3" in problems[4]
+    ev = get_scenario("rush_hour", events=[
+        {"time": 50, "kind": "close_road", "params": {"edge": "J3_J4"}},
+        {"time": 50, "kind": "close_road", "params": {"edge": "N3_N4"}},
+        {"time": 60, "kind": "dispatch_ev", "params": {"origin": "W0_J1", "destination": "J4_E5"}},
+    ]).validate(topo)
+    assert len(ev) == 1 and "event at 50" in ev[0]  # the second closure is refused, so the EV still has a route
+
+
 # --- road closure (SUMO) --------------------------------------------------------------------
 CLOSE_AT, REOPEN_AT, CLOSURE_END = 150, 420, 600
 
@@ -173,6 +221,55 @@ def test_closure_rejects_bad_requests(closure_run):
         runtime.close_road("NOPE")
     with pytest.raises(ValueError):
         runtime.dispatch_ev("W0_J1", "J4_E5", kind="helicopter")
+
+
+@pytest.fixture(scope="module")
+def stranding_run(tmp_path_factory):
+    """Closures that would strand trips are refused and the run goes on (SUMO would quit)."""
+    events = [
+        {"time": 50, "kind": "close_road", "params": {"edge": "J3_J4"}},
+        {"time": 51, "kind": "close_road", "params": {"edge": "N3_N4"}},  # J4 cut off from the west
+    ]
+    env = SimEnv("rush_hour", "fixed_time", seed=1, end_time=200, output_dir=tmp_path_factory.mktemp("stranding"),
+                 scenario_params={"warmup": 0, "events": events})
+    env.start()
+    out = {}
+    while env.t < 200:
+        env.step()
+        if env.t == 60:
+            out["first"] = env.runtime.close_road("J2_N2")
+            out["second"] = env.runtime.close_road("N1_N2")
+            with pytest.raises(ValueError, match="no route") as refused:
+                env.runtime.close_road("N3_N2")  # the last road into N2: trips to N2_NN2 would be stranded
+            out["refused"] = str(refused.value)
+    out["t"], out["closed"], out["events"] = env.t, sorted(env.runtime.closed), list(env.events)
+    out["report"] = env.runtime.report()
+    env.close()
+
+    special = SimEnv("special_event", "fixed_time", seed=1, end_time=20, output_dir=tmp_path_factory.mktemp("stadium"),
+                     scenario_params={"warmup": 0})
+    special.start()
+    while special.t < 10:
+        special.step()
+    with pytest.raises(ValueError, match="Stadium") as stadium:
+        special.handle_command({"type": "close_road", "edge": "N3_J3"})  # the garage exit is a flow origin
+    out["stadium"] = str(stadium.value)
+    while special.t < 20:
+        special.step()
+    out["stadium_closed"] = dict(special.runtime.closed)
+    special.close()
+    return out
+
+
+def test_closures_that_strand_trips_are_refused(stranding_run):
+    o = stranding_run
+    assert o["t"] == 200  # SUMO did not quit
+    assert o["first"]["closed"] and o["second"]["closed"] and "N2_NN2" in o["refused"]
+    assert o["closed"] == ["J2_N2", "J3_J4", "N1_N2"]
+    failed = [e for e in o["events"] if e["type"] == "event_failed"]
+    assert len(failed) == 1 and failed[0]["params"]["edge"] == "N3_N4" and "no route" in failed[0]["error"]
+    assert o["report"]["failed_events"] == 1
+    assert o["stadium_closed"] == {}
 
 
 # --- emergency vehicles from every side (SUMO) ----------------------------------------------------

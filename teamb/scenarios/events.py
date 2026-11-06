@@ -24,8 +24,14 @@ Road closures (flood, sinkhole, earthquake damage)
    the signed (free-flow fastest) detour.
 4. Reopening restores the original lane permissions and free-flow routing weights and
    re-routes the vehicles still in the network, so traffic returns to the arterial.
-Only inner edges (between J* and N* nodes) can be closed: closing an entry or exit edge
-would strand trips that have no other way in or out.
+A closure is refused (ValueError, so a scheduled one becomes `event_failed` and a twin
+command gets ok: false) unless every edge is an inner edge (between J* and N* nodes) AND
+every trip the scenario can still insert keeps a route: an inner edge can be a flow's origin
+(the stadium garage exit N3_J3 in special_event), and several closures together can cut an
+exit off (all three roads into N2). SUMO quits on such a trip, so `routing.closure_error`
+checks every origin-destination pair of the scenario's flows (and of waiting emergency
+vehicles) against the closures before anything is closed. Scenario.validate runs the same
+check over the scheduled events.
 """
 from __future__ import annotations
 
@@ -214,18 +220,34 @@ class ScenarioRuntime:
 
     # --- road closures ------------------------------------------------------------
     def close_road(self, edge: str, cause: str = "flood", both_directions: bool = False) -> dict:
-        """Close an inner edge to all traffic (optionally the opposite direction too)."""
+        """Close an inner edge to all traffic (optionally the opposite direction too).
+        Refused (ValueError) if it would leave a trip of the scenario without a route."""
         edges = [edge, routing.reverse_edge(edge)] if both_directions else [edge]
-        for e in edges:
-            self._check_closable(e)
+        self._check_closable(edges)
         results = [self._close_one(e, cause) for e in edges]
         return results[0] if len(results) == 1 else {"edges": results}
 
-    def _check_closable(self, edge: str) -> None:
-        if not routing.has_edge(self.topology, edge):
-            raise ValueError(f"unknown edge '{edge}'")
-        if not routing.is_inner_edge(self.topology, edge):
-            raise ValueError(f"edge '{edge}' is an entry/exit edge; close an inner segment (J*/N* to J*/N*) instead")
+    def _check_closable(self, edges: list[str]) -> None:
+        """All edges are checked together (both directions of a closure at once)."""
+        pairs, labels = self._od_pairs()
+        error = routing.closure_error(self.topology, edges, self.closed, pairs, labels)
+        if error:
+            raise ValueError(error)
+
+    def _od_pairs(self) -> tuple[list[tuple[str, str]], dict[tuple[str, str], str]]:
+        """Origin-destination pairs that must keep a route: every scenario flow (their trips
+        are inserted until the end of the run) and every EV still waiting to depart."""
+        if not hasattr(self, "_flow_pairs"):
+            labels: dict[tuple[str, str], str] = {}
+            for f in getattr(self.scenario, "flows", []):
+                labels.setdefault((f.origin, f.destination), f.name or f"{f.origin}>{f.destination}")
+            self._flow_pairs, self._flow_labels = list(labels), labels
+        waiting = [(ev["origin"], ev["destination"]) for ev in self.evs.values() if ev["status"] == "dispatched"]
+        labels = dict(self._flow_labels)
+        for vid, ev in self.evs.items():
+            if ev["status"] == "dispatched":
+                labels.setdefault((ev["origin"], ev["destination"]), vid)
+        return self._flow_pairs + waiting, labels
 
     def _close_one(self, edge: str, cause: str) -> dict:
         if edge in self.closed:
