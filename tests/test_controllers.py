@@ -474,6 +474,28 @@ def test_qtable_file_is_checked(tmp_path):
         QTable.load(tmp_path / "missing.json")
 
 
+def test_qtable_visits_count_experience_not_replays():
+    import numpy as np
+
+    from teamb.controllers.rl_train import replay
+
+    table = QTable()
+    transitions = [(5, 1, -0.4, 1, 6), (5, 1, -0.2, 1, 6), (6, 0, -0.1, 2, 7)]
+    table.count_visits(transitions)
+    assert table.visits[5, 1] == 2 and table.visits[6, 0] == 1 and table.visits.sum() == 3
+    replay(table, [transitions], sweeps=3, alpha=0.1, gamma=0.9, rng=np.random.default_rng(0))
+    assert table.visits.sum() == 3, "replay sweeps are not new visits"
+    assert table.q[5, 1] < 0 and table.q[6, 0] < 0, "but they do update Q"
+
+
+def test_rl_train_epsilon_reaches_eps_end_whatever_the_batch_size():
+    from teamb.controllers.rl_train import epsilon_at
+
+    assert epsilon_at(0, 60, 0.3, 0.02) == 0.3
+    assert epsilon_at(59, 60, 0.3, 0.02) == pytest.approx(0.02)  # the last job of a 2-worker batch at done=58
+    assert epsilon_at(70, 60, 0.3, 0.02) == pytest.approx(0.02) and epsilon_at(0, 1, 0.3, 0.02) == 0.3
+
+
 def test_rl_masks_and_trained_table(topo):
     if not MODEL_PATH.exists():
         pytest.skip("models/rl_qtable.json not trained yet: python -m teamb.controllers.rl_train")

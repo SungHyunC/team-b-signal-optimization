@@ -66,6 +66,14 @@ def run_episode(job: dict) -> dict:
     }
 
 
+def epsilon_at(index: int, episodes: int, start: float, end: float) -> float:
+    """Exploration rate of episode `index` (0-based): linear from `start` to exactly `end` at the last one.
+
+    Computed per episode, not per parallel batch, so the last episode really uses `end`.
+    """
+    return start + (end - start) * min(1.0, index / max(1, episodes - 1))
+
+
 def replay(table: QTable, buffer, *, sweeps: int, alpha: float, gamma: float, rng) -> int:
     transitions = [tr for episode in buffer for tr in episode]
     for _ in range(sweeps):
@@ -86,13 +94,13 @@ def train(args) -> QTable:
     with ProcessPoolExecutor(max_workers=args.workers, mp_context=ctx) as pool:
         while done < args.episodes and (time.time() - wall0) / 60 < args.max_minutes:
             n = min(args.workers, args.episodes - done)
-            frac = done / max(1, args.episodes - 1)
-            epsilon = args.eps_start + (args.eps_end - args.eps_start) * frac
+            eps = [epsilon_at(done + i, args.episodes, args.eps_start, args.eps_end) for i in range(n)]
+            epsilon = float(np.mean(eps))
             jobs = [
                 {
                     "scenario": args.scenario,
                     "seed": TRAIN_SEED_BASE + args.seed * 1000 + done + i,
-                    "epsilon": epsilon,
+                    "epsilon": eps[i],
                     "demand_scale": float(rng.uniform(1 - args.jitter, 1 + args.jitter)),
                     "table": table.to_dict(),
                     "end": args.end,
@@ -104,7 +112,9 @@ def train(args) -> QTable:
             ]
             results = list(pool.map(run_episode, jobs))
             for r in results:
-                buffer.append(r.pop("transitions"))
+                transitions = r.pop("transitions")
+                table.count_visits(transitions)  # real experience, counted once
+                buffer.append(transitions)
                 curve.append(r)
             n_tr = replay(table, buffer, sweeps=args.sweeps, alpha=args.alpha, gamma=args.gamma, rng=rng)
             done += n
@@ -125,6 +135,7 @@ def train(args) -> QTable:
         "hyper": {k: getattr(args, k) for k in ("alpha", "gamma", "eps_start", "eps_end", "sweeps", "buffer",
                                                  "jitter", "switch_penalty", "coverage", "workers", "seed")},
         "curve": curve,
+        "visit_unit": "transitions",
         "note": "tabular Q-learning, shared policy over J1-J4; see teamb/controllers/rl.py",
     }
     path = table.save(args.out)

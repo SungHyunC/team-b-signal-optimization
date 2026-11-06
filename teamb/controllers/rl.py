@@ -38,6 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from teamb import config
+from teamb.fsutil import atomic_write_text
 from teamb.controllers.base import Controller, register
 from teamb.controllers.common import axis_sum, detector, num
 from teamb.controllers.defense import ObservationGuard
@@ -71,7 +72,12 @@ def decode_state(s: int) -> dict:
 
 
 class QTable:
-    """Q-values (states × 2 actions) plus visit counts and metadata, saved as JSON."""
+    """Q-values (states × 2 actions) plus visit counts and metadata, saved as JSON.
+
+    `visits[s, a]` counts collected transitions (real experience, see count_visits). Files
+    trained before that change (meta without "visit_unit") counted every replay update, up to
+    sweeps × buffer (30×) more.
+    """
 
     def __init__(self, q=None, visits=None, meta: dict | None = None):
         self.q = np.zeros((N_STATES, 2)) if q is None else np.asarray(q, dtype=float)
@@ -84,9 +90,14 @@ class QTable:
         return int(self.q[s, 1] > self.q[s, 0])  # ties keep the green
 
     def update(self, s: int, a: int, reward: float, k: int, s2: int, alpha: float, gamma: float) -> None:
+        """One Q-learning update. Does not touch `visits`: replaying a transition is not new experience."""
         target = reward + (gamma ** k) * self.q[s2].max()
         self.q[s, a] += alpha * (target - self.q[s, a])
-        self.visits[s, a] += 1
+
+    def count_visits(self, transitions) -> None:
+        """Count real experience: once per collected (s, a, R, k, s') transition, never per replay."""
+        for s, a, *_ in transitions:
+            self.visits[s, a] += 1
 
     # --- file format ------------------------------------------------------------------
     def to_dict(self) -> dict:
@@ -105,10 +116,8 @@ class QTable:
         return cls(data["q"], data["visits"], data.get("meta"))
 
     def save(self, path: Path | str = MODEL_PATH) -> Path:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_dict(), separators=(",", ":")) + "\n")
-        return path
+        """Write the model atomically (temp file + rename): a crash never leaves a truncated model."""
+        return atomic_write_text(path, json.dumps(self.to_dict(), separators=(",", ":")) + "\n")
 
     @classmethod
     def load(cls, path: Path | str = MODEL_PATH) -> "QTable":
