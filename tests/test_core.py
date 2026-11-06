@@ -198,7 +198,8 @@ def test_ev_preemption_clears_the_way(tmp_path):
         env.step()
     env.close()
     assert any(e["type"] == "ev_arrived" for e in env.events)
-    assert {p["junction"] for p in env.preemptions} >= {"J1", "J2", "J3", "J4"} or len(env.preemptions) >= 2
+    junctions = [p["junction"] for p in env.preemptions]
+    assert junctions == ["J1", "J2", "J3", "J4"]  # ext-226: every signal on the route, in route order
 
 
 def test_rep01_same_seed_same_result_and_perf01_fields(tmp_path):

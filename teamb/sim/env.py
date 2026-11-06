@@ -289,9 +289,13 @@ class SimEnv:
             self._shown[j] = signal
 
     def _ev_requests(self) -> dict[str, str]:
-        """Emergency vehicles within EV_PREEMPT_DISTANCE_M of a signal ask for their axis."""
-        requests, active = {}, set()
-        for vid in list(self._ev_ids):
+        """Emergency vehicles within EV_PREEMPT_DISTANCE_M of a signal ask for their axis.
+
+        One EV per junction: the EV already preempting it keeps it until it passes, otherwise the
+        nearest wins and the vehicle id breaks ties. Nothing depends on set (hash) order, so the
+        same seed gives the same result in every process (sim-core-3)."""
+        candidates = []
+        for vid in sorted(self._ev_ids):
             try:
                 upcoming = self.conn.vehicle.getNextTLS(vid)
             except traci.TraCIException:
@@ -301,7 +305,13 @@ class SimEnv:
                 continue
             tls_id, link_index, dist, _ = upcoming[0]
             axis = self.topology.link_axis.get(tls_id, {}).get(link_index)
-            if axis is None or dist > config.EV_PREEMPT_DISTANCE_M or tls_id in requests:
+            if axis is None or dist > config.EV_PREEMPT_DISTANCE_M:
+                continue
+            candidates.append(((vid, tls_id) not in self._ev_active, dist, vid, tls_id, axis))
+        candidates.sort()  # current holders first, then nearest, then by id
+        requests, active = {}, set()
+        for _, dist, vid, tls_id, axis in candidates:
+            if tls_id in requests:
                 continue
             requests[tls_id] = axis
             active.add((vid, tls_id))
