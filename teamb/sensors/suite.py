@@ -308,12 +308,16 @@ class SensorSuite:
                         fused["queue"], probe["penetration_est"],
                     )
                 )
+        # road closures are official notices (traffic management centre), not a sensor estimate
+        closed = self.feed.closed_edges()
         for j, exits in self._exits.items():
             out = junctions.setdefault(j, {"approaches": {}, "exits": {}})["exits"]
             for side, edge, lanes, has_detector in exits:
-                out[side] = {"edge": edge, "detector": self._detector(lanes, cache)[0] if has_detector else None}
+                out[side] = {"edge": edge, "detector": self._detector(lanes, cache)[0] if has_detector else None,
+                             "closed": edge in closed}
         self._alerts = alerts
-        obs = {"t": t, "coverage": self.coverage, "sampling": self.sampling, "junctions": junctions, "alerts": list(alerts)}
+        obs = {"t": t, "coverage": self.coverage, "sampling": self.sampling, "junctions": junctions, "alerts": list(alerts),
+               "closed_edges": sorted(closed)}
         self._last_obs, self._last_key = obs, (t, source)
         return obs
 

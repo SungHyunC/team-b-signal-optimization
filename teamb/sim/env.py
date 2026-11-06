@@ -281,7 +281,7 @@ class SimEnv:
                 self.log_event("ev_arrived", vehicle=vid)
         self.sensors.on_step(self.t, departed, arrived)
         self.metrics.on_step(self.t, departed, arrived)
-        self.runtime.on_step(self.t)
+        self.runtime.on_step(self.t, departed, arrived)  # this step's lists: no extra round trips
         self.controller.log(self.step_count)
         self.events.extend(self.controller.drain_events())
         self.step_count += 1
@@ -399,6 +399,7 @@ class SimEnv:
             "alerts": self.sensors.alerts(),
             "closures": self.runtime.closed_edges(),
             "attack": self.runtime.attack,
+            "phantom_phones": self.sensors.phantom_summary(),
             "recommendation": self.controller.pending_recommendation(),
             "preempting": sorted({j for _, j in self._ev_active}),
         }
@@ -475,6 +476,7 @@ class SimEnv:
             "rejected_actions": self.supervisor.rejections,
             "preemptions": len(self.preemptions),
             "signal_switches": sum(1 for e in self.supervisor.events if e.reason in ("switch", "preempt")),
+            "failed_events": self.runtime.failed_events,  # scheduled events that could not be applied
             "end_time": self.end_time,
             "complete": complete,
         }

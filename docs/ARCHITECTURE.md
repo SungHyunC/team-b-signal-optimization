@@ -61,9 +61,10 @@ Every simulation step is 1 s. Runs are 900 s warm-up + 3600 s measurement by def
           "oracle":   {"queue": 5, "count": 8}      // ONLY if controller.observation_source == "oracle"
         }
       },
-      "exits": {"E": {"edge": "J1_J2", "detector": {...} | null}}   // downstream, for max-pressure
+      "exits": {"E": {"edge": "J1_J2", "detector": {...} | null, "closed": false}}   // downstream, for max-pressure
     }
   },
+  "closed_edges": ["J2_J3"],        // official closure notices (flood, sinkhole, ...), sorted
   "alerts": [{"type": "probe_detector_mismatch", "junction": "J2", "approach": "N", "probe_queue": 120.0, "detector_queue": 2}]
 }
 ```
