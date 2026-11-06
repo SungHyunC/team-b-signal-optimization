@@ -400,7 +400,7 @@ export class ResultsView {
         if (scalar && !cols.includes(k)) cols.push(k);
       }
     }
-    const show = cols.slice(0, 14);
+    const show = cols; // all of them: the card scrolls sideways (e.g. estimation has 17 columns)
     // Scenario / controller names and yes/no in the current language; everything else as before.
     const cell = (c, v) => {
       if (typeof v === 'boolean') return v ? t('true') : t('false');
