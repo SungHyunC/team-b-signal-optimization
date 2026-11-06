@@ -6,14 +6,17 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
-from teamb.experiments.runner import RunSpec, run_status, scenario_end
+from teamb.experiments.runner import SPEC_KEYS, RunSpec, run_status, scenario_end, spec_mismatch
 
 
 def audit_specs(exp_dir: str | Path, specs: list[RunSpec], *, metric: str = "mean_delay_s") -> dict:
     """Check exact run identity, outputs, software provenance and paired-seed coverage.
 
     Does not substitute a different coverage, sampling strategy, preemption mode,
-    controller parameter set or simulation end time for a missing observation.
+    controller parameter set or simulation end time for a missing observation. A saved spec is
+    compared with runner.spec_mismatch, the rule resume uses (end_time None is the scenario's
+    duration), so a run that resume reuses is never rejected here; a saved spec that lacks a
+    field is rejected.
     """
     exp_dir = Path(exp_dir)
     names = [s.name for s in specs]
@@ -30,10 +33,11 @@ def audit_specs(exp_dir: str | Path, specs: list[RunSpec], *, metric: str = "mea
             continue
         try:
             saved = json.loads((folder / "run_spec.json").read_text())
-            for key in ("scenario", "controller", "seed", "coverage", "sampling", "ev_preemption",
-                        "end_time", "controller_params", "scenario_params"):
-                if saved.get(key) != getattr(spec, key):
-                    raise ValueError(f"run specification mismatch: {key}")
+            if not isinstance(saved, dict):
+                raise ValueError("run_spec.json is not an object")
+            diff = [f"{key} (missing)" for key in SPEC_KEYS if key not in saved] or spec_mismatch(saved, spec)
+            if diff:
+                raise ValueError(f"run specification mismatch: {'; '.join(diff)}")
             if (folder / "error.json").exists():
                 raise ValueError("error.json present; run may have failed")
             summary = json.loads((folder / "summary.json").read_text())

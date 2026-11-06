@@ -63,6 +63,14 @@ def centered_mean(times: list[float], values: list[float], window_s: float) -> l
     return out
 
 
+def _measurable(n_samples: int, recovered_at: float | None) -> bool:
+    """Can the excess of a window with `n_samples` samples be measured? It integrates over sample
+    intervals, so it needs two samples; one sample is a real 0 only when the window recovered
+    there (a short event). A censored window with one sample or none is unknown (None), as in
+    `union_excess`, never 0."""
+    return n_samples > 1 or (n_samples == 1 and recovered_at is not None)
+
+
 def recovery_time(
     times: list[float],
     values: list[float],
@@ -118,6 +126,7 @@ def recovery_time(
     during = [(t, v, s) for t, v, s in zip(times, values, smooth) if start <= t <= stop]
     if during:
         out["peak_level"] = round(max(s for _, _, s in during), 3)
+    if _measurable(len(during), recovered_at):
         excess = 0.0
         for k in range(1, len(during)):
             dt = during[k][0] - during[k - 1][0]
@@ -174,7 +183,7 @@ def recovery_vs_reference(
                 candidate = None
     stop = recovered_at if recovered_at is not None else pairs[-1][0]
     during = [(t, v) for t, v, _ in pairs if start <= t <= stop]
-    if during:  # no matched samples in the window (e.g. a shorter twin run): unknown, not 0
+    if _measurable(len(during), recovered_at):  # e.g. a shorter twin run: unknown, not 0
         excess = sum(max(0.0, during[k][1] - ref_raw[during[k][0]]) * (during[k][0] - during[k - 1][0]) for k in range(1, len(during)))
         out["excess_veh_h"] = round(excess / 3600.0, 3)
     if recovered_at is not None:

@@ -92,11 +92,51 @@ def test_in_flight_trips_are_charged_their_accrued_delay_not_300_s():
     accrued = (75.18 - 31.37) * 3353 / 3600
     assert saved == pytest.approx(accrued, abs=0.01)  # about 40.8, not + (118 - 79) * 300 / 3600 = 3.25 more
     assert abs(saved - 40.8) < 1.0
-    # stranded trips (never inserted or teleported) still pay the flat penalty
+    # never-inserted trips still pay the flat penalty (teleported trips finish: their timeLoss counts)
     stranded = dict(cand, never_inserted=40, teleports=10)
     q = impact.run_quantities(impact._normalize(stranded), p)
     q0 = impact.run_quantities(impact._normalize(cand), p)
-    assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(50 * 300 / 3600)
+    assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(40 * 300 / 3600)
+
+
+def test_teleports_are_not_charged_on_top_of_their_accrued_delay():
+    # a teleported window trip's timeLoss already holds the >= 300 s it waited before SUMO moved it,
+    # and the summary counts teleport events (also of vehicles that entered before the warm-up)
+    base, cand = _seed1_pair()
+    p = impact.ImpactParams()
+
+    def saved(b, c):
+        return impact.pair_effect(impact.run_quantities(impact._normalize(b), p),
+                                  impact.run_quantities(impact._normalize(c), p), p)["delay_saved_veh_h_per_h"]
+
+    assert saved(dict(base, teleports=20), dict(cand, teleports=5)) == pytest.approx(saved(base, cand))
+    row = impact.analyze([dict(base, teleports=0), dict(cand, teleports=12)])["rows"][0]
+    assert row["stats"]["delta_teleports_per_h"]["mean"] == pytest.approx(12.0)
+    assert any("+12.0 teleports/h vs fixed_time" in f for f in row["flags"]) and row["claimed"]
+    row = impact.analyze([dict(base, teleports=12), dict(cand, teleports=0)])["rows"][0]
+    assert not any("teleports" in f for f in row["flags"])
+
+
+def test_stranding_a_blocked_entry_is_never_cheaper_than_inserting_late():
+    # baseline: all 3600 window trips inserted, 30 of them after a 900-s wait at a blocked entry
+    # (planned 900 s before the end, so they accrued no timeLoss); the strander never inserts
+    # those 30: same traffic otherwise, inside the 1-pp PERF-01 tolerance
+    p = impact.ImpactParams()
+    accrued_total = 60.0 * 3600
+    base = S(completed=3600, unfinished=0, unfinished_pct=0.0, in_network_at_end=0, never_inserted=0,
+             never_inserted_wait_s=0.0, teleports=0, inserted_in_window=3600,
+             mean_delay_incl_unfinished_s=accrued_total / 3600, mean_depart_delay_s=30 * 900 / 3600)
+    strander = S(controller="strander", completed=3570, unfinished=30, unfinished_pct=0.83, in_network_at_end=0,
+                 never_inserted=30, never_inserted_wait_s=30 * 900.0, teleports=0, inserted_in_window=3570,
+                 mean_delay_incl_unfinished_s=accrued_total / 3570, mean_depart_delay_s=0.0)
+    row = impact.analyze([base, strander], params=p)["rows"][0]
+    assert row["claimed"]  # within the unfinished tolerance: only the delay formula protects the baseline
+    assert row["stats"]["delay_saved_veh_h_per_h"]["mean"] <= 1e-9
+    assert row["stats"]["time_value_usd_per_h"]["mean"] <= 1e-6
+    # a short wait still costs the flat penalty per never-inserted trip
+    q = impact.run_quantities(impact._normalize(dict(strander, never_inserted_wait_s=30 * 10.0)), p)
+    q0 = impact.run_quantities(impact._normalize(dict(strander, never_inserted=0, never_inserted_wait_s=0.0)), p)
+    assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(30 * 300 / 3600)
 
 
 def test_entry_waits_count_as_delay():
@@ -134,6 +174,24 @@ def test_others_extra_delay_excludes_the_emergency_vehicles():
     for r in runs:
         r.pop("others_mean_delay_s")
     assert impact.analyze(runs)["preemption"][0]["others_extra_delay_s"]["mean"] == pytest.approx(-1.0)  # fallback
+
+
+def test_preemption_rows_of_other_coverages_and_samplings_are_labelled():
+    runs = []
+    for cov, samp, gain in ((1.0, "uniform", 40.0), (0.25, "uniform", 25.0), (0.25, "speed_biased", 10.0)):
+        for seed in (1, 2):
+            runs.append(S(scenario="emergency", controller="max_pressure", coverage=cov, sampling=samp, seed=seed,
+                          ev_preemption=True, ev_mean_travel_time_s=200.0 - gain))
+            runs.append(S(scenario="emergency", controller="max_pressure", coverage=cov, sampling=samp, seed=seed,
+                          ev_preemption=False, ev_mean_travel_time_s=200.0))
+    result = impact.analyze(runs)
+    assert {(e["coverage"], e["sampling"]) for e in result["preemption"]} == {
+        (1.0, "uniform"), (0.25, "uniform"), (0.25, "speed_biased")}
+    md = impact.render_markdown(result)
+    table = md.split("## Emergency preemption on vs off")[1].split("##")[0]
+    labels = [line.split("|")[2].strip() for line in table.splitlines() if line.startswith("| emergency")]
+    assert sorted(labels) == ["max_pressure", "max_pressure (c25)", "max_pressure (c25, speed_biased)"]
+    assert "no preemption" not in table
 
 
 # --- annual hours: once per scenario (evaluation-4) and EV hours (ext-23) -------------------------
@@ -174,6 +232,26 @@ def test_counterfactual_twins_are_not_annualized():
     assert impact._is_counterfactual(unknown)
     assert not impact._is_counterfactual({**unknown, "scenario": "road_closure-abc123"})
     assert not impact._is_counterfactual({"scenario_name": "rush_hour", "scenario": "rush_hour-x", "scenario_params": {"events": []}})
+
+
+def test_summary_level_scenario_params_name_the_variant():
+    # summaries that carry scenario_params but no scenario_variant (hand-made dicts, JSON lists):
+    # the twin must not collide with the plain runs nor pass for the plain scenario
+    from teamb.experiments.runner import short_hash
+
+    plain = _pairs(lambda **k: S(**k), scenario="road_closure")
+    twins = _pairs(lambda **k: S(scenario_params={"events": []}, **k), scenario="road_closure",
+                   base_delay=40.0, cand_delay=30.0)
+    result = impact.analyze(plain + twins)
+    assert not any("duplicate" in n for n in result["notes"])
+    rows = {r["scenario"]: r for r in result["rows"]}
+    twin_name = f"road_closure-{short_hash({'events': []})}"
+    assert set(rows) == {"road_closure", twin_name} and all(r["n"] == 2 for r in rows.values())
+    assert rows["road_closure"]["annual_hours"] == 6.0 and rows[twin_name]["annual_hours"] == 0
+    assert any("counterfactual" in f for f in rows[twin_name]["flags"])
+    # an explicit scenario_variant still names the run
+    named = [dict(r, scenario_variant="road_closure-abc123") for r in twins]
+    assert {r["scenario"] for r in impact.analyze(plain + named)["rows"]} == {"road_closure", "road_closure-abc123"}
 
 
 def test_scenario_variants_count_the_annual_hours_once():
@@ -223,6 +301,13 @@ def test_ev_hours_come_from_claimed_emergency_rows_only():
     ({"service_life_years": 10.9}, "whole number"),
     ({"discount_rate": -1}, "discount_rate"),
     ({"intersections": -1}, "intersections"),
+    ({"intersections": float("nan")}, "intersections"),
+    ({"intersections": float("inf")}, "intersections"),
+    ({"discount_rate": float("inf")}, "discount_rate"),
+    ({"service_life_years": float("inf")}, "service_life_years"),
+    ({"vehicle_occupancy": float("nan")}, "vehicle_occupancy"),
+    ({"annual_hours": {"rush_hour": float("nan")}}, "annual_hours"),
+    ({"annual_hours": {"rush_hour": -5}}, "annual_hours"),
 ])
 def test_impossible_overrides_are_rejected(override, message):
     with pytest.raises(ValueError, match=message):
@@ -291,15 +376,69 @@ def test_runs_with_another_end_are_neither_merged_nor_paired(tmp_path):
     assert set(rows) == {2700.0, 4500.0} and all(r["n"] == 2 for r in rows.values())
     assert rows[2700.0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(10.0 - 20.0)
     assert rows[4500.0]["stats"]["delta_mean_delay_s"]["mean"] == pytest.approx(31.8 - 76.0)
-    # each run end is annualized on its own, never summed into one controller total
-    annual = {a["end_time"]: a for a in result["annual"] if a["controller"] == "max_pressure"}
-    assert set(annual) == {2700.0, 4500.0}
-    for end, a in annual.items():
-        assert rows[end]["annual_hours"] == 500.0
-        assert a["annual_benefit_usd"] == pytest.approx(rows[end]["stats"]["total_value_usd_per_h"]["mean"] * 500.0)
-    assert any("different times" in n for n in result["notes"])
+    # one annual total per controller: rush_hour counts once, at its own duration (the run without --end)
+    (annual,) = [a for a in result["annual"] if a["controller"] == "max_pressure"]
+    assert rows[4500.0]["annual_hours"] == 500.0 and rows[2700.0]["annual_hours"] == 0
+    assert any("run end 2700 s: not annualized" in f for f in rows[2700.0]["flags"])
+    assert annual["annual_benefit_usd"] == pytest.approx(rows[4500.0]["stats"]["total_value_usd_per_h"]["mean"] * 500.0)
+    assert annual["run_ends"] == [4500.0] and annual["scenarios_used"] == ["rush_hour"]
+    assert any("different times" in n and "rush_hour: 2700 s, 4500 s" in n for n in result["notes"])
     md = impact.render_markdown(result)
     assert "end 2700 s" in md and "end 4500 s" in md
+
+
+def test_scenarios_with_different_default_durations_add_up_to_one_annual_row(tmp_path):
+    # the team's standard matrix: road_closure lasts 5400 s, the others 4500 s, all at default ends
+    from teamb.experiments.runner import RunSpec
+
+    p = impact.ImpactParams()
+    for scenario, end in (("rush_hour", 4500.0), ("emergency", 4500.0), ("road_closure", 5400.0)):
+        for seed in (1, 2):
+            for controller, delay, ev in (("fixed_time", 76.0, 200.0), ("max_pressure", 32.0, 180.0)):
+                _run_folder(tmp_path, RunSpec(scenario, controller, seed, 1.0),
+                            S(scenario=scenario, controller=controller, seed=seed, sim_time_s=end,
+                              mean_delay_s=delay + seed, ev_mean_travel_time_s=ev), end)
+    result = impact.analyze(tmp_path, params=p)
+    rows = {r["scenario"]: r for r in result["rows"]}
+    assert {r["end_time"] for r in rows.values()} == {4500.0, 5400.0}
+    (annual,) = result["annual"]  # one row per controller, its deployment cost charged once
+    assert annual["controller"] == "max_pressure" and annual["scenarios_used"] == ["road_closure", "rush_hour"]
+    expected = sum(rows[s]["stats"]["total_value_usd_per_h"]["mean"] * p.annual_hours[s] for s in ("road_closure", "rush_hour"))
+    assert annual["annual_benefit_usd"] == pytest.approx(expected)
+    assert annual["capex_usd"] == p.cost_of("max_pressure")[0] and annual["run_ends"] == [4500.0, 5400.0]
+    assert annual["ev_scenarios_used"] == ["emergency"]
+    assert annual["ev_hours_saved_per_year"] == pytest.approx(20.0 * p.ev_trips_per_year / 3600.0)
+    assert not any("different times" in n for n in result["notes"])
+    assert all(not r["flags"] for r in rows.values())
+    md = impact.render_markdown(result)
+    assert "(end " not in md and "EV hours per year from: max_pressure: emergency." in md
+
+
+def test_an_emergency_stress_variant_is_left_out_of_the_ev_hours():
+    p = impact.ImpactParams()
+    runs = []
+    for seed in (1, 2, 3):
+        runs.append(S(scenario="emergency", seed=seed, ev_mean_travel_time_s=200.0))
+        runs.append(S(scenario="emergency", seed=seed, controller="cand", ev_mean_travel_time_s=190.0))
+    stress = []
+    for seed in (1, 2, 3):
+        stress.append(_variant({"demand_scale": 2.0}, scenario="emergency", seed=seed, ev_mean_travel_time_s=600.0))
+        stress.append(_variant({"demand_scale": 2.0}, scenario="emergency", seed=seed, controller="cand",
+                               ev_mean_travel_time_s=300.0))
+    result = impact.analyze(runs + stress, params=p)
+    a = _annual(result, "cand")
+    assert a["ev_scenarios_used"] == ["emergency"]
+    assert a["ev_hours_saved_per_year"] == pytest.approx(10.0 * p.ev_trips_per_year / 3600.0)  # not (10 + 300) / 2
+    var = next(r for r in result["rows"] if r["scenario"] != "emergency")
+    assert any("not used for EV hours" in f for f in var["flags"])
+    # the only emergency run (a variant) still carries the EV trips; a variant chosen in annual_hours too
+    alone = _annual(impact.analyze(stress, params=p), "cand")
+    assert alone["ev_scenarios_used"] == [stress[0]["scenario_variant"]]
+    other = [dict(r, scenario_variant=r["scenario_variant"] + "x") for r in stress]
+    two = impact.analyze(stress + other, params=p)
+    assert _annual(two, "cand")["ev_scenarios_used"] == [] and _annual(two, "cand")["ev_hours_saved_per_year"] is None
+    picked = impact.analyze(stress + other, params={"annual_hours": {stress[0]["scenario_variant"]: 0}})
+    assert _annual(picked, "cand")["ev_scenarios_used"] == [stress[0]["scenario_variant"]]
 
 
 def test_preemption_pairs_stay_within_one_run_end(tmp_path):

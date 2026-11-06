@@ -82,6 +82,21 @@ def test_cli_rejects_bad_matrices_before_running(capsys):
     assert capsys.readouterr().out.strip().endswith("1 runs")
 
 
+def test_cli_refuses_a_traci_backend_that_modal_would_ignore(capsys, monkeypatch):
+    from teamb.experiments.__main__ import main
+
+    monkeypatch.delenv("TEAMB_TRACI_BACKEND", raising=False)
+    base = ["run", "--name", "t", "--seeds", "1", "--backend", "modal", "--dry-run"]
+    assert main(base + ["--traci-backend", "traci"]) == 2
+    assert "Modal containers always use libsumo" in capsys.readouterr().err
+    assert main(base + ["--traci-backend", "libsumo"]) == 0 and main(base) == 0  # what the containers do anyway
+    capsys.readouterr()
+    monkeypatch.setenv("TEAMB_TRACI_BACKEND", "traci")
+    assert main(base) == 0 and "does not reach Modal containers" in capsys.readouterr().err
+    assert main(["run", "--name", "t", "--seeds", "1", "--dry-run"]) == 0  # local runs honour it
+    assert "Modal" not in capsys.readouterr().err
+
+
 # --- run completeness and resume (evaluation-1, ext-94, contract 2) ---------------------------
 import json  # noqa: E402
 from dataclasses import asdict  # noqa: E402
@@ -286,36 +301,200 @@ def test_default_workers_uses_all_cores_but_one(monkeypatch):
     assert runner.default_workers(100) == 1
 
 
-def test_a_dead_worker_becomes_a_failed_run(tmp_path, monkeypatch):
-    from concurrent.futures import Future
-    from concurrent.futures.process import BrokenProcessPool
+# Worker functions for the real spawn pools below: module level, so spawned workers can import them.
+def _crashing_run(spec_dict, runs_dir, force=False):
+    """Seed 2 kills its worker every time, seed 5 (the last run, so it never shares a pool with
+    seed 2) only the first time; the other runs take 0.5 s."""
+    import os
+    import time
+
+    name = RunSpec(**spec_dict).name
+    d = Path(runs_dir) / name
+    d.mkdir(parents=True, exist_ok=True)
+    attempt = len(list(d.glob("attempt*"))) + 1
+    (d / f"attempt{attempt}").write_text("")
+    if spec_dict["seed"] == 2 or (spec_dict["seed"] == 5 and attempt == 1):
+        os._exit(1)  # like a SUMO crash or an OOM kill: the process is gone, no result comes back
+    time.sleep(0.5)
+    return {"run": name, "status": "ok", "summary": {}}
+
+
+def _slow_run(spec_dict, runs_dir, force=False):
+    """A run that takes 20 s; leaves a 'started' file when it begins."""
+    import time
+
+    name = RunSpec(**spec_dict).name
+    d = Path(runs_dir) / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "started").write_text("")
+    time.sleep(20)
+    return {"run": name, "status": "ok", "summary": {}}
+
+
+def _worker_dies_at_start(spec_dict, runs_dir, force=False):
+    """A worker that dies before run_one touches the run, like the workers of a script that fail
+    at import (module-level code with no __main__ guard)."""
+    import os
+
+    os._exit(1)
+
+
+def _worker_slow_to_start(spec_dict, runs_dir, force=False):
+    """A worker that takes 20 s before run_one touches the run; says it is up with a file next to
+    the runs folder (never inside the run folder)."""
+    import time
+
+    name = RunSpec(**spec_dict).name
+    (Path(runs_dir).parent / f"up-{name}").write_text("")
+    time.sleep(20)
+    return {"run": name, "status": "skipped", "summary": {}}
+
+
+def _finished_run(runs_dir: Path, spec: RunSpec) -> dict:
+    """A run folder an earlier invocation finished: run_spec.json plus a complete summary.json."""
+    d = runs_dir / spec.name
+    d.mkdir(parents=True)
+    (d / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": spec.name, "variant": spec.variant}))
+    summary = {"mean_delay_s": 5.0, "sim_time_s": spec.end_time, "complete": True}
+    (d / "summary.json").write_text(json.dumps(summary))
+    assert check_resume(spec, runs_dir)["status"] == "skipped"
+    return summary
+
+
+def _assert_still_finished(runs_dir: Path, spec: RunSpec, summary: dict) -> None:
+    d = runs_dir / spec.name
+    assert json.loads((d / "summary.json").read_text()) == summary
+    assert not (d / "error.json").exists()
+    assert run_status(d, expected_end=spec.end_time)[0] == "ok"
+    assert check_resume(spec, runs_dir)["status"] == "skipped"
+
+
+def _ctrl_c_when(ready, sent: dict) -> None:
+    """In a thread: Ctrl-C to the main process once ready() holds (gives up after 60 s)."""
+    import signal
+    import threading
+    import time
+
+    def ctrl_c():
+        deadline = time.time() + 60
+        while not ready() and time.time() < deadline and "over" not in sent:
+            time.sleep(0.05)
+        if "over" not in sent:  # never after the test: a stray KeyboardInterrupt would stop pytest
+            sent["t"] = time.time()
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+
+    threading.Thread(target=ctrl_c, daemon=True).start()
+
+
+def test_workers_that_die_at_start_keep_finished_runs(tmp_path, monkeypatch):
+    # a resumed experiment whose spawned workers die before run_one starts: every spec is lost
+    # twice, but the runs finished in an earlier invocation must keep their results
+    import teamb.experiments.runner as runner
+
+    monkeypatch.setattr(runner, "run_one", _worker_dies_at_start)
+    runs = tmp_path / "runs"
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0, end_time=600.0) for s in (1, 2, 3)]
+    finished = {s.name: _finished_run(runs, s) for s in specs[:2]}
+    killed = runs / specs[2].name  # killed mid-run in an earlier invocation: run_spec.json only
+    killed.mkdir()
+    (killed / "run_spec.json").write_text(json.dumps({**asdict(specs[2]), "name": specs[2].name}))
+    record = runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    assert sorted(record["failed"]) == sorted(s.name for s in specs)  # this invocation ran none of them
+    for spec in specs[:2]:
+        _assert_still_finished(runs, spec, finished[spec.name])
+    err = json.loads((killed / "error.json").read_text())
+    assert "BrokenProcessPool" in err["error"] and err["interrupted"] is False
+    assert run_status(killed)[0] == "failed"
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "pthread_kill"), reason="needs POSIX signals")
+def test_ctrl_c_before_workers_start_keeps_finished_runs(tmp_path, monkeypatch):
+    # Ctrl-C while the workers are still starting: the runs in flight are finished runs that
+    # run_one would have skipped, so stopping their workers must leave their folders alone
+    import signal
+    import time
 
     import teamb.experiments.runner as runner
 
-    class DeadPool:
-        def __init__(self, *a, **k):
-            pass
+    monkeypatch.setattr(runner, "run_one", _worker_slow_to_start)
+    monkeypatch.setattr(runner, "INTERRUPT_GRACE_S", 0.2)
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    runs = tmp_path / "runs"
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0, end_time=600.0) for s in (1, 2, 3)]
+    finished = {s.name: _finished_run(runs, s) for s in specs}
+    sent: dict = {}
+    _ctrl_c_when(lambda: len(list(tmp_path.glob("up-*"))) >= 2, sent)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    finally:
+        sent["over"] = True
+        signal.signal(signal.SIGINT, previous)
+    assert time.time() - sent["t"] < 15  # the workers were stopped, not waited for
+    assert sorted(p.name[3:] for p in tmp_path.glob("up-*")) == sorted(s.name for s in specs[:2])
+    for spec in specs:
+        _assert_still_finished(runs, spec, finished[spec.name])
 
-        def __enter__(self):
-            return self
 
-        def __exit__(self, *exc):
-            return False
+def test_a_dead_worker_fails_only_its_own_run(tmp_path, monkeypatch):
+    # a real spawn pool: one dead worker breaks the pool and fails every run in flight, so the
+    # runner must retry those runs instead of reporting the whole rest of the matrix as failed
+    import teamb.experiments.runner as runner
 
-        def submit(self, fn, spec_dict, *args):
-            fut = Future()
-            if spec_dict["seed"] == 2:
-                fut.set_exception(BrokenProcessPool("a child process terminated abruptly"))
-            else:
-                fut.set_result({"run": RunSpec(**spec_dict).name, "status": "ok", "summary": {}})
-            return fut
-
-    monkeypatch.setattr(runner, "ProcessPoolExecutor", DeadPool)
-    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0) for s in (1, 2, 3)]
-    record = runner.run_matrix(specs, tmp_path, workers=3, quiet=True)
-    assert record["ok"] == 2 and record["failed"] == [specs[1].name]
+    monkeypatch.setattr(runner, "run_one", _crashing_run)
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0) for s in (1, 2, 3, 4, 5)]
+    record = runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    assert record["failed"] == [specs[1].name] and record["ok"] == 4
+    runs = tmp_path / "runs"
+    assert len(list((runs / specs[1].name).glob("attempt*"))) == 2  # retried once, alone, then failed
+    err = json.loads((runs / specs[1].name / "error.json").read_text())
+    assert "BrokenProcessPool" in err["error"] and err["interrupted"] is False
+    assert not (runs / specs[4].name / "error.json").exists()  # died once, then finished on its retry
+    assert len(list((runs / specs[4].name).glob("attempt*"))) == 2
+    assert all(len(list((runs / s.name).glob("attempt*"))) <= 2 for s in specs)
     meta = json.loads((tmp_path / "experiment.json").read_text())
-    assert meta["invocations"][-1]["failed"] == [specs[1].name] and meta["invocations"][-1]["workers"] == 3
+    assert meta["invocations"][-1]["failed"] == [specs[1].name] and meta["invocations"][-1]["workers"] == 2
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "pthread_kill"), reason="needs POSIX signals")
+def test_ctrl_c_stops_a_parallel_matrix_and_counts_what_did_not_run(tmp_path, monkeypatch):
+    import signal
+    import threading
+    import time
+
+    import teamb.experiments.runner as runner
+
+    monkeypatch.setattr(runner, "run_one", _slow_run)
+    monkeypatch.setattr(runner, "INTERRUPT_GRACE_S", 0.2)
+    # a background job may inherit SIGINT ignored; make it raise KeyboardInterrupt as in a terminal
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0) for s in range(1, 7)]
+    runs = tmp_path / "runs"
+    sent = {}
+
+    def ctrl_c():  # Ctrl-C to the main process once both workers are busy
+        deadline = time.time() + 60
+        while len(list(runs.glob("*/started"))) < 2 and time.time() < deadline and "over" not in sent:
+            time.sleep(0.05)
+        if "over" not in sent:  # never after the test: a stray KeyboardInterrupt would stop pytest
+            sent["t"] = time.time()
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+
+    threading.Thread(target=ctrl_c, daemon=True).start()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            runner.run_matrix(specs, tmp_path, workers=2, quiet=True)
+    finally:
+        sent["over"] = True
+        signal.signal(signal.SIGINT, previous)
+    assert time.time() - sent["t"] < 15  # the 20-s runs in flight were stopped, not waited for
+    time.sleep(1.0)  # a queued run that still started would show up now
+    started = sorted(p.parent.name for p in runs.glob("*/started"))
+    assert started == sorted(s.name for s in specs[:2])
+    for name in started:  # stopped runs are marked like an interrupted run_one
+        assert json.loads((runs / name / "error.json").read_text())["interrupted"] is True
+    inv = json.loads((tmp_path / "experiment.json").read_text())["invocations"][-1]
+    assert inv["interrupted"] is True and inv["ok"] == 0 and inv["failed"] == [] and inv["not_run"] == 6
 
 
 def test_interrupted_matrix_still_records_the_invocation(tmp_path, fake_env):

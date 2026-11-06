@@ -13,6 +13,7 @@ where my.json is {"vehicle_occupancy": 1.2, "annual_hours": {"rush_hour": 750}, 
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -129,11 +130,13 @@ ASSUMPTIONS: list[Assumption] = [
     # --- how the simulation maps to a year --------------------------------------------------
     Assumption(
         "unfinished_trip_delay_s", 300, "s of delay per stranded trip", "assumption",
-        "Each trip that was never inserted or that teleported in the measurement window is charged SUMO's "
-        "teleport threshold of delay, so a controller can never gain by stranding vehicles (PERF-01). Trips "
-        "still driving at the end are charged the delay they accrued (the runs have no drain period, so most "
-        "of them are ordinary in-flight traffic, not stranded); summaries without that detail charge every "
-        "unfinished trip.",
+        "Each trip that was never inserted is charged the wait it accrued from its planned depart to the run "
+        "end, and at least SUMO's teleport threshold of delay; an inserted trip's entry wait (departDelay) is at "
+        "most that, so a controller can never gain by stranding vehicles at a blocked entry (PERF-01). Teleports "
+        "are not charged: a teleported trip finishes and its timeLoss holds the wait before the teleport (a "
+        "candidate that teleports more is flagged). Trips still driving at the end are charged the delay they "
+        "accrued (the runs have no drain period, so most of them are ordinary in-flight "
+        "traffic, not stranded); summaries without that detail charge every unfinished trip.",
     ),
     Assumption(
         "unfinished_tolerance_pp", 1.0, "percentage points", "assumption",
@@ -142,9 +145,9 @@ ASSUMPTIONS: list[Assumption] = [
     ),
     Assumption(
         "ev_trips_per_year", 1100, "emergency runs per year through the corridor", "assumption",
-        "About three ambulance or fire runs a day. Multiplies the paired EV time saved in the claimed 'emergency' "
-        "scenario rows (seed-weighted); PERF-01 rows and other EV scenarios (earthquake) are excluded. Emergency "
-        "time saved is reported in hours, not dollars.",
+        "About three ambulance or fire runs a day. Multiplies the paired EV time saved in the claimed plain "
+        "'emergency' row (else its only variant); stress variants (e.g. doubled demand), PERF-01 rows and other EV "
+        "scenarios (earthquake) are excluded. Emergency time saved is reported in hours, not dollars.",
     ),
 ]
 
@@ -205,13 +208,19 @@ class ImpactParams:
     def validate(self) -> None:
         """Reject values the cost-benefit formulas cannot use (ValueError naming the parameter)."""
         v = self.values
+        for name, value in v.items():  # NaN or inf (e.g. a NaN literal in a --params file) poisons every total
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number, not {value:g}")
+        for name, hours in self.annual_hours.items():
+            if not (math.isfinite(hours) and hours >= 0):
+                raise ValueError(f"annual_hours[{name!r}] must be a finite number >= 0, not {hours:g}")
         life = v["service_life_years"]
         if not life > 0 or life != int(life):
             # the NPV sums whole years while the capital recovery factor would use a fractional one
             raise ValueError(f"service_life_years must be a whole number of years > 0, not {life:g}")
         if not v["discount_rate"] > -1:
             raise ValueError(f"discount_rate must be > -1, not {v['discount_rate']:g}")
-        if v["intersections"] < 0:
+        if not v["intersections"] >= 0:
             raise ValueError(f"intersections must be >= 0, not {v['intersections']:g}")
 
     def cost_of(self, controller: str) -> tuple[float, float, str]:

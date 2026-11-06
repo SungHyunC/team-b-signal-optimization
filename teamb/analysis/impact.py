@@ -14,20 +14,27 @@ Method (paired by seed, so every controller sees the identical demand)
   For every run:
     window_h        = (sim_time_s − warmup) / 3600                (measurement window, hours)
     delay_s         = (mean_delay_incl_unfinished_s + mean_depart_delay_s) × inserted_in_window
-                      + (never_inserted + teleports) × unfinished_trip_delay_s
+                      + max(never_inserted × unfinished_trip_delay_s, never_inserted_wait_s)
                       i.e. the timeLoss every inserted window trip accrued in the run (trips still
                       driving at the end are charged what they accrued, not a flat penalty, since
                       the run has no drain period), plus the time spent waiting to enter
-                      (departDelay, not part of timeLoss), plus a flat penalty for trips that were
-                      never inserted or teleported (stranded). In-flight trips' delay is slightly
-                      understated (accrued, not final). Summaries without these PERF-01 fields
-                      (older runs, hand-made CSVs) fall back to
-                      mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
+                      (departDelay, not part of timeLoss), plus for the trips never inserted the
+                      wait they accrued from their planned depart to the run end, at least a flat
+                      penalty each: an inserted trip's departDelay is at most that wait, so leaving
+                      a blocked entry's trips out is never cheaper than inserting them late
+                      (PERF-01). Summaries without never_inserted_wait_s (older runs) charge the
+                      flat penalty only. Teleports are not charged on top: a teleported trip
+                      finishes, and its timeLoss already holds the wait before SUMO teleported it
+                      (and the count is of events, including vehicles that entered before the
+                      warm-up); a candidate that teleports more than the baseline is flagged
+                      instead. In-flight trips' delay is slightly understated (accrued, not
+                      final). Summaries without the PERF-01 fields (older runs, hand-made CSVs)
+                      fall back to mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
     delay_veh_h/h   = delay_s / 3600 / window_h
     stops/h         = stops_per_veh × completed / window_h
   For every candidate run vs the baseline run with the same scenario, seed, coverage, sampling,
   preemption setting and run end (the effective end time; runs that end at different times are
-  never paired, merged or annualized together):
+  never paired or merged):
     delay saved     = baseline delay_veh_h/h − candidate delay_veh_h/h      (veh·h per hour)
     time value      = delay saved × [(1 − truck_share) × occupancy × VOT + truck_share × truck VOT]
     fuel saved      = delay saved × idle_fuel_gal_per_h + stops saved/h × fuel_per_stop_gal
@@ -41,19 +48,23 @@ Method (paired by seed, so every controller sees the identical demand)
   Annual benefit = Σ over scenarios of value per hour × ANNUAL_HOURS[scenario]; it is compared
   with the controller's deployment cost (capital annualized over the service life at the
   discount rate, plus O&M): B/C ratio, simple payback and NPV.
-  Each scenario's annual hours are counted once per controller setting and run end: by the
-  plain scenario row, or by its only variant ('<scenario>-<hash>', e.g. a --scenario-params run)
-  when there is no plain row. Other variants and no-event counterfactual twins (events=[]) get 0 hours and a
-  flag; set annual_hours["<scenario>-<hash>"] to annualize a variant explicitly.
-  EV hours per year = the paired EV time saved in the claimed 'emergency' scenario rows
-  (seed-weighted) × ev_trips_per_year; other EV scenarios (earthquake) are not routine trips.
+  Each scenario's annual hours are counted once per controller setting (controller, coverage,
+  sampling, preemption), whatever the run ends: by the plain scenario row, or by its only variant
+  ('<scenario>-<hash>', e.g. a --scenario-params run) when there is no plain row. A scenario run
+  at several ends counts at its own duration (the run without --end); its other ends are flagged
+  and not annualized, so scenarios with different durations (road_closure 5400 s, most others
+  4500 s) add up to one total per controller, charged its deployment cost once. Other variants
+  and no-event counterfactual twins (events=[]) get 0 hours and a flag; set
+  annual_hours["<scenario>-<hash>"] to annualize a variant explicitly.
+  EV hours per year = the paired EV time saved in the 'emergency' row chosen the same way (the
+  plain row, else its only variant, else the variants given in annual_hours; claimed rows only)
+  × ev_trips_per_year; stress variants and other EV scenarios (earthquake) are not routine trips.
 Every number used is a named parameter in teamb/analysis/assumptions.py with its source.
 """
 from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import sys
 from collections import defaultdict
@@ -68,7 +79,7 @@ from teamb.fsutil import atomic_write_json, atomic_write_text
 NUMERIC_FIELDS = ("seed", "coverage", "sim_time_s", "completed", "unfinished", "unfinished_pct", "mean_delay_s",
                   "stops_per_veh", "throughput_veh_h", "ev_count", "ev_mean_travel_time_s", "teleports", "warmup",
                   "end_time", "inserted_in_window", "in_network_at_end", "never_inserted", "mean_delay_incl_unfinished_s",
-                  "mean_depart_delay_s", "mean_delay_incl_depart_s", "others_mean_delay_s")
+                  "mean_depart_delay_s", "mean_delay_incl_depart_s", "others_mean_delay_s", "never_inserted_wait_s")
 
 
 # --- loading -------------------------------------------------------------------------
@@ -122,14 +133,16 @@ def _normalize(summary: dict, run_dir: Path | None = None) -> dict:
         elif isinstance(run["_end_time"], (int, float)) and isinstance(sim, (int, float)) and sim + 1e-6 < run["_end_time"]:
             run["_incomplete"] = f"stopped at sim_time_s {sim:g} before the end time {run['_end_time']:g}"
     run["_variant"] = spec.get("variant") or run.get("variant") or run.get("controller")
-    scenario_params = spec.get("scenario_params") or {}
     run["_scenario"] = run.get("scenario_variant") or run.get("scenario")
     # the variant's parameters if known (run_spec.json or the summary itself), else None
     known = spec.get("scenario_params") if "scenario_params" in spec else run.get("scenario_params")
     run["_scenario_params"] = known if isinstance(known, dict) else None
-    if scenario_params:  # same naming as the experiments runner (RunSpec.scenario_variant)
-        digest = hashlib.sha1(json.dumps(scenario_params, sort_keys=True).encode()).hexdigest()[:6]
-        run["_scenario"] = f"{run.get('scenario')}-{digest}"
+    # name the variant from the same parameters (RunSpec.scenario_variant's naming): run_spec.json
+    # always, the summary's own parameters unless it already names its scenario_variant
+    if run["_scenario_params"] and ("scenario_params" in spec or not run.get("scenario_variant")):
+        from teamb.experiments.runner import short_hash
+
+        run["_scenario"] = f"{run.get('scenario')}-{short_hash(run['_scenario_params'])}"
     run["_dir"] = str(run_dir) if run_dir else None
     # does the folder carry today's name for its spec? (an older name: a leftover of the same run)
     if run_dir is not None and spec:
@@ -192,8 +205,10 @@ def run_quantities(run: dict, p: ImpactParams) -> dict | None:
     if inserted is not None and never is not None and (accrued is not None or not inserted):
         # accrued timeLoss of every inserted window trip + entry waits + stranded trips (evaluation-5/6)
         per_trip = float(accrued or 0.0) + float(run.get("mean_depart_delay_s") or 0.0)
-        stranded = float(never) + float(run.get("teleports") or 0)
-        delay_s = per_trip * float(inserted) + stranded * p.unfinished_trip_delay_s
+        never_s = float(never) * p.unfinished_trip_delay_s
+        if run.get("never_inserted_wait_s") is not None:  # the wait they accrued, at least the flat penalty
+            never_s = max(never_s, float(run["never_inserted_wait_s"]))
+        delay_s = per_trip * float(inserted) + never_s  # teleported trips: their timeLoss holds the wait
         method = "accrued"
     else:
         delay_s = (float(mean_delay) * completed if mean_delay is not None else 0.0) + unfinished * p.unfinished_trip_delay_s
@@ -209,6 +224,7 @@ def run_quantities(run: dict, p: ImpactParams) -> dict | None:
         "unfinished_pct": run.get("unfinished_pct"),
         "throughput_veh_h": run.get("throughput_veh_h"),
         "ev": run.get("ev_mean_travel_time_s"),
+        "teleports_per_h": None if run.get("teleports") is None else float(run["teleports"]) / window_h,
     }
 
 
@@ -228,6 +244,7 @@ def pair_effect(base: dict, cand: dict, p: ImpactParams) -> dict:
     d_delay = None if base["mean_delay_s"] is None or cand["mean_delay_s"] is None else cand["mean_delay_s"] - base["mean_delay_s"]
     d_unf = None if base["unfinished_pct"] is None or cand["unfinished_pct"] is None else cand["unfinished_pct"] - base["unfinished_pct"]
     ev_saved = None if base["ev"] is None or cand["ev"] is None else base["ev"] - cand["ev"]
+    tb, tc = base.get("teleports_per_h"), cand.get("teleports_per_h")
     return {
         "delta_mean_delay_s": d_delay,
         "delay_saved_veh_h_per_h": saved,
@@ -240,6 +257,7 @@ def pair_effect(base: dict, cand: dict, p: ImpactParams) -> dict:
         "total_value_usd_per_h": time_usd + fuel_usd + co2_usd,
         "ev_time_saved_s": ev_saved,
         "delta_unfinished_pp": d_unf,
+        "delta_teleports_per_h": None if tb is None or tc is None else tc - tb,
     }
 
 
@@ -265,6 +283,10 @@ def _setting(run: dict) -> tuple:
 
 def _end_label(end: float | None) -> str:
     return "unknown" if end is None else f"{end:g} s"
+
+
+def _sorted_ends(ends) -> list:
+    return sorted(ends, key=lambda e: (e is None, e or 0.0))
 
 
 def _prefer(old: dict, new: dict) -> tuple[dict, dict]:
@@ -328,16 +350,26 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
         if run.get("_scenario_params") is not None:
             params_of.setdefault(run["_scenario"], run["_scenario_params"])
     rows = []
-    ends = sorted({k[4] for k in by_key}, key=lambda e: (e is None, e or 0.0))
-    if len(ends) > 1:
-        notes.append(f"runs end at different times ({', '.join(_end_label(e) for e in ends)}): each run end is "
-                     "paired, annualized and listed separately")
+    ends_of: dict[str, set] = defaultdict(set)
+    for k in by_key:
+        ends_of[k[0]].add(k[4])
+    several = {scen: ends for scen, ends in ends_of.items() if len(ends) > 1}  # scenarios have their own durations
+    if several:
+        notes.append("runs of one scenario end at different times ("
+                     + "; ".join(f"{scen}: {', '.join(_end_label(e) for e in _sorted_ends(ends))}"
+                                 for scen, ends in sorted(several.items()))
+                     + "): each run end is paired and listed separately; only the run at the scenario's own "
+                     "duration is annualized")
     for (scen, variant, cov, samp, pre, end), effects in sorted(groups.items(), key=lambda kv: str(kv[0])):
         stats = {k: _summary_stat([e[k] for e in effects]) for k in effects[0] if k not in ("seed", "fallback", "mixed")}
         d_unf = stats["delta_unfinished_pp"]["mean"]
         flags = []
         if d_unf is not None and d_unf > p.unfinished_tolerance_pp:
             flags.append(f"PERF-01: +{d_unf:.1f} pp unfinished trips — benefit not claimed")
+        d_tele = stats["delta_teleports_per_h"]["mean"]
+        if d_tele is not None and d_tele > 0:
+            flags.append(f"{d_tele:+.1f} teleports/h vs {baseline}: teleported vehicles skip part of their delay, "
+                         "which is not charged")
         if any(e["fallback"] for e in effects):
             flags.append(f"baseline paired across coverage (the {baseline} baseline does not use probe data)")
         if len(effects) == 1:
@@ -398,39 +430,108 @@ def _is_counterfactual(row: dict) -> bool:
         return False
 
 
-def _assign_annual_hours(rows: list[dict], p: ImpactParams) -> None:
-    """Give each scenario's ANNUAL_HOURS to exactly one row per controller setting (evaluation-4).
+EV_SCENARIO = "emergency"  # its rows carry the routine EV trips (ev_trips_per_year), not traffic hours
 
-    An explicit annual_hours entry for a variant ("rush_hour-1a2b3c") always applies. Otherwise
-    counterfactual twins get 0; of the remaining rows of one base scenario the plain one gets the
-    hours, or the only variant if there is no plain row; the others get 0. Every 0 is flagged."""
+
+def _default_end(row: dict) -> float | None:
+    """The run end of `row`'s scenario without --end, i.e. its duration (None if unknown)."""
+    from teamb.scenarios import REGISTRY, get_scenario
+
+    name = row["scenario_name"]
+    if name not in REGISTRY:
+        return None
+    try:
+        return float(get_scenario(name, **(row.get("scenario_params") or {})).duration)
+    except Exception:
+        return None
+
+
+def _one_end(rs: list[dict], flag: bool) -> list[dict]:
+    """The rows of one scenario variant and controller setting that may be annualized: all of them
+    if they share one run end; else the one at the scenario's own duration (the run without
+    --end), or none if no run has that end. With `flag`, the rows left out say why."""
+    ends = {r.get("end_time") for r in rs}
+    if len(ends) < 2:
+        return rs
+    default = _default_end(rs[0])
+    keep = [r for r in rs if default is not None and r.get("end_time") is not None and abs(r["end_time"] - default) < 1e-6]
+    if flag:
+        kept = {id(r) for r in keep}
+        for r in rs:
+            if id(r) in kept:
+                continue
+            if keep:
+                r["flags"].append(f"run end {_end_label(r.get('end_time'))}: not annualized "
+                                  f"({r['scenario']} counts at its {default:g} s duration)")
+            else:
+                r["flags"].append(f"{r['scenario']} runs end at several times "
+                                  f"({', '.join(_end_label(e) for e in _sorted_ends(ends))}) and none at its duration: "
+                                  "not annualized")
+    return keep
+
+
+def _assign_annual_hours(rows: list[dict], p: ImpactParams) -> None:
+    """Give each scenario's ANNUAL_HOURS to exactly one row per controller setting (evaluation-4),
+    and mark the one 'emergency' row whose EV time saved stands for the routine EV trips.
+
+    Rows of one controller setting and base scenario are considered together, whatever their run
+    ends. A variant run at several ends keeps only its run at the scenario's own duration (see
+    `_one_end`). An explicit annual_hours entry for a variant ("rush_hour-1a2b3c") always applies.
+    Otherwise counterfactual twins get 0; of the remaining rows of one base scenario the plain one
+    gets the hours, or the only variant if there is no plain row; the others get 0. Every 0 is
+    flagged. The EV rows are chosen the same way (the plain row, else the only variant, else the
+    variants given in annual_hours), even though 'emergency' has no traffic hours of its own."""
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in rows:
-        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"], r.get("end_time"),
-                r["scenario_name"])].append(r)
+        r["carries_ev_trips"] = False
+        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"], r["scenario_name"])].append(r)
     for (*_, name), rs in groups.items():
         hours = p.annual_hours.get(name, 0.0)
-        rest = []
+        ev = name == EV_SCENARIO
+        by_variant: dict[str, list[dict]] = defaultdict(list)
+        for r in rs:
+            by_variant[r["scenario"]].append(r)
+        had_plain = name in by_variant
+        rs = [r for scen, vrs in by_variant.items() for r in _one_end(vrs, bool(hours) or ev or scen in p.annual_hours)]
+        rest, explicit = [], []
         for r in rs:
             if r["scenario"] != name and r["scenario"] in p.annual_hours:
                 r["annual_hours"] = p.annual_hours[r["scenario"]]
+                explicit.append(r)
             elif _is_counterfactual(r):
-                if hours:
+                if hours or ev:
                     r["flags"].append("no-event counterfactual: not annualized")
             else:
                 rest.append(r)
-        if not rest or not hours:
-            continue
         plain = [r for r in rest if r["scenario"] == name]
-        chosen = plain[0] if plain else (rest[0] if len(rest) == 1 else None)
-        for r in rest:
-            if r is chosen:
-                r["annual_hours"] = hours
-            elif chosen is not None:
-                r["flags"].append(f"variant of {name}: not annualized ({chosen['scenario']} carries its {hours:g} h/yr)")
-            else:
-                r["flags"].append(f"{len(rest)} variants of {name} and no plain run: none annualized "
-                                  f"(set annual_hours[\"{r['scenario']}\"] to count one)")
+        chosen = plain[0] if plain else (rest[0] if len(rest) == 1 and not had_plain else None)
+        if hours:
+            for r in rest:
+                if r is chosen:
+                    r["annual_hours"] = hours
+                elif chosen is not None:
+                    r["flags"].append(f"variant of {name}: not annualized ({chosen['scenario']} carries its {hours:g} h/yr)")
+                elif had_plain:
+                    r["flags"].append(f"variant of {name}: not annualized (the plain {name} runs are not annualized either)")
+                else:
+                    r["flags"].append(f"{len(rest)} variants of {name} and no plain run: none annualized "
+                                      f"(set annual_hours[\"{r['scenario']}\"] to count one)")
+        if ev:
+            # routine EV trips are counted once: a stress variant (e.g. doubled demand) must not dominate them
+            others = rest + explicit
+            carriers = plain[:1] or (others if len(others) == 1 and not had_plain else explicit)
+            for r in carriers:
+                r["carries_ev_trips"] = True
+            for r in others:
+                if r["carries_ev_trips"]:
+                    continue
+                if carriers:
+                    why = f"{carriers[0]['scenario']} carries the routine EV trips"
+                elif had_plain:
+                    why = f"the plain {name} runs are not used either"
+                else:
+                    why = f"{len(others)} variants of {name} and no plain run; set annual_hours[\"{r['scenario']}\"] to use one"
+                r["flags"].append(f"variant of {name}: not used for EV hours ({why})")
 
 
 def capital_recovery_factor(rate: float, years: float) -> float:
@@ -443,13 +544,15 @@ def capital_recovery_factor(rate: float, years: float) -> float:
 
 
 def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
-    """Annual benefit per controller setting (and run end) vs its deployment cost."""
+    """Annual benefit per controller setting vs its deployment cost: one total per setting, the
+    scenarios summed at the annual hours `_assign_annual_hours` gave their rows (whatever the run
+    ends), so the cost is charged once."""
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in rows:
-        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"], r.get("end_time"))].append(r)
+        groups[(r["controller"], r["coverage"], r["sampling"], r["ev_preemption"])].append(r)
     out = []
     crf = capital_recovery_factor(p.discount_rate, p.service_life_years)
-    for (controller, cov, samp, pre, end), rs in sorted(groups.items(), key=lambda kv: str(kv[0])):
+    for (controller, cov, samp, pre), rs in sorted(groups.items(), key=lambda kv: str(kv[0])):
         parts = {"time": 0.0, "fuel": 0.0, "co2": 0.0}
         used, skipped = [], []
         for r in rs:
@@ -463,9 +566,9 @@ def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
             parts["time"] += (s["time_value_usd_per_h"]["mean"] or 0.0) * hours
             parts["fuel"] += (s["fuel_value_usd_per_h"]["mean"] or 0.0) * hours
             parts["co2"] += (s["co2_value_usd_per_h"]["mean"] or 0.0) * hours
-            used.append(r["scenario"])
-        # routine EV trips: the claimed 'emergency' rows only, weighted by their seed counts (ext-23)
-        ev_rows = [r for r in rs if r["claimed"] and r["scenario_name"] == "emergency"
+            used.append(r)
+        # routine EV trips: the claimed row(s) chosen to carry them, weighted by their seed counts (ext-23)
+        ev_rows = [r for r in rs if r.get("carries_ev_trips") and r["claimed"]
                    and r["stats"]["ev_time_saved_s"]["mean"] is not None]
         n_ev = sum(r["stats"]["ev_time_saved_s"]["n"] for r in ev_rows)
         ev_hours = (sum(r["stats"]["ev_time_saved_s"]["mean"] * r["stats"]["ev_time_saved_s"]["n"] for r in ev_rows)
@@ -481,8 +584,8 @@ def annualize(rows: list[dict], p: ImpactParams) -> list[dict]:
                 "coverage": cov,
                 "sampling": samp,
                 "ev_preemption": pre,
-                "end_time": end,
-                "scenarios_used": used,
+                "scenarios_used": [r["scenario"] for r in used],
+                "run_ends": _sorted_ends({r.get("end_time") for r in used + ev_rows}),
                 "scenarios_not_claimed": skipped,
                 "annual_benefit_usd": benefit,
                 "annual_benefit_parts_usd": parts,
@@ -527,6 +630,7 @@ def preemption_effect(runs: list[dict], p: ImpactParams) -> list[dict]:
                 "scenario": scen,
                 "controller": variant,
                 "coverage": cov,
+                "sampling": samp,
                 "end_time": end,
                 "n": len(pairs),
                 "ev_time_saved_s": _summary_stat(ev_saved),
@@ -580,10 +684,18 @@ def _setting_label(r: dict, show_end: bool = False) -> str:
     return f" ({', '.join(bits)})" if bits else ""
 
 
+def _several_ends(items: list[dict]) -> bool:
+    ends: dict = defaultdict(set)
+    for x in items:
+        ends[x.get("scenario")].add(x.get("end_time"))
+    return any(len(e) > 1 for e in ends.values())
+
+
 def render_markdown(result: dict) -> str:
     base = result["baseline"]
-    # several run ends: say which one every row is (rows of one end are only compared with each other)
-    show_end = len({x.get("end_time") for part in ("rows", "annual", "preemption") for x in result.get(part) or []}) > 1
+    # one scenario at several run ends: say which end every row is (rows of one end are only
+    # compared with each other); scenarios that merely have different durations need no label
+    show_end = _several_ends(result["rows"]) or _several_ends(result.get("preemption") or [])
     lines = [
         "# Impact & cost-benefit",
         "",
@@ -637,8 +749,13 @@ def render_markdown(result: dict) -> str:
         lines.append("| – | | | | | | | | | |")
     hours = ", ".join(f"{k} {v:g} h" for k, v in result["annual_hours"].items())
     lines += ["", f"Hours per year each scenario stands for (assumptions): {hours}. Each scenario's hours count "
-              "once per controller setting and run end (the plain scenario, or its only variant); other variants and no-event "
-              "counterfactual twins are not annualized. EV hours per year use the claimed `emergency` rows only."]
+              "once per controller setting (the plain scenario, or its only variant, at the scenario's own duration); "
+              "other variants, other run ends and no-event counterfactual twins are not annualized. EV hours per year "
+              "use the claimed plain `emergency` row (or its only variant); stress variants are left out."]
+    ev_used = [a for a in result["annual"] if a.get("ev_scenarios_used")]
+    if ev_used:
+        lines += ["", "EV hours per year from: " + "; ".join(
+            f"{a['controller']}{_setting_label(a, show_end)}: {', '.join(a['ev_scenarios_used'])}" for a in ev_used) + "."]
 
     if result["preemption"]:
         lines += [
@@ -650,7 +767,7 @@ def render_markdown(result: dict) -> str:
         ]
         for e in result["preemption"]:
             lines.append(
-                f"| {e['scenario']} | {e['controller']}{_setting_label({'end_time': e.get('end_time')}, show_end)} | {e['n']} | {_stat(e['ev_travel_time_on_s'])} | {_stat(e['ev_travel_time_off_s'])} "
+                f"| {e['scenario']} | {e['controller']}{_setting_label(e, show_end)} | {e['n']} | {_stat(e['ev_travel_time_on_s'])} | {_stat(e['ev_travel_time_off_s'])} "
                 f"| {_stat(e['ev_time_saved_s'], 1)} | {_stat(e['others_extra_delay_s'], 2, True)} | {_f(e['ev_hours_saved_per_year'], 1)} |"
             )
 
