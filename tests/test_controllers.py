@@ -548,6 +548,16 @@ def test_committed_rl_model_never_picks_a_zero_visit_action_in_deploy_mode():
     assert zero and set(zero) <= set(untrusted), "every zero-visit pick goes to the fallback"
 
 
+def test_first_rl_model_stays_loadable_by_path(topo, tmp_path, monkeypatch):
+    from teamb.controllers.rl import V1_MODEL_PATH
+
+    v1 = QTable.load(V1_MODEL_PATH)
+    assert v1.meta["scenario"] == "rush_hour" and v1.meta["episodes"] == 60
+    monkeypatch.chdir(tmp_path)  # a relative path also resolves from the repo root
+    ctl = ready("rl", topo, model_path="models/rl_qtable_v1_rush_hour.json")
+    assert ctl.model_path == V1_MODEL_PATH and (ctl.table.q == v1.q).all()
+
+
 def test_rl_masks_and_trained_table(topo):
     if not MODEL_PATH.exists():
         pytest.skip("models/rl_qtable.json not trained yet: python -m teamb.controllers.rl_train")

@@ -56,6 +56,9 @@ from teamb.fsutil import atomic_write_text
 from teamb.sim.phases import AXES, other_axis
 
 MODEL_PATH = config.MODELS / "rl_qtable.json"
+# the first committed model (rush hour only, 60 episodes), kept unchanged so its results stay
+# reproducible: controller_params {"model_path": "models/rl_qtable_v1_rush_hour.json"}
+V1_MODEL_PATH = config.MODELS / "rl_qtable_v1_rush_hour.json"
 QUEUE_BINS = (1, 3, 6, 10, 15)  # bucket edges in cars: 0 | 1-2 | 3-5 | 6-9 | 10-14 | 15+
 GREEN_BINS = (15, 30, 50)  # bucket edges in seconds of green
 FEATURES = {"queue_bins": list(QUEUE_BINS), "green_bins": list(GREEN_BINS), "axes": list(AXES),
@@ -139,6 +142,14 @@ class QTable:
         return cls.from_dict(json.loads(path.read_text()))
 
 
+def resolve_model_path(model_path: str | Path) -> Path:
+    """A relative model path is tried from the working directory first, then from the repo root."""
+    path = Path(model_path)
+    if not path.is_absolute() and not path.exists() and (config.ROOT / path).exists():
+        return config.ROOT / path
+    return path
+
+
 def _checksum(body: dict) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -173,7 +184,7 @@ class RLController(Controller):
                          epsilon=epsilon, learn=learn, gamma=gamma, reward_scale=reward_scale,
                          switch_penalty=switch_penalty, max_obs_age=max_obs_age,
                          fallback_min_visits=fallback_min_visits, **params)
-        self.model_path = Path(model_path) if model_path else MODEL_PATH
+        self.model_path = resolve_model_path(model_path) if model_path else MODEL_PATH
         self.interval = float(interval)
         self.min_green = max(float(min_green), float(config.MIN_GREEN_S))
         self.max_green = float(max_green)
