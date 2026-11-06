@@ -464,6 +464,30 @@ def test_ai_recommender_auto_approve_applies_the_plan(topo, monkeypatch):
         ctl.log(t)
     assert ctl.recommendation["status"] == "approved" and ctl.plan.cycle == 70.0
     assert ctl.summary()["plan_applied"] is True
+    assert ctl.summary()["recommendations"][0]["plan_changed"] is True
+    assert "plan_applied" in [e["type"] for e in ctl.drain_events()]
+
+
+def test_ai_recommender_approving_the_current_plan_is_not_a_plan_change(topo, monkeypatch):
+    from teamb.controllers import optimizer
+
+    monkeypatch.setattr(optimizer, "run_search", lambda spec, progress=None: {
+        # what run_search returns when nothing beats the current plan (after a JSON round trip)
+        "plan": {**spec.current, "offsets": {j: 0.0 for j in topo.tls_ids}},
+        "expected": {"mean_delay_s": 40.0, "baseline_mean_delay_s": 40.0, "improvement_pct": 0.0},
+        "note": "no candidate beat the current plan; keep it", "trials": spec.trials, "wall_s": 0.0})
+    ctl = ready("ai_recommender", topo, auto_approve=True, search_at=10, cache=False)
+    before = ctl.plan.to_dict()
+    for t in range(0, 12):
+        ctl.observe(make_obs(topo, t))
+        ctl.propose_action(make_state(topo, t))
+        ctl.log(t)
+    summary = ctl.summary()
+    assert ctl.recommendation["status"] == "approved" and ctl.plan.cycle == before["cycle"]
+    assert summary["plan_applied"] is False, "the run never left its starting plan"
+    assert summary["recommendations"][0]["plan_changed"] is False
+    types = [e["type"] for e in ctl.drain_events()]
+    assert "plan_applied" not in types and "plan_kept" in types, "the twin must not say a new plan was applied"
 
 
 # --- RL ------------------------------------------------------------------------------------
