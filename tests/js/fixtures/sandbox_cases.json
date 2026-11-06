@@ -47,5 +47,6 @@
  ],
  "commands": [
   {"config": {"scenario": "road_closure", "controller": "max_pressure", "seed": 33, "demand_scale": 1.25, "ev_preemption": true, "duration_s": null, "schema_version": 1}, "exp_run": "teamb exp run --name sandbox_trial --scenarios road_closure --controllers max_pressure --seeds 33 --ev-preemption on --scenario-params '{\"demand_scale\": 1.25}'"},
-  {"config": {"scenario": "fake_data_attack", "controller": "max_pressure_probe", "seed": 7, "demand_scale": 1, "ev_preemption": false, "duration_s": 1800, "schema_version": 1}, "exp_run": "teamb exp run --name sandbox_trial --scenarios fake_data_attack --controllers max_pressure_probe --seeds 7 --ev-preemption off --scenario-params '{\"demand_scale\": 1}' --end 1800"}
+  {"config": {"scenario": "fake_data_attack", "controller": "max_pressure_probe", "seed": 7, "demand_scale": 1, "ev_preemption": false, "duration_s": 1800, "schema_version": 1}, "exp_run": "teamb exp run --name sandbox_trial --scenarios fake_data_attack --controllers max_pressure_probe --seeds 7 --ev-preemption off --scenario-params '{\"demand_scale\": 1}' --end 1800"},
+  {"config": {"scenario": "emergency", "controller": "ai_recommender", "seed": 3, "demand_scale": 0.8, "ev_preemption": true, "duration_s": 1200, "schema_version": 1}, "exp_run": "teamb exp run --name sandbox_trial --scenarios emergency --controllers ai_recommender --seeds 3 --ev-preemption on --scenario-params '{\"demand_scale\": 0.8}' --end 1200 --controller-params '{\"ai_recommender\": {\"auto_approve\": true}}'"}
  ]}

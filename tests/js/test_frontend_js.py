@@ -88,11 +88,20 @@ def test_sandbox_fixture_verdict_matches_python(case):
     assert _python_accepts(case["text"]) is case["ok"]
 
 
-@pytest.mark.parametrize("item", SANDBOX["commands"], ids=lambda c: c["config"]["scenario"])
+@pytest.mark.parametrize("item", SANDBOX["commands"], ids=lambda c: f'{c["config"]["scenario"]}-{c["config"]["controller"]}')
 def test_sandbox_fixture_command_matches_python(item):
     from teamb.sandbox import experiment_command, parse_sandbox_config
 
     assert experiment_command(parse_sandbox_config(item["config"])) == item["exp_run"]
+
+
+def test_sandbox_fixture_has_a_command_for_every_headless_controller():
+    """A controller that gets --controller-params in a sandbox run needs a shared command case, or
+    the page's experimentCommand() can drop the parameters without either contract test noticing."""
+    from teamb.sandbox import HEADLESS_CONTROLLER_PARAMS
+
+    covered = {c["config"].get("controller") for c in SANDBOX["commands"]}
+    assert set(HEADLESS_CONTROLLER_PARAMS) <= covered
 
 
 def _js_list(name: str) -> set[str]:
