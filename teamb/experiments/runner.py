@@ -27,7 +27,7 @@ import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from teamb import config
@@ -193,16 +193,6 @@ def build_matrix(
     preemption = list(dict.fromkeys(bool(p) for p in preemption)) if preemption else None
     per_controller = split_controller_params(controller_params, controllers)
     base_params = dict(scenario_params or {})
-    twins: list[RunSpec] = []
-    if counterfactual:
-        from teamb.scenarios import get_scenario
-
-        for scenario in scenarios:
-            if "events" not in base_params and get_scenario(scenario, **base_params).events:
-                twins += build_matrix(
-                    [scenario], controllers, seeds, coverages, samplings, preemption, end_time,
-                    controller_params, {**base_params, "events": []},
-                )
     specs = []
     for scenario in scenarios:
         resolved = list(dict.fromkeys(scenario_default_coverage(scenario) if c is None else c for c in coverages))
@@ -217,6 +207,12 @@ def build_matrix(
                                     per_controller[controller], dict(base_params),
                                 )
                             )
+    twins: list[RunSpec] = []
+    if counterfactual:
+        from teamb.scenarios import get_scenario
+
+        with_events = {sc for sc in scenarios if "events" not in base_params and get_scenario(sc, **base_params).events}
+        twins = [replace(s, scenario_params={**base_params, "events": []}) for s in specs if s.scenario in with_events]
     # the counterfactual twins run after the main runs; identical specs (same name) collapse to one
     return list({s.name: s for s in specs + twins}.values())
 
