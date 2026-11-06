@@ -27,7 +27,8 @@ Method (paired by seed, so every controller sees the identical demand)
                       finishes, and its timeLoss already holds the wait before SUMO teleported it
                       (and the count is of events, including vehicles that entered before the
                       warm-up); a candidate that teleports more than the baseline is flagged
-                      instead. In-flight trips' delay is slightly understated (accrued, not final). Summaries without the PERF-01 fields (older runs, hand-made CSVs)
+                      instead. In-flight trips' delay is slightly understated (accrued, not
+                      final). Summaries without the PERF-01 fields (older runs, hand-made CSVs)
                       fall back to mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
     delay_veh_h/h   = delay_s / 3600 / window_h
     stops/h         = stops_per_veh × completed / window_h
@@ -524,8 +525,12 @@ def _assign_annual_hours(rows: list[dict], p: ImpactParams) -> None:
             for r in others:
                 if r["carries_ev_trips"]:
                     continue
-                why = (f"{carriers[0]['scenario']} carries the routine EV trips" if carriers else
-                       f"{len(others)} variants of {name} and no plain run; set annual_hours[\"{r['scenario']}\"] to use one")
+                if carriers:
+                    why = f"{carriers[0]['scenario']} carries the routine EV trips"
+                elif had_plain:
+                    why = f"the plain {name} runs are not used either"
+                else:
+                    why = f"{len(others)} variants of {name} and no plain run; set annual_hours[\"{r['scenario']}\"] to use one"
                 r["flags"].append(f"variant of {name}: not used for EV hours ({why})")
 
 
