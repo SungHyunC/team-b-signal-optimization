@@ -112,14 +112,22 @@ class AIRecommenderController(Controller):
 
     # --- every step -----------------------------------------------------------------
     def observe(self, observation: dict) -> None:
+        """Feed fresh probe data to the demand model.
+
+        The controller's clock (`self.t`) follows the simulation (propose_action's state["t"]),
+        never the observation's own timestamp: an observation older than the clock by more than
+        the guard's max age is "stale" (frozen feed), one older than the last accepted is
+        "replayed". Neither reaches the demand model, and neither can move the clock backwards.
+        """
         super().observe(observation)
         if observation and observation.get("t") is not None:
-            self.t = float(observation["t"])
-            if self.guard.check_observation(observation, self.t) is None:  # fresh, not replayed
+            now = max(self.t, float(observation["t"]))
+            if self.guard.check_observation(observation, now) is None:  # fresh, not replayed
                 self.demand.add(observation)
 
     def propose_action(self, state: dict) -> dict[str, str | None]:
         t = state["t"]
+        self.t = max(self.t, float(t))  # the simulation clock; only moves forward
         return {j: self.plan.axis_at(j, t) for j in state["junctions"]}
 
     def log(self, step: int) -> None:

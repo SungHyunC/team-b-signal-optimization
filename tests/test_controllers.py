@@ -330,6 +330,19 @@ def test_ai_recommender_commands(topo):
     assert [a["ok"] for a in ctl.audit] == [False, True, True]
 
 
+def test_ai_recommender_rejects_stale_observations_against_the_sim_clock(topo):
+    ctl = ready("ai_recommender", topo)
+    ctl.propose_action(make_state(topo, 100))
+    ctl.observe(make_obs(topo, 50))  # 50 s behind the simulation: a frozen / lagging feed
+    assert ctl.guard.rejected["stale"] == 1 and not ctl.demand.samples
+    assert ctl.t == 100, "an old observation must not rewind the controller's clock"
+    ctl.observe(make_obs(topo, 100))
+    assert len(ctl.demand.samples) == 1
+    ctl.propose_action(make_state(topo, 115))
+    ctl.observe(make_obs(topo, 100))  # the feed froze at t=100 while the simulation moved on
+    assert ctl.guard.rejected["stale"] == 2 and ctl.t == 115
+
+
 # --- RL ------------------------------------------------------------------------------------
 def test_qtable_file_is_checked(tmp_path):
     table = QTable()
