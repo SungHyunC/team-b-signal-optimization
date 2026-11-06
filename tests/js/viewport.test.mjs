@@ -1,6 +1,6 @@
 // viewport.js banners: the "FAKE DATA SUSPECTED" banner goes away 4 s after the last alert even
 // when the run is paused and no frame or status arrives (ext-208), and the replay error overlay
-// retries the download in the online demo (frontend-5).
+// retries through TopBar.retry (frontend-5).
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -57,17 +57,19 @@ test("a new session drops the previous run's alert", (t) => {
   assert.equal(bannerText(get), '');
 });
 
-test('the demo error overlay retries the download where it stopped', async () => {
+test('the error overlay retries through TopBar.retry, the same path as Play / Space', async () => {
+  // TopBar.retry resumes a recording where its download failed (tests/js/topbar.test.mjs).
   const calls = [];
-  const { bus, get } = chrome({ static: { data: 'data/' }, socket: { control: async (a) => calls.push(a) }, topbar: { start: async () => calls.push('start') } });
+  const topbar = { retry: async () => calls.push('retry'), start: async () => calls.push('start') };
+  const { bus, get } = chrome({ static: { data: 'data/' }, socket: { control: async (a) => calls.push(a) }, topbar });
   bus.emit('connection', true);
   bus.emit('status', { state: 'error', sid: 3, error: 'Could not load the next part of the recording (data/runs/r/001.json: 503).', config: { scenario: 'fake_data_attack' } });
   const overlay = get('vp-overlay');
   assert.match(overlay.textContent, /001\.json: 503/);
   const buttons = overlay.children.at(-1).children;
   buttons[0].click();
-  assert.deepEqual(calls, ['play']);
+  assert.deepEqual(calls, ['retry']);
   bus.emit('status', { state: 'error', sid: 4, error: 'Could not load the recording', config: null });
   get('vp-overlay').children.at(-1).children[0].click();
-  assert.deepEqual(calls, ['play', 'start']);
+  assert.deepEqual(calls, ['retry', 'retry']);
 });

@@ -282,9 +282,19 @@ export class TopBar {
     if (!r.ok) toast(r.error || t('could not change speed'), 'error');
   }
 
+  /** "Try again" after an error, for the overlay button and for Play / Space alike. A recording
+   *  that failed to download part way loads that part again and carries on where it stopped
+   *  (ReplaySocket control('play')); otherwise (the live twin, nothing loaded yet) start the run. */
+  async retry() {
+    if (!(this.ctx.static && this.status && this.status.config)) return this.start();
+    const r = await this.ctx.socket.control('play');
+    if (!r.ok) toast(r.error, 'error');
+  }
+
   async togglePlay() {
     const s = this.status;
-    if (!s || ['idle', 'finished', 'error'].includes(s.state)) return this.start();
+    if (s && s.state === 'error') return this.retry();
+    if (!s || ['idle', 'finished'].includes(s.state)) return this.start();
     const action = s.state === 'running' ? 'pause' : 'play';
     const r = await this.ctx.socket.control(action);
     if (!r.ok) toast(r.error, 'error');

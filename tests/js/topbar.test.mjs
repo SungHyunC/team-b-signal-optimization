@@ -1,6 +1,6 @@
 // TopBar session form under a fake DOM: what POST /api/session receives for URL deep links and
 // sandbox launches (frontend-3 coverage default, frontend-2 start time, frontend-13 contract,
-// ext-207 restart hint).
+// ext-207 restart hint), and Play / Space after an error (frontend-5).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
@@ -121,4 +121,85 @@ test('the step key does nothing once the run has finished', async () => {
   ctx.bus.emit('status', running({}, { state: 'paused', sid: 2 }));
   await bar.step();
   assert.equal(calls, 1);
+});
+
+// --- Play / Space after an error ---------------------------------------------------------------
+const { ReplaySocket, staticApi } = await import('../../teamb/twin/static/js/replay.js');
+
+test('Play after an error resumes the recording in the online demo and restarts the live twin', async () => {
+  const { bar, posted, ctx } = makeTopBar();
+  const controls = [];
+  ctx.socket.control = async (action) => { controls.push(action); return { ok: true }; };
+  ctx.static = { data: 'data/' };
+  ctx.bus.emit('status', running({}, { state: 'error', error: 'Could not load the next part of the recording' }));
+  await bar.togglePlay();
+  assert.deepEqual(controls, ['play']); // load the failed part again, where it stopped
+  assert.equal(posted.length, 0);
+  ctx.bus.emit('status', { state: 'error', sid: 2, config: null, error: 'Could not load the recording' });
+  await bar.togglePlay();
+  assert.equal(posted.length, 1); // nothing loaded yet: start the run
+  ctx.static = null; // the live twin: SUMO failed, so start it again
+  ctx.bus.emit('status', running({}, { state: 'error', sid: 3 }));
+  await bar.togglePlay();
+  assert.deepEqual(controls, ['play']);
+  assert.equal(posted.length, 2);
+});
+
+test('Space after a failed chunk download carries on at the failed moment, not the start time', async () => {
+  installDom();
+  const files = {
+    'data/runs/r/run.json': {
+      id: 'r', end_t: 10, chunk_s: 5, chunks: [{ t0: 0, t1: 4, file: '000.json' }, { t0: 5, t1: 10, file: '001.json' }],
+      ids: [], kinds: [], events: [], kpi_history: [],
+      status: { config: { scenario: 'emergency', controller: 'max_pressure', seed: 1 }, step_length: 1, end_time: 10, warmup: 0 },
+    },
+    'data/runs/r/000.json': { t0: 0, frames: [0, 1, 2, 3, 4].map((t) => ({ t, v: [] })) },
+    'data/runs/r/001.json': 503,
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const body = files[url];
+    if (body === undefined || typeof body === 'number') return { ok: false, status: body ?? 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => structuredClone(body) };
+  };
+  const meta = {
+    ...META,
+    scenarios: [{ name: 'emergency', warmup: 0, events: [] }],
+    controllers: [{ name: 'max_pressure' }],
+    demo: { runs: [{ id: 'r', scenario: 'emergency', controller: 'max_pressure' }], default: { scenario: 'emergency', controller: 'max_pressure' } },
+  };
+  const socket = new ReplaySocket(meta, 'data/');
+  const clock = { ms: 0 };
+  socket.now = () => clock.ms;
+  const api = staticApi('data/');
+  api.player = socket;
+  const sessions = [];
+  const post = api.post.bind(api);
+  api.post = (path, body) => { sessions.push(body); return post(path, body); };
+  const bus = new Bus();
+  socket.on('status', (s) => bus.emit('status', s));
+  socket.on('hello', (m) => bus.emit('status', m.status));
+  const bar = new TopBar({ meta, static: { data: 'data/' }, bus, api, socket });
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  try {
+    bar.setForm({ scenario: 'emergency', controller: 'max_pressure', start_at: 2 });
+    await bar.start();
+    assert.equal(socket.t, 2);
+    for (let k = 0; k < 10 && socket.state === 'running'; k++) {
+      clock.ms += 1000; // needs chunk 1 (t >= 5), which fails
+      socket.tick();
+      await settle();
+    }
+    assert.equal(socket.state, 'error');
+    const at = socket.t;
+    assert.ok(at > 2, `playback got past the start time before failing (t = ${at})`);
+    files['data/runs/r/001.json'] = { t0: 5, frames: [5, 6, 7, 8, 9, 10].map((t) => ({ t, v: [] })) };
+    await bar.togglePlay(); // the Space key
+    assert.equal(socket.state, 'running');
+    assert.equal(socket.t, at);
+    assert.equal(sessions.length, 1); // no new POST /api/session
+  } finally {
+    socket.stopClock();
+    globalThis.fetch = realFetch;
+  }
 });
