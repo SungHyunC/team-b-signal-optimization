@@ -136,6 +136,24 @@ def test_others_extra_delay_excludes_the_emergency_vehicles():
     assert impact.analyze(runs)["preemption"][0]["others_extra_delay_s"]["mean"] == pytest.approx(-1.0)  # fallback
 
 
+def test_preemption_rows_of_other_coverages_and_samplings_are_labelled():
+    runs = []
+    for cov, samp, gain in ((1.0, "uniform", 40.0), (0.25, "uniform", 25.0), (0.25, "speed_biased", 10.0)):
+        for seed in (1, 2):
+            runs.append(S(scenario="emergency", controller="max_pressure", coverage=cov, sampling=samp, seed=seed,
+                          ev_preemption=True, ev_mean_travel_time_s=200.0 - gain))
+            runs.append(S(scenario="emergency", controller="max_pressure", coverage=cov, sampling=samp, seed=seed,
+                          ev_preemption=False, ev_mean_travel_time_s=200.0))
+    result = impact.analyze(runs)
+    assert {(e["coverage"], e["sampling"]) for e in result["preemption"]} == {
+        (1.0, "uniform"), (0.25, "uniform"), (0.25, "speed_biased")}
+    md = impact.render_markdown(result)
+    table = md.split("## Emergency preemption on vs off")[1].split("##")[0]
+    labels = [line.split("|")[2].strip() for line in table.splitlines() if line.startswith("| emergency")]
+    assert sorted(labels) == ["max_pressure", "max_pressure (c25)", "max_pressure (c25, speed_biased)"]
+    assert "no preemption" not in table
+
+
 # --- annual hours: once per scenario (evaluation-4) and EV hours (ext-23) -------------------------
 def _variant(params, **kw):
     from teamb.experiments.runner import short_hash

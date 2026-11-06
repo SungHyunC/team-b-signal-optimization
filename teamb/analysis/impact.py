@@ -528,6 +528,7 @@ def preemption_effect(runs: list[dict], p: ImpactParams) -> list[dict]:
                 "scenario": scen,
                 "controller": variant,
                 "coverage": cov,
+                "sampling": samp,
                 "end_time": end,
                 "n": len(pairs),
                 "ev_time_saved_s": _summary_stat(ev_saved),
@@ -651,7 +652,7 @@ def render_markdown(result: dict) -> str:
         ]
         for e in result["preemption"]:
             lines.append(
-                f"| {e['scenario']} | {e['controller']}{_setting_label({'end_time': e.get('end_time')}, show_end)} | {e['n']} | {_stat(e['ev_travel_time_on_s'])} | {_stat(e['ev_travel_time_off_s'])} "
+                f"| {e['scenario']} | {e['controller']}{_setting_label(e, show_end)} | {e['n']} | {_stat(e['ev_travel_time_on_s'])} | {_stat(e['ev_travel_time_off_s'])} "
                 f"| {_stat(e['ev_time_saved_s'], 1)} | {_stat(e['others_extra_delay_s'], 2, True)} | {_f(e['ev_hours_saved_per_year'], 1)} |"
             )
 
