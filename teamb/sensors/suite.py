@@ -4,6 +4,22 @@ See the package docstring (teamb/sensors/__init__.py) for the observation format
 
 Per-step cost: all SUMO values come from the shared subscription feed (feed.py), so one
 `observe()` makes no TraCI round trips; it is plain Python over ~200 vehicles.
+
+Coverage changes mid-run (the twin's slider): a vehicle shares data or not for its whole
+trip, decided when it departs, so after a change the probes on the road are a mix of
+vehicles chosen under the old and the new coverage for several minutes. Every probe
+therefore keeps the coverage that was in effect at its departure (its cohort), and the
+estimates weight each probe by it:
+
+    queue_est      = sum over halted reporting probes of 1 / c_i   (+ fake reports / c)
+    flow_est_vph   = sum over cohorts of probe crossings / c_i, per hour
+    penetration    = (sum over probe crossings of c / c_i + PRIOR * c) / (loop crossings + PRIOR)
+    queue_est_adj  = (sum over halted probes of c / c_i + fake) / penetration
+
+where c is the current coverage. With a constant coverage every c_i = c and these are
+exactly the plain formulas (halted / c, crossings / c, ...). The cross-check's statistical
+test uses the highest cohort coverage still on the road, so genuine reports of a
+high-coverage cohort are not taken for fake ones after the coverage was lowered.
 """
 from __future__ import annotations
 
@@ -83,7 +99,8 @@ class SensorSuite:
         self.rng = random.Random(seed * 7919 + 17)  # who is a probe (same stream as the first version)
         self.report_rng = random.Random(seed * 104729 + 3)  # when a stopped probe reports (speed_biased)
         self.selector = ProbeSelector(self.spec, self.rng)
-        self.probes: set[str] = set()
+        self.probes: dict[str, float] = {}  # probe vehicle id -> coverage when it departed (its cohort)
+        self._cohorts: dict[float, int] = {}  # cohort coverage -> probes of it in the network
         self.fake: dict[tuple[str, str], int] = {}  # (junction, approach) -> phantom reports
         self._phantom_cache: dict[tuple[str, str], tuple[int, dict]] = {}
         self.attacks: list[dict] = []  # attack log for the evaluation (never shown to controllers)
@@ -115,10 +132,11 @@ class SensorSuite:
         self._loop_prev: dict[str, set] = {}
         self._loop_counts = {lane: RollingCount(FLOW_WINDOW_S) for lane in self.feed.detector_lanes}
         self._probe_prev: dict[tuple, set] = {k: set() for k in keys}
-        self._probe_counts = {k: RollingCount(FLOW_WINDOW_S) for k in keys}
+        # probe stop-line crossings per approach, per cohort coverage (flow window)
+        self._probe_counts: dict[tuple, dict[float, RollingCount]] = {k: {} for k in keys}
         self._true_prev: dict[tuple, set] = {k: set() for k in keys}
         self._true_counts = {k: RollingCount(FLOW_WINDOW_S) for k in keys}
-        self._pen_probe = {k: RollingCount(PENETRATION_WINDOW_S) for k in keys}
+        self._pen_probe: dict[tuple, dict[float, RollingCount]] = {k: {} for k in keys}  # same, 15 min window
         self._pen_loop = {k: RollingCount(PENETRATION_WINDOW_S) for k in keys}
         self.estimation: list[tuple] = []  # rows, see logs.ESTIMATION_COLUMNS
         self._next_log = 0.0
@@ -126,7 +144,7 @@ class SensorSuite:
 
     # --- called by the env ------------------------------------------------
     def set_coverage(self, value: float) -> None:
-        """Applies to vehicles that depart from now on."""
+        """Applies to vehicles that depart from now on (probes on the road keep their cohort)."""
         self.coverage = _clamp_coverage(value)
 
     def on_step(self, t: float, departed, arrived) -> None:
@@ -134,12 +152,20 @@ class SensorSuite:
         # kept for the scenario runtime, which runs right after us in the same step
         self.step_t, self.step_departed, self.step_arrived = t, departed, arrived
         self.feed.update(t)
+        c = self.coverage
         for vid in departed:
-            if self.selector.select(self.feed.origin_group(vid), self.coverage):
-                self.probes.add(vid)
-        for vid in arrived:
-            self.probes.discard(vid)
+            if self.selector.select(self.feed.origin_group(vid), c):
+                self.probes[vid] = c
+                self._cohorts[c] = self._cohorts.get(c, 0) + 1
         self._count(t)
+        for vid in arrived:  # after counting, so a probe's cohort is known when it crosses
+            cohort = self.probes.pop(vid, None)
+            if cohort is not None:
+                left = self._cohorts[cohort] - 1
+                if left:
+                    self._cohorts[cohort] = left
+                else:
+                    del self._cohorts[cohort]
 
     def _count(self, t: float) -> None:
         """Per-second counting, done here (not in observe) so that flows stay right even if a
@@ -158,19 +184,40 @@ class SensorSuite:
                 feed.e2(lane, tc.LAST_STEP_OCCUPANCY), feed.e2(lane, tc.LAST_STEP_MEAN_SPEED),
                 int(feed.e2(lane, tc.LAST_STEP_VEHICLE_NUMBER)), int(feed.e2(lane, tc.LAST_STEP_VEHICLE_HALTING_NUMBER)),
             )
+        c_now = self.coverage
         for j, side, lanes, _ in self._approaches:
             key = (j, side)
             on_approach = {vid for lane in lanes for vid, _ in feed.on_lane(lane)}
-            present = on_approach & probes
+            present = on_approach & probes.keys()
             # vehicles that were on the approach a second ago and are not any more crossed the stop
             # line. Probes are followed as trajectories, so silent (non-reporting) seconds do not matter.
-            left_probes = len(self._probe_prev[key] - present)
+            left = self._probe_prev[key] - present
             left_all = len(self._true_prev[key] - on_approach)
             self._probe_prev[key], self._true_prev[key] = present, on_approach
-            self._probe_counts[key].add(t, left_probes)
+            crossed: dict[float, int] = {}
+            for vid in left:
+                cohort = probes.get(vid, c_now)
+                crossed[cohort] = crossed.get(cohort, 0) + 1
+            self._add_cohort_counts(self._probe_counts[key], t, crossed, FLOW_WINDOW_S)
+            self._add_cohort_counts(self._pen_probe[key], t, crossed, PENETRATION_WINDOW_S)
             self._true_counts[key].add(t, left_all)
-            self._pen_probe[key].add(t, left_probes)
             self._pen_loop[key].add(t, sum(loop_new[lane] for lane in lanes))
+
+    def _add_cohort_counts(self, windows: dict[float, RollingCount], t: float, crossed: dict[float, int], window_s: float) -> None:
+        """Add this second's crossings per cohort; windows of old cohorts expire when empty.
+        The current coverage always has a window, so a constant coverage keeps exactly one."""
+        c_now = self.coverage
+        if c_now not in windows:
+            windows[c_now] = RollingCount(window_s)
+        for cohort in list(windows):
+            rc = windows[cohort]
+            rc.add(t, crossed.get(cohort, 0))
+            if not rc.total and cohort != c_now:
+                del windows[cohort]
+        for cohort, n in crossed.items():
+            if cohort not in windows:
+                windows[cohort] = rc = RollingCount(window_s)
+                rc.add(t, n)
 
     def is_probe(self, vid: str) -> bool:
         return vid in self.probes
@@ -190,9 +237,9 @@ class SensorSuite:
         for j, side, lanes, kind in self._approaches:
             key = (j, side)
             det, lane_stats = self._detector(lanes, cache)
-            probe, truth = self._probe(t, key, lanes)
+            probe, truth, extra = self._probe(t, key, lanes)
             zone_full = self.check.unverifiable(t, key, lane_stats)  # full now or in the last 60 s
-            failed = self.check.suspicious(key, probe["halted"], det["queue"], zone_full, probe["penetration_est"])
+            failed = self.check.suspicious(key, probe["halted"], det["queue"], zone_full, extra["p_test"])
             trusted = self.check.update(t, key, failed, probe["halted"])
             probe["trusted"] = trusted
             if not trusted:
@@ -267,42 +314,59 @@ class SensorSuite:
 
     # --- probes (vehicles whose navigation app shares data) -------------------
     def _probe(self, t: float, key: tuple, lanes: tuple):
-        """(probe block, ground truth (halted, count, flow veh/h)) for one approach."""
+        """(probe block, ground truth (halted, count, flow veh/h), internals for the cross-check)
+        for one approach. Each probe is weighted by the coverage of its cohort (module doc)."""
         feed, probes = self.feed, self.probes
         speed_biased = self.spec.mechanism == "speed_biased"
         p_stopped = self.spec.stopped_report_prob
         rnd = self.report_rng.random
         reported = halted = true_halted = true_count = 0
         speed_sum = 0.0
+        reported_by: dict[float, int] = {}  # cohort coverage -> reports this second
+        halted_by: dict[float, int] = {}  # cohort coverage -> halted reports this second
         for lane in lanes:
             for vid, v in feed.on_lane(lane):
                 true_count += 1
                 stopped = v < HALT_SPEED
                 true_halted += stopped
-                if vid in probes:
+                cohort = probes.get(vid)
+                if cohort is not None:
                     if speed_biased and stopped and rnd() >= p_stopped:
                         continue  # this stopped phone stays silent this second
                     reported += 1
                     speed_sum += v
-                    halted += stopped
+                    reported_by[cohort] = reported_by.get(cohort, 0) + 1
+                    if stopped:
+                        halted += 1
+                        halted_by[cohort] = halted_by.get(cohort, 0) + 1
         c = self.coverage
-        # penetration = probe crossings / loop counts, shrunk toward c while counts are small
-        pen = (self._pen_probe[key].total + PENETRATION_PRIOR * c) / (self._pen_loop[key].total + PENETRATION_PRIOR)
-        pen = min(1.0, max(0.01, pen))
         fake = self.fake.get(key, 0)
+        if fake:  # phantom phones claim to be ordinary probes of the current coverage
+            reported_by[c] = reported_by.get(c, 0) + fake
+            halted_by[c] = halted_by.get(c, 0) + fake
+        # penetration = probe crossings (in current-coverage units) / loop counts, shrunk toward c
+        crossings = sum((rc.total * (c / cohort) for cohort, rc in self._pen_probe[key].items()), 0.0)
+        pen = (crossings + PENETRATION_PRIOR * c) / (self._pen_loop[key].total + PENETRATION_PRIOR)
+        pen = min(1.0, max(0.01, pen))
         n = reported + fake
         halted_all = halted + fake
+        halted_eff = sum((k * (c / cohort) for cohort, k in halted_by.items()), 0.0)
         block = {
-            "queue_est": round(halted_all / c, 2),
+            "queue_est": round(sum((k / cohort for cohort, k in halted_by.items()), 0.0), 2),
             "n": n,
             "halted": halted_all,
             "speed": round(speed_sum / n, 2) if n else None,
-            "flow_est_vph": round(self._probe_counts[key].rate_vph(t) / c, 1),
-            "queue_est_adj": round(halted_all / pen, 2),
+            "flow_est_vph": round(sum((rc.rate_vph(t) / cohort for cohort, rc in self._probe_counts[key].items()), 0.0), 1),
+            "queue_est_adj": round(halted_eff / pen, 2),
             "penetration_est": round(pen, 3),
+            "n_est": round(sum((k / cohort for cohort, k in reported_by.items()), 0.0), 2),
         }
+        # the statistical test compares raw reports with p * Q_det: while probes of a cohort with a
+        # higher coverage are still on the road, the share of probes can be up to that much higher
+        c_max = max(self._cohorts, default=c)
+        p_test = pen if c_max <= c else min(1.0, pen * c_max / c)
         truth = (true_halted, true_count, self._true_counts[key].rate_vph(t))
-        return block, truth
+        return block, truth, {"p_test": round(p_test, 3)}
 
     @staticmethod
     def _fuse(det: dict, probe: dict, zone_full: bool, trusted: bool) -> dict:
