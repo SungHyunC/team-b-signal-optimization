@@ -205,6 +205,13 @@ def train(args, run_round=None) -> QTable:
     else:
         table = QTable(features=FEATURE_SETS[args.features or "v1"])
         prior = {}
+    # A file without visit_unit "transitions" counted every replay update (or is already "mixed").
+    # New transitions are added on top of those counts, so the result must not claim pure transitions.
+    mixed_visits = bool(args.resume) and prior.get("visit_unit") != "transitions" and bool(table.visits.any())
+    if mixed_visits:
+        print(f"note: {args.out} counted replay updates as visits; the resumed counts are labelled "
+              f"visit_unit 'mixed' (fallback_min_visits trusts them more than it should; retrain from scratch "
+              f"for pure transition counts)", flush=True)
     start_index = int(prior.get("next_episode_index", prior.get("episodes", 0)))
     prior_episodes = int(prior.get("episodes", 0))
     round_size = max(1, int(args.round_size or args.workers))
@@ -233,7 +240,7 @@ def train(args, run_round=None) -> QTable:
             "demand_range": [round(lo, 3), round(hi, 3)],
             "episode_s": args.end if args.end else "full",
             "features": table.version,
-            "visit_unit": "transitions",
+            "visit_unit": "mixed" if mixed_visits else "transitions",
             "backend": args.backend,
             "seed_ranges": seed_ranges,
             "held_out": f"training seeds >= {TRAIN_SEED_BASE}; evaluate on seeds below {TRAIN_SEED_BASE}",

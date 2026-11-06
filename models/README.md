@@ -29,8 +29,11 @@ hyper-parameters, the training curve) and a SHA-256 checksum.
   runs never see training traffic.
 - **Visit counts**: files trained with the current `rl_train` count each collected transition
   once (`meta.visit_unit = "transitions"`). Older files (no `visit_unit`) counted every replay
-  update, up to 30× more. The controller's low-confidence fallback (`fallback_min_visits`,
-  default 20) compares against these counts.
+  update, up to 30× more. `--resume` from such a file keeps those counts and adds transitions
+  on top, so it saves `visit_unit = "mixed"` (and keeps that label on later resumes); retrain
+  from scratch for pure transition counts. The controller's low-confidence fallback
+  (`fallback_min_visits`, default 20) compares against these counts, so on a legacy or mixed
+  file it trusts states that saw fewer real transitions.
 - Small enough (~17 KB) to commit; regenerate it instead of editing it by hand.
 
 ## rl_qtable_v1_rush_hour.json

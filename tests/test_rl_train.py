@@ -84,9 +84,25 @@ def test_resume_continues_seeds_curve_and_counts(tmp_path):
     meta = table.meta
     assert meta["episodes"] == 5 and meta["seed_ranges"] == [[1000, 1002], [1003, 1004]]
     assert [c["round"] for c in meta["curve"]] == [1, 2] and len(meta["episode_log"]["seed"]) == 5
-    assert table.visits.sum() == 10
+    assert table.visits.sum() == 10 and meta["visit_unit"] == "transitions"
     with pytest.raises(SystemExit, match="features"):
         train(args_for(tmp_path, "--episodes", "1", "--resume", "--features", "v2"), run_round=FakeRunner())
+
+
+def test_resume_from_a_legacy_file_does_not_claim_transition_counts(tmp_path):
+    out = tmp_path / "model.json"
+    legacy = QTable(meta={"episodes": 60, "scenario": "rush_hour"})  # old trainer: no visit_unit
+    legacy.visits[5, 0] = 900  # replay updates, not transitions
+    legacy.save(out)
+    table = train(args_for(tmp_path, "--episodes", "2", "--workers", "2", "--resume"), run_round=FakeRunner())
+    assert table.visits.sum() == 904, "legacy counts are kept, new transitions added on top"
+    assert QTable.load(out).meta["visit_unit"] == "mixed"
+    train(args_for(tmp_path, "--episodes", "1", "--workers", "1", "--resume"), run_round=FakeRunner())
+    assert QTable.load(out).meta["visit_unit"] == "mixed", "the label survives later resumes"
+
+    QTable(meta={"episodes": 0}).save(out)  # no counts yet: nothing to mix
+    train(args_for(tmp_path, "--episodes", "1", "--workers", "1", "--resume"), run_round=FakeRunner())
+    assert QTable.load(out).meta["visit_unit"] == "transitions"
 
 
 def test_failed_episodes_are_counted_not_fatal_unless_a_whole_round_fails(tmp_path):

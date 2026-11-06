@@ -126,7 +126,7 @@ class QTable:
 
     `visits[s, a]` counts collected transitions (real experience, see count_visits). Files
     trained before that change (meta without "visit_unit") counted every replay update, up to
-    sweeps × buffer (30×) more.
+    sweeps × buffer (30×) more; resuming such a file adds transitions on top ("visit_unit": "mixed").
     """
 
     def __init__(self, q=None, visits=None, meta: dict | None = None, features: dict | None = None):
