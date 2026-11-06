@@ -253,9 +253,17 @@ STUDY_TOTALS = {"baseline-180": 180, "robustness-360": 360, "controller-pilot-15
                 "calibration-24": 24, "confirmation-360": 360}
 
 
+# Studies run on Modal (`teamb exp run --backend modal`) instead of GitHub Actions: their README
+# names the code revision instead of a workflow run; confirmation studies carry strict audits.
+CLOUD_STUDIES = {"controller-confirmation-2026-11": {"demand-0.75": 1260, "demand-1": 1260, "demand-1.25": 1260},
+                 "rl-retraining-2026-11": {}}
+
+
 def test_study_archives_are_committed_and_small():
     studies = sorted(p for p in STUDIES.iterdir() if p.is_dir())
-    assert {p.name for p in studies} == set(STUDY_RUNS) | {"congestion-diagnosis"}
+    names = {p.name for p in studies}
+    assert set(STUDY_RUNS) | {"congestion-diagnosis"} <= names
+    assert names - set(STUDY_RUNS) - {"congestion-diagnosis"} <= set(CLOUD_STUDIES), "new study folders need a test entry"
     for study, total in STUDY_TOTALS.items():
         counted = sum(n for e, n in STUDY_RUNS[study].items() if "smoke" not in e and "robustness_pilot" not in e)
         assert counted == total, study
@@ -266,7 +274,8 @@ def test_study_archives_are_committed_and_small():
     total = 0
     for study in studies:
         readme = (study / "README.md").read_text(encoding="utf-8")
-        assert re.search(r"actions/runs/\d+", readme) and re.search(r"\b[0-9a-f]{7,40}\b", readme), study.name
+        provenance = r"Modal" if study.name in CLOUD_STUDIES else r"actions/runs/\d+"
+        assert re.search(provenance, readme) and re.search(r"\b[0-9a-f]{7,40}\b", readme), study.name
         for f in study.rglob("*"):
             if f.is_file():
                 assert f.suffix in (".json", ".md", ".csv"), f
@@ -282,3 +291,13 @@ def test_study_experiments_are_complete_and_strict_valid(study, experiment, runs
     with open(folder / "summary.csv", newline="", encoding="utf-8") as fh:
         assert len(list(csv.DictReader(fh))) == runs
     assert json.loads((folder / "report.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("study,experiment,runs", [(s, e, n) for s, d in CLOUD_STUDIES.items() for e, n in d.items()])
+def test_cloud_studies_are_complete_and_strict_valid(study, experiment, runs):
+    folder = STUDIES / study
+    if not folder.exists():
+        pytest.skip(f"{study} not committed")
+    audit = json.loads((folder / experiment / "validation.json").read_text(encoding="utf-8"))
+    assert audit["complete"] and audit["valid_runs"] == runs and len(audit["code_revisions"]) == 1, audit["problems"][:5]
+    assert not audit["code_revisions"][0].endswith("-dirty") and audit["sumo_versions"] == ["SUMO 1.28.0"]
