@@ -38,7 +38,7 @@ EXTRA_METRICS = (
     "spillback_duration_s", "queue_warning_s", "others_mean_delay_s", "ev_mean_delay_s", "ev_extra_delay_others_s",
     "recovery_time_s", "excess_delay_veh_h", "est_queue_mae", "est_queue_bias", "est_flow_mae", "alert_s",
     "false_alarm_s", "detection_delay_s", "completed", "unfinished", "never_inserted", "teleports",
-    "mean_delay_incl_unfinished_s", "wall_time_s",
+    "mean_delay_incl_unfinished_s", "mean_depart_delay_s", "mean_delay_incl_depart_s", "wall_time_s",
 )
 IDENTITY = ("name", "scenario", "scenario_variant", "controller", "variant", "seed", "coverage", "sampling", "ev_preemption", "end_time", "status")
 DEFINITIONS = {
@@ -51,6 +51,12 @@ DEFINITIONS = {
     "p_holm": "p_value after Holm–Bonferroni correction over the candidates of the same scenario.",
     "unfinished_pct": "100 × (trips still in the network at the end + trips never inserted) / (completed + unfinished) (PERF-01).",
     "ev_mean_travel_time_s": "Mean travel time of emergency vehicles that finished.",
+    "mean_depart_delay_s": "Mean SUMO departDelay (s/veh, time waiting to enter a blocked entry lane) of the trips "
+    "inserted in the window. Not part of mean_delay_s (timeLoss excludes it).",
+    "mean_delay_incl_depart_s": "Mean timeLoss + departDelay (s/veh) of the finished window trips: the primary "
+    "endpoint's population with the entry wait added.",
+    "mean_delay_incl_unfinished_s": "Mean timeLoss accrued so far by all inserted window trips, finished or not. "
+    "A lower bound: unfinished trips have only part of their delay and never-inserted trips are left out.",
     "baseline_match": "'exact' = baseline run with the same coverage/sampling, 'scenario' = same scenario, other coverage. "
     "Always the same preemption setting and run end; null = no such baseline run.",
     "end_time": "Effective run end in s (the --end given, else the scenario's duration).",
@@ -486,7 +492,7 @@ def _perf_table(groups: dict) -> list[dict]:
                 "ev_preemption": key[4], "n_seeds": len(rs),
                 **{m: _stat([r.get(m) for r in rs], 2) for m in (
                     "completed", "unfinished", "unfinished_pct", "in_network_at_end", "never_inserted", "teleports",
-                    "mean_delay_s", "mean_delay_incl_unfinished_s")},
+                    "mean_delay_s", "mean_delay_incl_unfinished_s", "mean_depart_delay_s", "mean_delay_incl_depart_s")},
             }
         )
     return out
@@ -669,13 +675,16 @@ def render_markdown(report: dict) -> str:
             body,
         ))
         lines.append("")
-    lines += ["## PERF-01: completed and unfinished trips", ""]
+    lines += ["## PERF-01: completed and unfinished trips", "",
+              "Depart delay = time waiting to enter a blocked entry lane (not in the delay column, which is timeLoss). "
+              "Accrued delay incl. unfinished is a lower bound: trips still driving have only part of their delay.", ""]
     lines.append(_table(
         ["scenario", "controller", "cov", "sampling", "EV pre", "n", "completed", "unfinished", "unfinished %", "never inserted",
-         "teleports", "delay incl. unfinished s"],
+         "teleports", "depart delay s", "delay + depart delay s", "accrued delay incl. unfinished s (lower bound)"],
         [[p["scenario"], p["controller"], f"{p['coverage']:g}", p["sampling"], "on" if p["ev_preemption"] else "off", p["n_seeds"],
           _fmt(p["completed"], 0), _fmt(p["unfinished"], 0), _fmt(p["unfinished_pct"], 1), _fmt(p["never_inserted"], 0),
-          _fmt(p["teleports"], 1), _fmt(p["mean_delay_incl_unfinished_s"])] for p in report["perf01"]],
+          _fmt(p["teleports"], 1), _fmt(p.get("mean_depart_delay_s")), _fmt(p.get("mean_delay_incl_depart_s")),
+          _fmt(p["mean_delay_incl_unfinished_s"])] for p in report["perf01"]],
     ))
     lines += [
         "",

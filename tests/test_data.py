@@ -276,6 +276,33 @@ def test_recovery_vs_reference_without_matched_samples_is_unknown():
     assert res["excess_veh_h"] is None and res["censored"]
 
 
+def test_depart_delay_metrics_leave_the_primary_endpoint_unchanged(tmp_path):
+    # evaluation-5: timeLoss excludes departDelay; the total is reported next to mean_delay_s
+    from types import SimpleNamespace
+
+    from teamb.evaluation.metrics import MetricsCollector
+
+    (tmp_path / "tripinfo.xml").write_text(
+        '<tripinfos>'
+        '<tripinfo id="a" depart="1000" arrival="1400" duration="400" timeLoss="100" departDelay="400" waitingCount="2"/>'
+        '<tripinfo id="b" depart="1100" arrival="1300" duration="200" timeLoss="50" departDelay="0" waitingCount="1"/>'
+        '<tripinfo id="c" depart="1500" arrival="-1" duration="100" timeLoss="20" departDelay="30"/>'
+        '</tripinfos>'
+    )
+    m = object.__new__(MetricsCollector)
+    m.warmup, m.end_time, m._t_last = 900.0, 1600.0, 1600.0
+    m.queue_samples, m.spillback_steps, m.queue_warning_seconds, m.teleports = [], 0, 0.0, 0
+    m._approaches, m.timeseries = [], []
+    m.feed = SimpleNamespace(sensors=None, events=[])
+    m.spill = SimpleNamespace(summary=lambda: {})
+    s = m.finalize(tmp_path / "tripinfo.xml", planned_in_window=4, events=[])
+    assert s["mean_delay_s"] == 75.0  # unchanged definition: timeLoss of finished trips
+    assert s["mean_delay_incl_depart_s"] == 275.0  # (100 + 400 + 50 + 0) / 2
+    assert s["mean_depart_delay_s"] == pytest.approx(430 / 3, abs=0.01)  # all inserted window trips
+    assert s["mean_delay_incl_unfinished_s"] == pytest.approx(170 / 3, abs=0.01)  # accrued: a lower bound
+    assert s["completed"] == 2 and s["in_network_at_end"] == 1 and s["never_inserted"] == 1
+
+
 def test_spillback_needs_upstream_blocking_evidence():
     from teamb.network.topology import load_topology
 
@@ -358,6 +385,7 @@ def test_metrics_summary_perf01_and_new_fields(attack_run):
         "planned_in_window", "inserted_in_window", "in_network_at_end", "never_inserted", "arterial_mean_delay_s",
         "cross_mean_delay_s", "queue_p95_veh", "spillback_duration_s", "spillback_events", "recovery_time_s",
         "excess_delay_veh_h", "est_queue_mae", "est_queue_bias", "est_flow_mae", "det_queue_mae", "probe_share",
+        "mean_depart_delay_s", "mean_delay_incl_depart_s", "mean_delay_incl_unfinished_s",
     }
     assert baseline_keys | new_keys <= set(s)
     assert s["completed"] > 0 and s["unfinished"] >= 0

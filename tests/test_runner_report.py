@@ -119,3 +119,15 @@ def test_vs_no_event_counts_seeds_not_windows(tmp_path):
     assert rec["n"] == 2 and rec["censored"] == 0
     assert rec["excess_veh_h"]["mean"] == pytest.approx(20 * 2400 / 3600, rel=0.01)  # once, not twice
     assert len(rec["per_seed"]) == 2
+
+
+def test_report_shows_depart_delay(tmp_path):
+    for seed in (1, 2):
+        make_run(tmp_path, RunSpec("rush_hour", "fixed_time", seed, 1.0, end_time=900.0), 60.0,
+                 mean_depart_delay_s=30.0, mean_delay_incl_depart_s=95.0)
+    report = build_report(tmp_path)
+    assert report["perf01"][0]["mean_depart_delay_s"]["mean"] == 30.0
+    assert report["rows"][0]["metrics"]["mean_delay_incl_depart_s"]["mean"] == 95.0
+    md = render_markdown(report)
+    assert "depart delay s" in md and "(lower bound)" in md
+    assert "mean_delay_incl_depart_s" in report["definitions"]

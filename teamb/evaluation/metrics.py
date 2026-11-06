@@ -14,6 +14,19 @@ controller cannot look better by keeping cars from finishing or from entering:
     unfinished     = trips still in the network at the end + trips never inserted
     unfinished_pct = 100 * unfinished / (completed + unfinished)
 
+timeLoss does not include SUMO's ``departDelay``, the time a vehicle waits to enter because its
+entry lane is blocked; when queues spill back to the boundary that wait depends on the
+controller. It is reported next to the primary endpoint (mean_delay_s is unchanged):
+
+    mean_depart_delay_s       mean departDelay of all trips inserted in the window
+    mean_delay_incl_depart_s  mean (timeLoss + departDelay) of the finished trips
+                              (the same population as mean_delay_s)
+
+mean_delay_incl_unfinished_s averages the timeLoss accrued so far by every inserted window
+trip, finished or not. Trips still driving have only part of their delay, and never-inserted
+trips are left out, so it is a LOWER bound and usually below mean_delay_s; it is not an upper
+bound on the selection bias.
+
 Other formulas are in the docstrings of the helpers (spillback.py, recovery.py,
 estimation.py) and in docs/roles/data-evaluation.md.
 
@@ -233,6 +246,9 @@ class MetricsCollector:
         }
 
     def live(self) -> dict:
+        """Live KPIs for the twin. mean_delay is a rolling mean over the last 300 finished trips of
+        the timeLoss sampled up to SAMPLE_EVERY_S before each arrival (display only; the run
+        summary takes mean_delay_s from tripinfo)."""
         return dict(self._live)
 
     # --- end of run -------------------------------------------------------------
@@ -270,8 +286,9 @@ class MetricsCollector:
             "inserted_in_window": written,
             "in_network_at_end": in_network,
             "never_inserted": never_inserted,
-            "mean_delay_incl_unfinished_s": _r(_mean(r["time_loss"] for r in window)),
+            "mean_delay_incl_unfinished_s": _r(_mean(r["time_loss"] for r in window)),  # lower bound, see above
             "mean_depart_delay_s": _r(_mean(r["depart_delay"] for r in window)),
+            "mean_delay_incl_depart_s": _r(_mean(r["time_loss"] + r["depart_delay"] for r in done)),
             "teleports": self.teleports,
         }
         summary.update(self._group_metrics(done))
