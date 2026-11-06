@@ -68,6 +68,11 @@ def _json(text: str | None) -> dict:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["screen"]:  # own argument parser (teamb/experiments/screen.py)
+        from teamb.experiments.screen import main as screen_main
+
+        return screen_main(argv[1:])
     parser = argparse.ArgumentParser(prog="python -m teamb.experiments", description="Team B batch experiments")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -107,6 +112,7 @@ def main(argv=None) -> int:
     rep.add_argument("--copy-to", default=None, help="also copy report.md here (e.g. docs/results/sample-report.md)")
 
     sub.add_parser("list", help="list experiments in results/experiments/")
+    sub.add_parser("screen", help="prespecified regression screen: candidate vs baseline controller", add_help=False)
     args = parser.parse_args(argv)
 
     if args.command == "list":
