@@ -198,3 +198,27 @@ def test_the_poll_timeout_only_means_still_running(fake, tmp_path):
     results = list(cloud.run_specs(_specs(), tmp_path, workers=2))
     assert sorted(r["status"] for r in results) == ["ok", "ok"]
     assert sorted(remote.sent) == sorted(s.name for s in _specs()), "nothing re-submitted"
+
+
+def test_archives_cannot_write_into_a_sibling_run_folder(tmp_path):
+    sibling = _archive("run_a_evil", {"summary.json": "{}"})  # shares the prefix "run_a"
+    with pytest.raises(ValueError):
+        cloud._safe_extract(sibling, tmp_path / "runs", "run_a")
+    assert not (tmp_path / "runs" / "run_a_evil").exists()
+
+
+def test_a_result_for_another_run_name_is_not_unpacked(fake, tmp_path):
+    victim = tmp_path / "keep_me"
+    victim.mkdir()
+
+    class Liar(FakeRemote):
+        def spawn(self, spec, git_revision):
+            call = super().spawn(spec, git_revision)
+            call.result = {**call.result, "run": "../keep_me"}
+            return call
+
+    fake(Liar())
+    results = list(cloud.run_specs(_specs(), tmp_path / "runs", workers=2))
+    assert victim.is_dir(), "a result naming another folder must not delete it"
+    assert [r["status"] for r in results] == ["failed", "failed"]
+    assert all(r["run"] in {s.name for s in _specs()} and "expected" in r["error"] for r in results)

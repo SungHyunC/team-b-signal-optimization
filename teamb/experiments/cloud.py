@@ -136,10 +136,12 @@ else:  # pragma: no cover
 
 def _safe_extract(blob: bytes, dest: Path, run_name: str) -> None:
     """Unpack one run archive; refuse anything outside ``dest/run_name``."""
+    run_root = (dest / run_name).resolve()
     with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
         for member in tar.getmembers():
             target = (dest / member.name).resolve()
-            if not (member.isfile() or member.isdir()) or not str(target).startswith(str((dest / run_name).resolve())):
+            inside = target == run_root or run_root in target.parents  # not a sibling like <run>_x
+            if not (member.isfile() or member.isdir()) or not inside:
                 raise ValueError(f"unexpected entry in run archive: {member.name}")
         try:
             tar.extractall(dest, filter="data")
@@ -172,15 +174,17 @@ def run_specs(specs, runs_dir: Path, *, workers: int, force: bool = False, git_r
             calls = list(pool.map(lambda spec: _spawn(fn, spec, git_revision), todo))
         for spec, call in zip(todo, calls):
             res, error = _collect(fn, spec, call, git_revision)
+            if res is not None and res.get("run") != spec.name:  # never rmtree/unpack a folder we did not ask for
+                res, error = None, f"the result names run {str(res.get('run'))[:200]!r}, expected {spec.name!r}"
             if res is None:
                 yield {"run": spec.name, "status": "failed", "error": f"cloud: {error}"}
                 continue
             blob = res.pop("archive", None)
-            out = runs_dir / res["run"]
+            out = runs_dir / spec.name
             if out.exists():
                 shutil.rmtree(out)
             if blob:
-                _safe_extract(blob, runs_dir, res["run"])
+                _safe_extract(blob, runs_dir, spec.name)
             res["backend"] = "modal"
             yield res
 
