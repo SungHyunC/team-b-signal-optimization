@@ -2,6 +2,7 @@
 // coverage, EV priority), playback (play/pause/step/reset, speed), the sim clock and the timeline.
 import { addKo, controllerDescription, controllerLabel, lang, scenarioDescription, scenarioTitle, t } from '../i18n.js';
 import { fmtClock } from '../util.js';
+import { scenarioDefaultCoverage, withSafeStart } from '../launch.js';
 import { $, $$, fillSelect, h, toast } from './dom.js';
 
 addKo({
@@ -123,9 +124,7 @@ export class TopBar {
       this.fillControllerOptions();
       this.fillStartOptions();
       // Each scenario has a design coverage (e.g. 25 % for the fake-data test): start from it.
-      const sc = meta.scenarios.find((s) => s.name === el.scenario.value);
-      const cov = sc && sc.defaults && sc.defaults.coverage != null ? sc.defaults.coverage : 1;
-      this.setCoverageSlider(cov);
+      this.setCoverageSlider(scenarioDefaultCoverage(meta, el.scenario.value));
       this.markDirty();
     });
     for (const x of [el.controller, el.seed, el.start]) x.addEventListener('change', () => this.markDirty());
@@ -198,10 +197,18 @@ export class TopBar {
     };
   }
 
-  /** Apply values (e.g. from URL parameters) to the form. */
+  /** Apply values (e.g. from URL parameters) to the form. A config that names a scenario but no
+   *  coverage, demand or end time means the scenario's own (as for the CLI): nothing is inherited
+   *  from the session that ran before. */
   setForm(cfg) {
     const el = this.el;
-    if (cfg.scenario_params || cfg.end_time != null) this.sandboxOverrides = { ...(cfg.scenario_params ? { scenario_params: cfg.scenario_params } : {}), ...(cfg.end_time != null ? { end_time: cfg.end_time } : {}) };
+    if (cfg.scenario || cfg.scenario_params || cfg.end_time != null) {
+      this.sandboxOverrides = {
+        ...(cfg.scenario ? {} : this.sandboxOverrides),
+        ...(cfg.scenario_params ? { scenario_params: cfg.scenario_params } : {}),
+        ...(cfg.end_time != null ? { end_time: cfg.end_time } : {}),
+      };
+    }
     if (cfg.scenario) {
       el.scenario.value = cfg.scenario;
       this.fillControllerOptions();
@@ -210,6 +217,7 @@ export class TopBar {
     if (cfg.controller) el.controller.value = cfg.controller;
     if (cfg.seed != null) el.seed.value = cfg.seed;
     if (cfg.coverage != null) this.setCoverageSlider(cfg.coverage);
+    else if (cfg.scenario) this.setCoverageSlider(scenarioDefaultCoverage(this.ctx.meta, cfg.scenario));
     if (cfg.ev_preemption != null) el.ev.checked = !!cfg.ev_preemption;
     if (cfg.start_at != null) {
       if (![...el.start.options].some((o) => Number(o.value) === Number(cfg.start_at))) {
@@ -229,13 +237,14 @@ export class TopBar {
     const s = this.status;
     const f = this.formConfig();
     const running = s && s.config && !['idle', 'error'].includes(s.state);
-    const dirty = running && (f.scenario !== s.config.scenario || f.controller !== s.config.controller || f.seed !== s.config.seed);
+    // start_at only takes effect on a restart (coverage and EV priority apply live).
+    const dirty = running && (f.scenario !== s.config.scenario || f.controller !== s.config.controller || f.seed !== s.config.seed || f.start_at !== Number(s.config.start_at || 0));
     this.el.apply.textContent = t(!running ? 'Start' : dirty ? 'Restart with changes' : 'Restart');
     this.el.apply.classList.toggle('pulse', !!dirty);
   }
 
   async start(extra = {}) {
-    const cfg = { ...this.formConfig(), ...extra };
+    const cfg = withSafeStart({ ...this.formConfig(), ...extra }); // e.g. ?end=120 with the 4:00 default
     try {
       await this.ctx.api.post('/api/session', cfg);
       const sc = this.ctx.meta.scenarios.find((s) => s.name === cfg.scenario);
@@ -282,6 +291,7 @@ export class TopBar {
   }
 
   async step() {
+    if (this.el.step.disabled) return; // the '.' key: nothing to step when not running or paused
     const r = await this.ctx.socket.control('step');
     if (!r.ok) toast(r.error, 'error');
   }
