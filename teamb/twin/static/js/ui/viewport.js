@@ -245,8 +245,11 @@ export class ViewportChrome {
         const message = s.message && (lang === 'en' || this.ctx.static) ? s.message : t('Starting SUMO…');
         return show([h('div', { class: 'spinner' }), h('div', {}, message)], true);
       }
-      case 'error':
-        return show([h('div', { style: { maxWidth: '560px', color: '#ffd0d0' } }, s.error || t('Something went wrong.'))], false, [btn(t('Try again'), 'primary', () => this.ctx.topbar.start())]);
+      case 'error': {
+        // A recording that failed to download part way: load that part again, where it stopped.
+        const retry = this.ctx.static && s.config ? () => this.ctx.socket.control('play') : () => this.ctx.topbar.start();
+        return show([h('div', { style: { maxWidth: '560px', color: '#ffd0d0' } }, s.error || t('Something went wrong.'))], false, [btn(t('Try again'), 'primary', retry)]);
+      }
       case 'finished': {
         const sum = s.summary || {};
         const items = [
