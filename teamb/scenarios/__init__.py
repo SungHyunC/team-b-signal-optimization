@@ -22,7 +22,8 @@ from typing import Callable
 from teamb import config
 from teamb.demand.corridor import CorridorDemand
 from teamb.demand.routes import VTYPE_IDS, Flow, write_routes
-from teamb.scenarios.events import EV_KINDS, EVENT_KINDS
+from teamb.scenarios import routing
+from teamb.scenarios.events import EV_KINDS, EVENT_KINDS, MAX_FAKE_REPORTS
 
 
 @dataclass
@@ -77,8 +78,24 @@ class Scenario:
             "owner": self.owner,
         }
 
+    def od_pairs(self) -> dict[tuple[str, str], str]:
+        """{(origin edge, destination edge): flow name} for every flow (first name wins)."""
+        pairs: dict[tuple[str, str], str] = {}
+        for f in self.flows:
+            pairs.setdefault((f.origin, f.destination), f.name or f"{f.origin}>{f.destination}")
+        return pairs
+
+    def closure_error(self, topology, edges, closed=()) -> str | None:
+        """Why closing `edges` (with `closed` already closed) would break this scenario's
+        trips, or None. The same check the runtime applies (routing.closure_error)."""
+        pairs = self.od_pairs()
+        return routing.closure_error(topology, edges, closed, list(pairs), pairs)
+
     def validate(self, topology) -> list[str]:
-        """Problems that would break a run (empty list = fine)."""
+        """Problems that would break a run or silently skip an event (empty list = fine).
+
+        Events are replayed in time order, so a closure is checked against the closures
+        that are active at that moment, exactly as the runtime will check it."""
         problems = []
         edges = {e.getID() for e in topology.net.getEdges()}
         for f in self.flows:
@@ -88,18 +105,55 @@ class Scenario:
             for vtype in (f.mix or {f.vtype: 1.0}):
                 if vtype not in VTYPE_IDS:
                     problems.append(f"flow '{f.name}': unknown vehicle type {vtype}")
-        for e in self.events:
+        closed: set[str] = set()
+        for e in sorted(self.events, key=lambda ev: ev.time):
+            where = f"event at {e.time}"
             if e.kind not in EVENT_KINDS:
-                problems.append(f"event at {e.time}: unknown kind {e.kind}")
+                problems.append(f"{where}: unknown kind {e.kind}")
             if not 0 <= e.time < self.duration:
-                problems.append(f"event at {e.time}: outside the run (0–{self.duration} s)")
+                problems.append(f"{where}: outside the run (0–{self.duration} s)")
+            params = e.params if isinstance(e.params, dict) else {}
+            if not isinstance(e.params, dict):
+                problems.append(f"{where}: params must be a dict, got {type(e.params).__name__}")
+            unknown = False
             for key in ("edge", "origin", "destination"):
-                if key in e.params and e.params[key] not in edges:
-                    problems.append(f"event at {e.time}: unknown edge {e.params[key]}")
-            if e.kind == "dispatch_ev" and e.params.get("kind", "ambulance") not in EV_KINDS:
-                problems.append(f"event at {e.time}: unknown EV kind {e.params.get('kind')}")
-            if e.kind in ("start_attack",) and e.params.get("junction", "J2") not in topology.tls_ids:
-                problems.append(f"event at {e.time}: unknown junction {e.params.get('junction')}")
+                if key in params and params[key] not in edges:
+                    problems.append(f"{where}: unknown edge {params[key]}")
+                    unknown = True
+            if e.kind in ("close_road", "reopen_road"):
+                if "edge" not in params:
+                    problems.append(f"{where}: {e.kind} needs an 'edge'")
+                    continue
+                if unknown:
+                    continue
+                pair = [params["edge"], routing.reverse_edge(params["edge"])] if params.get("both_directions") else [params["edge"]]
+                if e.kind == "reopen_road":
+                    closed -= set(pair)
+                    continue
+                error = self.closure_error(topology, pair, closed)
+                if error:
+                    problems.append(f"{where}: {error}")
+                else:
+                    closed |= set(pair)
+            elif e.kind == "dispatch_ev":
+                if params.get("kind", "ambulance") not in EV_KINDS:
+                    problems.append(f"{where}: unknown EV kind {params.get('kind')}")
+                origin, destination = params.get("origin", "W0_J1"), params.get("destination", "J4_E5")
+                if not unknown and routing.stranded_pairs(topology, [(origin, destination)], closed):
+                    problems.append(f"{where}: no open route for the EV from {origin} to {destination} (closed: {sorted(closed)})")
+            elif e.kind == "start_attack":
+                junction = params.get("junction", "J2")
+                if junction not in topology.tls_ids:
+                    problems.append(f"{where}: unknown junction {junction}")
+                elif params.get("approach", "N") not in topology.approach_lanes[junction]:
+                    problems.append(f"{where}: junction {junction} has no approach {params.get('approach')}")
+                try:
+                    n = int(params.get("n", 99))
+                except (TypeError, ValueError):
+                    problems.append(f"{where}: n must be an integer, got {params.get('n')!r}")
+                else:
+                    if not 1 <= n <= MAX_FAKE_REPORTS:
+                        problems.append(f"{where}: n must be between 1 and {MAX_FAKE_REPORTS}, got {n}")
         if not 0 <= self.warmup < self.duration:
             problems.append("warmup must be inside the run")
         return problems

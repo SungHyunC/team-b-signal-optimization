@@ -30,7 +30,8 @@ Observation contract (what controllers receive every step)::
                            "flow_est_vph": 760.0,  # probes that crossed the stop line / coverage
                            "trusted": True,     # False: reports disagree with the loop detectors
                            "queue_est_adj": 7.1,     # halted reports / estimated penetration
-                           "penetration_est": 0.28}, # probe crossings / loop counts (last 15 min)
+                           "penetration_est": 0.28,  # probe crossings / loop counts (last 15 min)
+                           "n_est": 8.0},            # reports scaled to all cars (like queue_est)
               "fused":    {"queue": 4, "flow_vph": 820.0, "source": "detector"},
               "oracle":   {"queue": 5, "count": 8}   # ONLY if controller.observation_source == "oracle"
             }, ...
@@ -44,12 +45,22 @@ Observation contract (what controllers receive every step)::
     }
 
 Notes for controller authors
-- ``queue_est`` and ``flow_est_vph`` are scaled by 1/coverage, so low coverage gives noisy and,
-  with biased sampling, biased numbers. ``queue_est_adj`` divides by the *measured* share of
+- ``queue_est``, ``flow_est_vph`` and ``n_est`` are scaled by 1/coverage, so low coverage gives
+  noisy and, with biased sampling, biased numbers. Each probe counts with the coverage that was
+  in effect when it departed, so the numbers stay right after the coverage changes mid-run
+  (``observation["coverage"]`` is the current setting; prefer ``n_est`` over ``n / coverage``). ``queue_est_adj`` divides by the *measured* share of
   probes on that approach instead (fixes approach bias, not stopped-phone bias).
+- ``penetration_est`` is kept within [c/2, 2c] of the coverage c (wider for approach_biased:r
+  with r > 2): right after a closure the first vehicles back on an approach are not a random
+  sample, and an estimate of a few percent made genuine reports look fake.
 - The E2 detector only sees the last 100 m. ``fused.queue`` uses the detector and, only when
-  the detector zone is full and the probes are trusted, extends it with ``queue_est_adj``.
-- ``trusted: False`` means the cross-check flagged the probe data (see crosscheck.py).
+  the detector zone is full and the probes are trusted, adds the halted probes reported
+  upstream of the zone (scaled by the penetration), never past what fits on the approach.
+  Reports claiming the zone itself (where phantom phones stand) cannot inflate it.
+- ``trusted: False`` means the cross-check flagged the probe data (see crosscheck.py). While
+  the detector zone is full the cross-check still compares the reports that claim the zone
+  with the detector, so 20 phantom phones on a busy two-lane approach are flagged; phones
+  claiming positions upstream of the zone are only bounded by the road's storage there.
 - Ground truth (``oracle``) is never given to a controller unless it is explicitly an oracle
   benchmark. The evaluation logs (ground truth vs estimates) stay inside the sensors.
 
