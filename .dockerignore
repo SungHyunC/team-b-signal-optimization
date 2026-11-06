@@ -1,10 +1,20 @@
+# Build context of the production image: runtime code (teamb/, models/) and requirements only.
 .git
 .github
 .venv
+.claude
 __pycache__
 .pytest_cache
-results
-site
 *.pyc
 *.pyo
 *.log
+*.egg-info
+build
+dist
+# outputs: created fresh (and writable for the app user) inside the image
+results
+site
+teamb/network/generated
+# not needed at runtime
+docs
+tests
