@@ -124,7 +124,7 @@ Everything is one command, `teamb` (also `python -m teamb`). `teamb <command> --
 | `teamb impact results/experiments/demo` | Impact and cost-benefit table of an experiment |
 | `teamb diagnose results/experiments/demo` | Read-only controller failure diagnosis of an experiment |
 | `teamb sandbox validate FILE` / `teamb sandbox run FILE` | Check a Scenario Sandbox export and print its command / run it in SUMO with a report |
-| `teamb train-rl` | Train the tabular Q-learning controller (writes `models/rl_qtable.json`) |
+| `teamb train-rl` | Train the tabular Q-learning controller (writes `models/rl_qtable.json`); `--scenarios` and `--demand-range` mix scenarios and demand per episode, `--backend modal --workers N` runs the episodes on Modal |
 | `teamb site build\|serve\|deploy` | Record the online demo, preview it, publish it to GitHub Pages |
 | `teamb vendor` | Save three.js locally so the twin works offline (before a presentation) |
 | `teamb build-net` | Regenerate the SUMO network (done automatically on first use) |
