@@ -246,6 +246,7 @@ class SessionConfig:
     def from_dict(cls, data: dict | None) -> "SessionConfig":
         from teamb.controllers import REGISTRY as CONTROLLERS
         from teamb.scenarios import REGISTRY as SCENARIOS
+        from teamb.sensors.sampling import parse_sampling
 
         data = dict(data or {})
         unknown = sorted(set(data) - {f.name for f in fields(cls)})
@@ -275,7 +276,13 @@ class SessionConfig:
             raise ValueError("controller_params and scenario_params must be objects")
         cfg.ev_preemption = _as_bool(cfg.ev_preemption)
         cfg.autoplay = _as_bool(cfg.autoplay)
-        cfg.sampling = str(cfg.sampling)
+        # The sampling text is part of SimEnv.run_id, i.e. the run folder name: check it here (400)
+        # instead of after SUMO already wrote routes, wherever a "/" in it pointed.
+        cfg.sampling = "uniform" if cfg.sampling is None else str(cfg.sampling).strip() or "uniform"
+        try:
+            parse_sampling(cfg.sampling)
+        except ValueError as exc:  # e.g. "could not convert string to float" for 'approach_biased:x'
+            raise ValueError(str(exc) if "sampling" in str(exc) else f"invalid sampling '{cfg.sampling}': {exc}") from None
         cfg.speed = speed_label(parse_speed(cfg.speed))
         return cfg
 
@@ -632,7 +639,7 @@ class TwinSession:
                 end_time=cfg.end_time,
                 frames=True,
             )
-            env.output_dir = self.runs_dir / env.run_id  # keep twin runs apart from experiment runs
+            env.output_dir = self._run_dir(env.run_id)  # keep twin runs apart from experiment runs
             self._prune_runs()
             self.env = env  # set before start() so a failed start still gets closed
             env.start()
@@ -787,6 +794,14 @@ class TwinSession:
             _safe_close(env)
         self.playing, self.ff_target, self.state = False, None, "error"
         self._publish_status(message=self.error)
+
+    def _run_dir(self, run_id: str) -> Path:
+        """runs_dir/<run_id>, refusing an id that is not one plain folder name ("/", "..", an
+        absolute path): a run written anywhere else is never pruned and may overwrite files."""
+        out = self.runs_dir / run_id
+        if run_id in ("", ".", "..") or out.name != run_id or out.parent != self.runs_dir:
+            raise ValueError(f"refusing run id {run_id!r}: not a plain folder name inside {self.runs_dir}")
+        return out
 
     def _prune_runs(self) -> None:
         """Make room for the run about to start: keep the newest TWIN_KEEP_RUNS - 1 old ones."""

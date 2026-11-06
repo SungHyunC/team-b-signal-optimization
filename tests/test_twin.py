@@ -95,6 +95,17 @@ def test_session_config_validation():
             SessionConfig.from_dict(bad)
 
 
+def test_session_config_validates_sampling():
+    """sampling names the run folder (SimEnv.run_id), so it is checked before anything is queued."""
+    for good in ("uniform", "approach_biased:3", "speed_biased:0.2", "Speed-Biased"):
+        assert SessionConfig.from_dict({"sampling": good}).sampling == good
+    assert SessionConfig.from_dict({"sampling": " "}).sampling == "uniform"
+    assert SessionConfig.from_dict({"sampling": None}).sampling == "uniform"  # null = default, like coverage
+    for bad in ("x/../../victim/planted", "uniform/..", "approach_biased:1/../x", "../uniform", "speed_biased:2"):
+        with pytest.raises(ValueError, match="sampling"):
+            SessionConfig.from_dict({"sampling": bad})
+
+
 def test_session_config_redacts_secrets():
     cfg = SessionConfig.from_dict({"controller": "ai_recommender",
                                    "controller_params": {"approval_token": "tok-XYZ", "search_at": None, "nested": {"api_key": "k-1"}}})
@@ -256,6 +267,42 @@ def test_restart_prunes_old_twin_runs(tmp_path, monkeypatch):
     assert len(list(tmp_path.iterdir())) == 4
 
 
+def test_restart_refuses_a_run_folder_outside_runs_dir(tmp_path, monkeypatch):
+    """Whatever ends up in SimEnv.run_id, the twin only writes run folders directly in runs_dir."""
+    from types import SimpleNamespace
+
+    import teamb.sim.env
+    from teamb.twin.session import Hub, TwinSession
+
+    started = []
+
+    class EscapingEnv:
+        def __init__(self, *args, **kwargs):
+            self.run_id = "x/../../escaped__fixed_time__s1__c100__uniform__abcdef"
+            self.output_dir = None
+            self.t, self.end_time, self.step_length = 0.0, 60.0, 1.0
+            self.scenario = SimpleNamespace(warmup=0, describe=lambda: {})
+            self.controller = SimpleNamespace(describe=lambda: {})
+
+        def frame(self):
+            return {"t": self.t, "events": [], "kpi": {}}
+
+        def start(self):
+            started.append(self.output_dir)
+            self.output_dir.mkdir(parents=True)
+
+        def close(self):
+            return {}
+
+    monkeypatch.setattr(teamb.sim.env, "SimEnv", EscapingEnv)
+    runs = tmp_path / "work" / "runs"
+    session = TwinSession(Hub(), runs_dir=runs)
+    reply = session._restart(SessionConfig(autoplay=False))
+    assert reply["ok"] is False and "run id" in reply["error"]
+    assert started == [] and session.state == "error"
+    assert sorted(p.name for p in tmp_path.rglob("*")) == []  # not even runs_dir/x
+
+
 # --- REST -------------------------------------------------------------------------------
 def test_meta(client):
     meta = client.get("/api/meta").json()
@@ -311,6 +358,15 @@ def test_idle_until_started(client):
     assert client.get("/api/v1/spat").status_code == 503
     assert client.post("/api/session", json={"controller": "nope"}).status_code == 400
     assert client.post("/api/command", json={"type": "dispatch_ev"}).json()["ok"] is False
+
+
+def test_session_with_a_path_in_sampling_is_400(client):
+    """No run folder may be created outside runs_dir (twin-security-7 retention never sees it)."""
+    tmp = client.app_tmp
+    before = sorted(str(p) for p in tmp.rglob("*"))
+    r = client.post("/api/session?wait=1", json={"sampling": "x/../../victim/planted", "end_time": 60})
+    assert r.status_code == 400 and "sampling" in r.json()["detail"]
+    assert sorted(str(p) for p in tmp.rglob("*")) == before
 
 
 # --- a live session ----------------------------------------------------------------------
