@@ -72,3 +72,48 @@ def test_empty_runs_list_in_a_json_file(tmp_path):
     f.write_text(json.dumps({"runs": []}))
     result = impact.analyze(f)
     assert result["runs"] == 0 and result["notes"] == []
+
+
+# --- what a run's delay is (evaluation-6, evaluation-5) ------------------------------------------
+def _seed1_pair(**cand_kw):
+    base = S(completed=3235, unfinished=118, unfinished_pct=3.52, in_network_at_end=118, never_inserted=0, teleports=0,
+             mean_delay_s=76.0, mean_delay_incl_unfinished_s=75.18, inserted_in_window=3353, mean_depart_delay_s=0.0)
+    cand = S(controller="max_pressure", completed=3274, unfinished=79, unfinished_pct=2.36, in_network_at_end=79,
+             never_inserted=0, teleports=0, mean_delay_s=31.8, mean_delay_incl_unfinished_s=31.37,
+             inserted_in_window=3353, mean_depart_delay_s=0.0, **cand_kw)
+    return base, cand
+
+
+def test_in_flight_trips_are_charged_their_accrued_delay_not_300_s():
+    base, cand = _seed1_pair()
+    p = impact.ImpactParams()
+    saved = impact.pair_effect(impact.run_quantities(impact._normalize(base), p),
+                               impact.run_quantities(impact._normalize(cand), p), p)["delay_saved_veh_h_per_h"]
+    accrued = (75.18 - 31.37) * 3353 / 3600
+    assert saved == pytest.approx(accrued, abs=0.01)  # about 40.8, not + (118 - 79) * 300 / 3600 = 3.25 more
+    assert abs(saved - 40.8) < 1.0
+    # stranded trips (never inserted or teleported) still pay the flat penalty
+    stranded = dict(cand, never_inserted=40, teleports=10)
+    q = impact.run_quantities(impact._normalize(stranded), p)
+    q0 = impact.run_quantities(impact._normalize(cand), p)
+    assert q["delay_veh_h_per_h"] - q0["delay_veh_h_per_h"] == pytest.approx(50 * 300 / 3600)
+
+
+def test_entry_waits_count_as_delay():
+    base, cand = _seed1_pair()
+    base = dict(base, mean_delay_incl_unfinished_s=31.37, mean_depart_delay_s=30.0)  # same timeLoss, more waiting
+    p = impact.ImpactParams()
+    eff = impact.pair_effect(impact.run_quantities(impact._normalize(base), p),
+                             impact.run_quantities(impact._normalize(cand), p), p)
+    assert eff["delay_saved_veh_h_per_h"] == pytest.approx(30.0 * 3353 / 3600)
+
+
+def test_summaries_without_the_perf01_detail_use_the_old_formula_and_are_flagged_when_mixed():
+    p = impact.ImpactParams()
+    q = impact.run_quantities(impact._normalize(S(unfinished=100)), p)
+    assert q["delay_method"] == "completed+penalty"
+    assert q["delay_veh_h_per_h"] == pytest.approx((60.0 * 3600 + 100 * 300) / 3600)
+    base, cand = _seed1_pair()
+    legacy = {k: v for k, v in base.items() if k not in ("inserted_in_window", "never_inserted", "mean_delay_incl_unfinished_s")}
+    row = impact.analyze([legacy, cand])["rows"][0]
+    assert any("different formulas" in f for f in row["flags"])

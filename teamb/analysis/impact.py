@@ -13,7 +13,17 @@ Python: `analyze(list_of_summary_dicts)`.
 Method (paired by seed, so every controller sees the identical demand)
   For every run:
     window_h        = (sim_time_s − warmup) / 3600                (measurement window, hours)
-    delay_veh_h/h   = (mean_delay_s × completed + unfinished × unfinished_trip_delay_s) / 3600 / window_h
+    delay_s         = (mean_delay_incl_unfinished_s + mean_depart_delay_s) × inserted_in_window
+                      + (never_inserted + teleports) × unfinished_trip_delay_s
+                      i.e. the timeLoss every inserted window trip accrued in the run (trips still
+                      driving at the end are charged what they accrued, not a flat penalty, since
+                      the run has no drain period), plus the time spent waiting to enter
+                      (departDelay, not part of timeLoss), plus a flat penalty for trips that were
+                      never inserted or teleported (stranded). In-flight trips' delay is slightly
+                      understated (accrued, not final). Summaries without these PERF-01 fields
+                      (older runs, hand-made CSVs) fall back to
+                      mean_delay_s × completed + unfinished × unfinished_trip_delay_s.
+    delay_veh_h/h   = delay_s / 3600 / window_h
     stops/h         = stops_per_veh × completed / window_h
   For every candidate run vs the baseline run with the same scenario, seed, coverage, sampling
   and preemption setting:
@@ -47,7 +57,9 @@ from teamb import config
 from teamb.analysis.assumptions import ASSUMPTIONS, ImpactParams
 from teamb.evaluation.stats import mean_ci
 NUMERIC_FIELDS = ("seed", "coverage", "sim_time_s", "completed", "unfinished", "unfinished_pct", "mean_delay_s",
-                  "stops_per_veh", "throughput_veh_h", "ev_count", "ev_mean_travel_time_s", "teleports", "warmup")
+                  "stops_per_veh", "throughput_veh_h", "ev_count", "ev_mean_travel_time_s", "teleports", "warmup",
+                  "end_time", "inserted_in_window", "in_network_at_end", "never_inserted", "mean_delay_incl_unfinished_s",
+                  "mean_depart_delay_s", "mean_delay_incl_depart_s", "others_mean_delay_s")
 
 
 # --- loading -------------------------------------------------------------------------
@@ -156,9 +168,20 @@ def run_quantities(run: dict, p: ImpactParams) -> dict | None:
     window_h = window_s / 3600.0
     unfinished = float(run.get("unfinished") or 0)
     mean_delay = run.get("mean_delay_s")
-    delay_s = (float(mean_delay) * completed if mean_delay is not None else 0.0) + unfinished * p.unfinished_trip_delay_s
+    inserted, never = run.get("inserted_in_window"), run.get("never_inserted")
+    accrued = run.get("mean_delay_incl_unfinished_s")
+    if inserted is not None and never is not None and (accrued is not None or not inserted):
+        # accrued timeLoss of every inserted window trip + entry waits + stranded trips (evaluation-5/6)
+        per_trip = float(accrued or 0.0) + float(run.get("mean_depart_delay_s") or 0.0)
+        stranded = float(never) + float(run.get("teleports") or 0)
+        delay_s = per_trip * float(inserted) + stranded * p.unfinished_trip_delay_s
+        method = "accrued"
+    else:
+        delay_s = (float(mean_delay) * completed if mean_delay is not None else 0.0) + unfinished * p.unfinished_trip_delay_s
+        method = "completed+penalty"
     stops = float(run.get("stops_per_veh") or 0.0) * completed
     return {
+        "delay_method": method,
         "window_h": window_h,
         "trips": completed + unfinished,
         "delay_veh_h_per_h": delay_s / 3600.0 / window_h,
@@ -247,11 +270,13 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
         if qb is None or qc is None:
             notes.append(f"incomplete summary for {variant}/{scen}/seed {seed}")
             continue
-        groups[(scen, variant, cov, samp, pre)].append({**pair_effect(qb, qc, p), "seed": seed, "fallback": fallback})
+        groups[(scen, variant, cov, samp, pre)].append(
+            {**pair_effect(qb, qc, p), "seed": seed, "fallback": fallback, "mixed": qb["delay_method"] != qc["delay_method"]}
+        )
 
     rows = []
     for (scen, variant, cov, samp, pre), effects in sorted(groups.items(), key=lambda kv: str(kv[0])):
-        stats = {k: _summary_stat([e[k] for e in effects]) for k in effects[0] if k not in ("seed", "fallback")}
+        stats = {k: _summary_stat([e[k] for e in effects]) for k in effects[0] if k not in ("seed", "fallback", "mixed")}
         d_unf = stats["delta_unfinished_pp"]["mean"]
         flags = []
         if d_unf is not None and d_unf > p.unfinished_tolerance_pp:
@@ -260,6 +285,9 @@ def analyze(source, *, baseline: str = "fixed_time", params: ImpactParams | dict
             flags.append(f"baseline paired across coverage (the {baseline} baseline does not use probe data)")
         if len(effects) == 1:
             flags.append("1 seed — no confidence interval")
+        if any(e["mixed"] for e in effects):
+            flags.append("baseline and candidate summaries differ in detail (one lacks the PERF-01 fields): "
+                         "delay compared with different formulas")
         scenario_name = scen.split("-")[0] if scen else scen
         rows.append(
             {
