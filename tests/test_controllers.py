@@ -597,8 +597,9 @@ def test_rl_masks_and_trained_table(topo):
     if not MODEL_PATH.exists():
         pytest.skip("models/rl_qtable.json not trained yet: python -m teamb.controllers.rl_train")
     table = QTable.load(MODEL_PATH)
-    assert table.q.shape == (N_STATES, 2) and table.meta.get("episodes", 0) > 0
-    assert len({table.best(s) for s in range(N_STATES) if table.visits[s].sum() > 0}) == 2, "learned both actions"
+    n_states = len(table.q)  # 288 for v1 features, 576 for v2 (the committed default since 2026-11)
+    assert table.q.shape == (n_states, 2) and n_states in (N_STATES, 2 * N_STATES) and table.meta.get("episodes", 0) > 0
+    assert len({table.best(s) for s in range(n_states) if table.visits[s].sum() > 0}) == 2, "learned both actions"
     ctl = ready("rl", topo)
     ctl.observe(make_obs(topo, 100, count={("J1", "W"): 3}))
     assert ctl.propose_action(make_state(topo, 100)) == {}, "never switches to an empty street"
