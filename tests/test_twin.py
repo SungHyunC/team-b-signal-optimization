@@ -418,3 +418,60 @@ def test_run_finishes_cleanly(client):
     assert client.get("/api/v1/spat").status_code == 503
     reply = client.post("/api/control", json={"action": "play"}).json()
     assert reply["ok"] is False and "finished" in reply["error"]
+
+
+# --- offline three.js download (integration-10), no network ----------------------------------
+@pytest.fixture
+def vendor_mod(tmp_path, monkeypatch):
+    from teamb.twin import vendor
+
+    monkeypatch.setattr(vendor, "VENDOR_DIR", tmp_path / "three")
+    return vendor
+
+
+def test_vendor_help_does_not_download(vendor_mod, monkeypatch, capsys):
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: pytest.fail("--help must not download"))
+    with pytest.raises(SystemExit) as exc:
+        vendor_mod.main(["--help"])
+    assert exc.value.code == 0 and "--force" in capsys.readouterr().out
+    assert not vendor_mod.VENDOR_DIR.exists()
+
+
+def test_vendor_downloads_with_tls_context_and_skips_existing(vendor_mod, monkeypatch):
+    import io
+    import ssl
+    import urllib.request
+
+    calls = []
+
+    def fake_urlopen(url, timeout=None, context=None):
+        calls.append(url)
+        assert isinstance(context, ssl.SSLContext)  # certifi bundle (or the default) is always passed
+        return io.BytesIO(b"// " + url.encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert vendor_mod.main([]) == 0
+    assert len(calls) == len(vendor_mod.FILES)
+    module = vendor_mod.VENDOR_DIR / "build" / "three.module.js"
+    assert module.read_bytes().endswith(b"build/three.module.js")
+    assert not list(vendor_mod.VENDOR_DIR.rglob("*.tmp"))
+    assert vendor_mod.main([]) == 0 and len(calls) == len(vendor_mod.FILES)  # already there: no download
+    assert vendor_mod.main(["--force"]) == 0 and len(calls) == 2 * len(vendor_mod.FILES)
+
+
+def test_vendor_failure_leaves_nothing_behind(vendor_mod, monkeypatch, capsys):
+    import io
+    import urllib.error
+    import urllib.request
+
+    def flaky(url, timeout=None, context=None):
+        if "OrbitControls" in url:
+            raise urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        return io.BytesIO(b"ok")
+
+    monkeypatch.setattr(urllib.request, "urlopen", flaky)
+    assert vendor_mod.main([]) == 1
+    assert not vendor_mod.VENDOR_DIR.exists()  # no partial files, no empty build/ folder
+    assert "certifi" in capsys.readouterr().err
