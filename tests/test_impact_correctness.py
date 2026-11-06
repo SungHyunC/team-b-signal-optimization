@@ -214,3 +214,25 @@ def test_ev_hours_come_from_claimed_emergency_rows_only():
     stranding = [dict(r, unfinished=400, unfinished_pct=10.0) if r["controller"] == "cand" and r["scenario"] == "emergency" else r
                  for r in runs]
     assert _annual(impact.analyze(stranding, params=p), "cand")["ev_hours_saved_per_year"] is None
+
+
+# --- parameter overrides (ext-22, ext-24) ------------------------------------------------------------
+@pytest.mark.parametrize("override, message", [
+    ({"service_life_years": 0}, "service_life_years"),
+    ({"service_life_years": -3}, "service_life_years"),
+    ({"service_life_years": 10.9}, "whole number"),
+    ({"discount_rate": -1}, "discount_rate"),
+    ({"intersections": -1}, "intersections"),
+])
+def test_impossible_overrides_are_rejected(override, message):
+    with pytest.raises(ValueError, match=message):
+        impact.ImpactParams.with_overrides(override)
+    with pytest.raises(ValueError):
+        impact.analyze([S(), S(controller="max_pressure", mean_delay_s=50.0)], params=override)
+
+
+def test_valid_overrides_still_work():
+    p = impact.ImpactParams.with_overrides({"service_life_years": 15.0, "discount_rate": 0.0, "intersections": 0})
+    assert p.service_life_years == 15 and impact.capital_recovery_factor(0.0, 15) == pytest.approx(1 / 15)
+    with pytest.raises(ValueError):
+        impact.capital_recovery_factor(0.07, 0)

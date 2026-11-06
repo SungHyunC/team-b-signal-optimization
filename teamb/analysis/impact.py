@@ -388,6 +388,8 @@ def _assign_annual_hours(rows: list[dict], p: ImpactParams) -> None:
 
 
 def capital_recovery_factor(rate: float, years: float) -> float:
+    if years <= 0:
+        raise ValueError(f"service life must be > 0 years, not {years:g}")
     if rate == 0:
         return 1.0 / years
     g = (1 + rate) ** years
