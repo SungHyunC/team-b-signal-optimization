@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import itertools
 import json
+import os
 import subprocess
 import time
 import uuid
@@ -44,6 +45,9 @@ DRAWN_TYPES = ("ambulance", "firetruck", "truck", "bus")
 
 
 def _git_revision() -> str:
+    """Code revision for the run manifest; cloud containers get it from TEAMB_GIT_REVISION."""
+    if os.environ.get("TEAMB_GIT_REVISION"):
+        return os.environ["TEAMB_GIT_REVISION"]
     try:
         rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=config.ROOT, capture_output=True, text=True).stdout.strip()
         dirty = subprocess.run(["git", "status", "--porcelain"], cwd=config.ROOT, capture_output=True, text=True).stdout.strip()

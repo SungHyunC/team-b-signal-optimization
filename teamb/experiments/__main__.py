@@ -82,7 +82,10 @@ def main(argv=None) -> int:
     run.add_argument("--scenario-params", type=_json, default=None, help='JSON, e.g. {"demand_scale": 1.2} or {"warmup": 300}')
     run.add_argument("--counterfactual", action="store_true",
                      help="also run every scenario that has events without them (reference for recovery time)")
-    run.add_argument("--workers", type=int, default=2, help="parallel simulations (each is one SUMO process)")
+    run.add_argument("--workers", type=int, default=2,
+                     help="parallel simulations (each is one SUMO process; with --backend modal: cloud containers)")
+    run.add_argument("--backend", choices=("local", "modal"), default="local",
+                     help="where runs execute: this machine, or Modal cloud containers (pip install modal; modal setup)")
     run.add_argument("--baseline", default="fixed_time", help="controller the others are compared with")
     run.add_argument("--force", action="store_true", help="re-run runs that already have results")
     run.add_argument("--no-report", action="store_true", help="only run, do not write the report")
@@ -129,9 +132,10 @@ def main(argv=None) -> int:
             print(s.name)
         print(f"{len(specs)} runs")
         return 0
-    print(f"{len(specs)} runs -> {exp_dir} ({args.workers} workers)")
+    where = "Modal containers" if args.backend == "modal" else "workers"
+    print(f"{len(specs)} runs -> {exp_dir} ({args.workers} {where})")
     command = "python -m teamb.experiments " + " ".join(shlex.quote(a) for a in (argv if argv is not None else sys.argv[1:]))
-    record = run_matrix(specs, exp_dir, workers=args.workers, force=args.force, command=command)
+    record = run_matrix(specs, exp_dir, workers=args.workers, force=args.force, command=command, backend=args.backend)
     print(f"done in {record['wall_time_s']} s: {record['ok']} ok, {record['skipped']} skipped, {len(record['failed'])} failed")
     if args.strict_validation:
         audit = audit_specs(exp_dir, specs)

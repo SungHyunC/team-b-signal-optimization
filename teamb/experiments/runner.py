@@ -225,9 +225,20 @@ def _progress_line(i: int, n: int, res: dict) -> str:
 
 
 def run_matrix(
-    specs: list[RunSpec], exp_dir: Path, *, workers: int = 2, force: bool = False, quiet: bool = False, command: str | None = None
+    specs: list[RunSpec],
+    exp_dir: Path,
+    *,
+    workers: int = 2,
+    force: bool = False,
+    quiet: bool = False,
+    command: str | None = None,
+    backend: str = "local",
 ) -> dict:
-    """Run every spec (in parallel when workers > 1); returns an invocation record."""
+    """Run every spec (in parallel when workers > 1); returns an invocation record.
+
+    backend="local" uses worker processes on this machine; backend="modal" runs each spec in
+    its own Modal cloud container (see teamb/experiments/cloud.py) with ``workers`` containers.
+    """
     exp_dir = Path(exp_dir)
     runs_dir = exp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -239,7 +250,18 @@ def run_matrix(
         # spawned workers re-import the main script; code piped in on stdin cannot be re-imported
         print("note: running sequentially (worker processes need a script file, not stdin)", flush=True)
         workers = 1
-    if workers <= 1:
+    if backend == "modal":
+        from teamb.experiments import cloud
+        from teamb.sim.env import _git_revision
+
+        stream = cloud.run_specs(specs, runs_dir, workers=workers, force=force, git_revision=_git_revision())
+        for i, res in enumerate(stream, 1):
+            results.append(res)
+            if not quiet:
+                print(_progress_line(i, n, res), flush=True)
+    elif backend != "local":
+        raise ValueError(f"unknown backend '{backend}' (local or modal)")
+    elif workers <= 1:
         for i, spec in enumerate(specs, 1):
             res = run_one(asdict(spec), str(runs_dir), force)
             results.append(res)
@@ -258,6 +280,7 @@ def run_matrix(
         "command": command,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0)),
         "wall_time_s": round(time.time() - t0, 1),
+        "backend": backend,
         "workers": workers,
         "runs": n,
         "ok": sum(r["status"] == "ok" for r in results),
