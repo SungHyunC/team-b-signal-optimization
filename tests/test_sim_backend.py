@@ -20,7 +20,10 @@ def test_binary_ignores_a_sumo_home_without_binaries(tmp_path, monkeypatch):
     assert found.exists() and found.name.startswith("sumo")
     if (real.parent.parent / "bin").is_dir():
         assert found == real
-    assert sumo_paths.sumo_home() != data_only or not (data_only / "bin").exists()
+        assert sumo_paths.sumo_home() == real.parent.parent  # not the bin-less SUMO_HOME (`teamb doctor` shows it)
+    assert sumo_paths.sumo_home() != data_only
+    monkeypatch.setattr(sumo_paths, "_candidate_homes", lambda: [data_only])
+    assert sumo_paths.sumo_home() == data_only  # no candidate has binaries: the first one is still reported
 
 
 def test_start_does_not_use_tracis_sleeping_connect(tmp_path, monkeypatch, capfd):
