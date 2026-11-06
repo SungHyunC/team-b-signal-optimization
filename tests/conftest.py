@@ -3,10 +3,10 @@
 ``pytest -m "not sumo"`` is the quick tier (no SUMO process). A test is marked automatically when
 its own code, a fixture it uses, or a helper function of its module that it calls refers to
 something that starts a simulation: SimEnv, run_one / run_matrix, record_run, TrainEnv /
-PlanEvalEnv, SearchJob, the doctor smoke run (run_checks), traci / libsumo, or a live twin
-session request (``/api/session?wait``). Comments and docstrings do not count. The heuristic errs
-on the side of marking; add ``@pytest.mark.sumo`` by hand if it misses a test. The markers are
-registered in pyproject.toml.
+PlanEvalEnv, SearchJob, the doctor smoke run (run_checks), an RL training episode
+(run_episode), traci / libsumo, or a live twin session request (``/api/session?wait``).
+Comments and docstrings do not count. The heuristic errs on the side of marking; add
+``@pytest.mark.sumo`` by hand if it misses a test. The markers are registered in pyproject.toml.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import tokenize
 import pytest
 
 SUMO_NAMES = frozenset({"SimEnv", "run_one", "run_matrix", "record_run", "TrainEnv", "PlanEvalEnv",
-                        "SearchJob", "run_checks", "traci", "libsumo"})
+                        "SearchJob", "run_checks", "run_episode", "traci", "libsumo"})
 SUMO_STRINGS = ("/api/session?wait",)
 
 
