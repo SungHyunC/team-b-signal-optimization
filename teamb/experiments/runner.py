@@ -21,6 +21,7 @@ import hashlib
 import json
 import math
 import multiprocessing
+import os
 import shutil
 import sys
 import time
@@ -392,11 +393,22 @@ def _progress_line(i: int, n: int, res: dict) -> str:
     return f"[{i}/{n}] {res['run']}: delay {delay} s/veh, unfinished {s.get('unfinished_pct')} %, {tag}"
 
 
+MODAL_DEFAULT_WORKERS = 2  # cloud containers when --workers is not given (unchanged)
+
+
+def default_workers(n_runs: int, backend: str = "local") -> int:
+    """Workers when none are given: locally one SUMO process per CPU core but one (each run is an
+    independent process, so the matrix scales almost linearly), never more than there are runs."""
+    if backend == "modal":
+        return max(1, min(n_runs, MODAL_DEFAULT_WORKERS))
+    return max(1, min(n_runs, (os.cpu_count() or 2) - 1))
+
+
 def run_matrix(
     specs: list[RunSpec],
     exp_dir: Path,
     *,
-    workers: int = 2,
+    workers: int | None = None,
     force: bool = False,
     quiet: bool = False,
     command: str | None = None,
@@ -406,71 +418,87 @@ def run_matrix(
 
     backend="local" uses worker processes on this machine; backend="modal" runs each spec in
     its own Modal cloud container (see teamb/experiments/cloud.py) with ``workers`` containers.
+    workers=None picks :func:`default_workers`. A worker process that dies (BrokenProcessPool)
+    turns its runs into failed runs instead of aborting the matrix, and the invocation record is
+    appended to experiment.json even when the matrix is interrupted.
     """
     collisions = name_collisions(specs)
     if collisions:  # two workers must never write into one run directory
         raise ValueError("; ".join(collisions))
+    if backend not in ("local", "modal"):
+        raise ValueError(f"unknown backend '{backend}' (local or modal)")
     exp_dir = Path(exp_dir)
     runs_dir = exp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    results = []
+    results: list[dict] = []
     n = len(specs)
+    workers = default_workers(n, backend) if workers is None else int(workers)
     main_file = getattr(sys.modules.get("__main__"), "__file__", None)
-    if workers > 1 and main_file and not Path(main_file).exists():
+    if backend == "local" and workers > 1 and main_file and not Path(main_file).exists():
         # spawned workers re-import the main script; code piped in on stdin cannot be re-imported
         print("note: running sequentially (worker processes need a script file, not stdin)", flush=True)
         workers = 1
-    if backend == "modal":
-        from teamb.experiments import cloud
-        from teamb.sim.env import _git_revision
 
-        stream = cloud.run_specs(specs, runs_dir, workers=workers, force=force, git_revision=_git_revision())
-        for i, res in enumerate(stream, 1):
-            results.append(res)
-            if not quiet:
-                print(_progress_line(i, n, res), flush=True)
-    elif backend != "local":
-        raise ValueError(f"unknown backend '{backend}' (local or modal)")
-    elif workers <= 1:
-        for i, spec in enumerate(specs, 1):
-            res = run_one(asdict(spec), str(runs_dir), force)
-            results.append(res)
-            if not quiet:
-                print(_progress_line(i, n, res), flush=True)
-    else:
-        ctx = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-            futures = [pool.submit(run_one, asdict(spec), str(runs_dir), force) for spec in specs]
-            for i, fut in enumerate(as_completed(futures), 1):
-                res = fut.result()
-                results.append(res)
-                if not quiet:
-                    print(_progress_line(i, n, res), flush=True)
-    record = {
-        "command": command,
-        "started": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0)),
-        "wall_time_s": round(time.time() - t0, 1),
-        "backend": backend,
-        "workers": workers,
-        "runs": n,
-        "ok": sum(r["status"] == "ok" for r in results),
-        "skipped": sum(r["status"] == "skipped" for r in results),
-        "failed": [r["run"] for r in results if r["status"] == "failed"],
-        "matrix": {
-            "scenarios": sorted({s.scenario_variant for s in specs}),
-            "controllers": sorted({s.variant for s in specs}),
-            "seeds": sorted({s.seed for s in specs}),
-            "coverages": sorted({s.coverage for s in specs}),
-            "samplings": sorted({s.sampling for s in specs}),
-            "ev_preemption": sorted({s.ev_preemption for s in specs}),
-            "end_time": sorted({s.end_time for s in specs if s.end_time is not None}),
-            "controller_params": {s.variant: s.controller_params for s in specs if s.controller_params},
-            "scenario_params": {s.scenario_variant: s.scenario_params for s in specs if s.scenario_params},
-        },
-    }
-    meta_path = exp_dir / "experiment.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {"name": exp_dir.name, "created": record["started"], "invocations": []}
-    meta["invocations"].append(record)
-    meta_path.write_text(json.dumps(meta, indent=2))
+    def report(res: dict) -> None:
+        results.append(res)
+        if not quiet:
+            print(_progress_line(len(results), n, res), flush=True)
+
+    interrupted = False
+    try:
+        if backend == "modal":
+            from teamb.experiments import cloud
+            from teamb.sim.env import _git_revision
+
+            for res in cloud.run_specs(specs, runs_dir, workers=workers, force=force, git_revision=_git_revision()):
+                report(res)
+        elif workers <= 1:
+            for spec in specs:
+                report(run_one(asdict(spec), str(runs_dir), force))
+        else:
+            ctx = multiprocessing.get_context("spawn")
+            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                futures = {pool.submit(run_one, asdict(spec), str(runs_dir), force): spec for spec in specs}
+                for fut in as_completed(futures):
+                    try:
+                        res = fut.result()
+                    except Exception as exc:  # the worker process died (BrokenProcessPool) or the result was lost
+                        res = {"run": futures[fut].name, "status": "failed", "error": f"worker: {type(exc).__name__}: {exc}"}
+                    report(res)
+    except BaseException:
+        interrupted = True
+        raise
+    finally:
+        record = {
+            "command": command,
+            "started": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0)),
+            "wall_time_s": round(time.time() - t0, 1),
+            "backend": backend,
+            "workers": workers,
+            "runs": n,
+            "ok": sum(r["status"] == "ok" for r in results),
+            "skipped": sum(r["status"] == "skipped" for r in results),
+            "failed": [r["run"] for r in results if r["status"] == "failed"],
+            "matrix": {
+                "scenarios": sorted({s.scenario_variant for s in specs}),
+                "controllers": sorted({s.variant for s in specs}),
+                "seeds": sorted({s.seed for s in specs}),
+                "coverages": sorted({s.coverage for s in specs}),
+                "samplings": sorted({s.sampling for s in specs}),
+                "ev_preemption": sorted({s.ev_preemption for s in specs}),
+                "end_time": sorted({s.end_time for s in specs if s.end_time is not None}),
+                "controller_params": {s.variant: s.controller_params for s in specs if s.controller_params},
+                "scenario_params": {s.scenario_variant: s.scenario_params for s in specs if s.scenario_params},
+            },
+        }
+        if interrupted:
+            record["interrupted"] = True
+            record["not_run"] = n - len(results)
+        meta_path = exp_dir / "experiment.json"
+        meta = read_json(meta_path)
+        if not isinstance(meta, dict) or not isinstance(meta.get("invocations"), list):
+            meta = {"name": exp_dir.name, "created": record["started"], "invocations": []}
+        meta["invocations"].append(record)
+        atomic_write_json(meta_path, meta)
     return record

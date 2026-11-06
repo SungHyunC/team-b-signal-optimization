@@ -5,7 +5,7 @@ Examples
 Sample experiment (the one in docs/results/sample-report.md)::
 
     python -m teamb.experiments run --name sample --scenarios rush_hour,emergency \\
-        --controllers fixed_time,coordinated --seeds 1-3 --end 2700 --workers 2
+        --controllers fixed_time,coordinated --seeds 1-3 --end 2700
 
 Coverage sweep with biased sampling (probe-based controller vs fixed-time)::
 
@@ -35,7 +35,7 @@ from pathlib import Path
 from teamb.experiments.analysis import write_report
 from teamb.experiments.accuracy import audit_specs
 from teamb.experiments.runner import (
-    EXPERIMENTS_DIR, build_matrix, parse_coverages, parse_seeds, run_matrix, run_status, validate_matrix,
+    EXPERIMENTS_DIR, build_matrix, default_workers, parse_coverages, parse_seeds, run_matrix, run_status, validate_matrix,
 )
 
 
@@ -85,8 +85,9 @@ def main(argv=None) -> int:
     run.add_argument("--scenario-params", type=_json, default=None, help='JSON, e.g. {"demand_scale": 1.2} or {"warmup": 300}')
     run.add_argument("--counterfactual", action="store_true",
                      help="also run every scenario that has events without them (reference for recovery time)")
-    run.add_argument("--workers", type=int, default=2,
-                     help="parallel simulations (each is one SUMO process; with --backend modal: cloud containers)")
+    run.add_argument("--workers", type=int, default=None,
+                     help="parallel simulations, each one SUMO process (default: CPU cores - 1, at most one per run); "
+                          "with --backend modal: cloud containers (default 2)")
     run.add_argument("--backend", choices=("local", "modal"), default="local",
                      help="where runs execute: this machine, or Modal cloud containers (pip install modal; modal setup)")
     run.add_argument("--baseline", default="fixed_time", help="controller the others are compared with")
@@ -142,9 +143,10 @@ def main(argv=None) -> int:
         print(f"{len(specs)} runs")
         return 0
     where = "Modal containers" if args.backend == "modal" else "workers"
-    print(f"{len(specs)} runs -> {exp_dir} ({args.workers} {where})")
+    workers = args.workers if args.workers is not None else default_workers(len(specs), args.backend)
+    print(f"{len(specs)} runs -> {exp_dir} ({workers} {where})")
     command = "python -m teamb.experiments " + " ".join(shlex.quote(a) for a in (argv if argv is not None else sys.argv[1:]))
-    record = run_matrix(specs, exp_dir, workers=args.workers, force=args.force, command=command, backend=args.backend)
+    record = run_matrix(specs, exp_dir, workers=workers, force=args.force, command=command, backend=args.backend)
     print(f"done in {record['wall_time_s']} s: {record['ok']} ok, {record['skipped']} skipped, {len(record['failed'])} failed")
     if args.strict_validation:
         audit = audit_specs(exp_dir, specs)

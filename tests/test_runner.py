@@ -231,3 +231,59 @@ def test_audit_rejects_a_truncated_run(tmp_path):
     audit = audit_specs(tmp_path, [SPEC, RunSpec("rush_hour", "max_pressure", 1, 1.0, end_time=600.0)])
     assert not audit["complete"] and audit["valid_runs"] == 1
     assert any("did not finish" in p for p in audit["problems"])
+
+
+# --- workers and pool handling (opportunities: default workers, robust pool handling) -------------
+def test_default_workers_uses_all_cores_but_one(monkeypatch):
+    import teamb.experiments.runner as runner
+
+    monkeypatch.setattr(runner.os, "cpu_count", lambda: 8)
+    assert runner.default_workers(100) == 7 and runner.default_workers(3) == 3 and runner.default_workers(0) == 1
+    assert runner.default_workers(100, "modal") == 2
+    monkeypatch.setattr(runner.os, "cpu_count", lambda: None)
+    assert runner.default_workers(100) == 1
+
+
+def test_a_dead_worker_becomes_a_failed_run(tmp_path, monkeypatch):
+    from concurrent.futures import Future
+    from concurrent.futures.process import BrokenProcessPool
+
+    import teamb.experiments.runner as runner
+
+    class DeadPool:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def submit(self, fn, spec_dict, *args):
+            fut = Future()
+            if spec_dict["seed"] == 2:
+                fut.set_exception(BrokenProcessPool("a child process terminated abruptly"))
+            else:
+                fut.set_result({"run": RunSpec(**spec_dict).name, "status": "ok", "summary": {}})
+            return fut
+
+    monkeypatch.setattr(runner, "ProcessPoolExecutor", DeadPool)
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0) for s in (1, 2, 3)]
+    record = runner.run_matrix(specs, tmp_path, workers=3, quiet=True)
+    assert record["ok"] == 2 and record["failed"] == [specs[1].name]
+    meta = json.loads((tmp_path / "experiment.json").read_text())
+    assert meta["invocations"][-1]["failed"] == [specs[1].name] and meta["invocations"][-1]["workers"] == 3
+
+
+def test_interrupted_matrix_still_records_the_invocation(tmp_path, fake_env):
+    from teamb.experiments.runner import run_matrix
+
+    specs = [RunSpec("rush_hour", "fixed_time", s, 1.0, end_time=600.0) for s in (1, 2, 3)]
+    run_matrix(specs[:1], tmp_path, workers=1, quiet=True)
+    fake_env.behaviour = "interrupt"
+    with pytest.raises(KeyboardInterrupt):
+        run_matrix(specs, tmp_path, workers=1, quiet=True)
+    inv = json.loads((tmp_path / "experiment.json").read_text())["invocations"]
+    assert len(inv) == 2 and inv[-1]["interrupted"] is True
+    assert inv[-1]["skipped"] == 1 and inv[-1]["not_run"] == 2
