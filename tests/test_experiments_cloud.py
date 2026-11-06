@@ -28,24 +28,36 @@ def _archive(name: str, files: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
+class FakeCall:
+    def __init__(self, result=None, error=None, flaky=0):
+        self.result, self.error, self.flaky = result, error, flaky
+
+    def get(self, timeout=None):
+        if self.flaky:  # a dropped client connection while waiting
+            self.flaky -= 1
+            raise ConnectionError("Connection lost")
+        if self.error:
+            raise self.error
+        return dict(self.result)
+
+
 class FakeRemote:
-    def __init__(self, lose=()):
-        self.sent, self.lose, self.options = [], set(lose), {}
+    def __init__(self, lose=(), lose_once=(), flaky=0):
+        self.sent, self.lose, self.lose_once, self.flaky, self.options = [], set(lose), set(lose_once), flaky, {}
 
     def with_options(self, **options):
         self.options = options
         return self
 
-    def map(self, specs, kwargs=None, order_outputs=True, return_exceptions=False):
-        for spec in specs:
-            name = RunSpec(**spec).name
-            self.sent.append(name)
-            if name in self.lose:
-                yield RuntimeError("container preempted")
-                continue
-            summary = {"mean_delay_s": 1.0, "complete": True, "end_time": spec["end_time"], "sim_time_s": spec["end_time"]}
-            files = {"summary.json": json.dumps(summary), "run_spec.json": json.dumps({**spec, "name": name})}
-            yield {"run": name, "status": "ok", "summary": summary, "archive": _archive(name, files)}
+    def spawn(self, spec, git_revision):
+        name = RunSpec(**spec).name
+        self.sent.append(name)
+        if name in self.lose or name in self.lose_once:
+            self.lose_once.discard(name)
+            return FakeCall(error=RuntimeError("container preempted"))
+        summary = {"mean_delay_s": 1.0, "complete": True, "end_time": spec["end_time"], "sim_time_s": spec["end_time"]}
+        files = {"summary.json": json.dumps(summary), "run_spec.json": json.dumps({**spec, "name": name})}
+        return FakeCall({"run": name, "status": "ok", "summary": summary, "archive": _archive(name, files)}, flaky=self.flaky)
 
 
 @pytest.fixture
@@ -100,24 +112,18 @@ def test_archives_cannot_write_outside_their_run_folder(tmp_path):
     assert not (tmp_path / "escape").exists()
 
 
-class FlakyRemote(FakeRemote):
-    """The first map() dies after one result, like a dropped gRPC stream."""
-
-    def __init__(self):
-        super().__init__()
-        self.maps = 0
-
-    def map(self, specs, kwargs=None, order_outputs=True, return_exceptions=False):
-        self.maps += 1
-        for i, item in enumerate(super().map(specs, kwargs, order_outputs, return_exceptions)):
-            if self.maps == 1 and i == 1:
-                raise ConnectionError("Connection lost")
-            yield item
-
-
-def test_a_dropped_client_connection_retries_only_the_missing_runs(fake, tmp_path):
-    remote = fake(FlakyRemote())
+def test_a_dropped_client_connection_only_interrupts_the_wait(fake, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
+    remote = fake(FakeRemote(flaky=2))
     results = list(cloud.run_specs(_specs(), tmp_path, workers=2))
-    assert remote.maps == 2
     assert sorted(r["status"] for r in results) == ["ok", "ok"]
-    assert remote.sent == [_specs()[0].name, _specs()[1].name, _specs()[1].name]
+    assert sorted(remote.sent) == sorted(s.name for s in _specs()), "nothing re-submitted"
+
+
+def test_a_run_lost_on_modal_is_resubmitted(fake, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud.time, "sleep", lambda s: None)
+    lost = _specs()[1].name
+    remote = fake(FakeRemote(lose_once={lost}))
+    results = {r["run"]: r for r in cloud.run_specs(_specs(), tmp_path, workers=2)}
+    assert results[lost]["status"] == "ok"
+    assert remote.sent.count(lost) == 2

@@ -33,7 +33,9 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict
 from importlib import metadata
@@ -54,7 +56,9 @@ RUNTIME_PACKAGES = ("eclipse-sumo", "traci", "sumolib", "libsumo", "numpy", "opt
 CPU_PER_RUN = 1.0
 MEMORY_MB = 2048
 RUN_TIMEOUT_S = 3600
-CLIENT_ATTEMPTS = 3  # whole map attempts after a client-side connection loss
+CLIENT_ATTEMPTS = 3  # submissions per run when Modal loses it (on top of Modal's own retries)
+CLIENT_WAIT_RETRIES = 20  # re-waits on a dropped client connection before giving up on a run
+POLL_TIMEOUT_S = 60.0
 RL_EPISODE_TIMEOUT_S = 3600
 
 
@@ -159,39 +163,65 @@ def run_specs(specs, runs_dir: Path, *, workers: int, force: bool = False, git_r
             todo.append(spec)
     if not todo:
         return
-    errors: list[str] = []
-    for attempt in range(1, CLIENT_ATTEMPTS + 1):
-        returned: set[str] = set()
+    with modal.enable_output(), app.run():
+        fn = run_remote.with_options(max_containers=max(1, int(workers)))
+        # spawn() leaves each run as a durable call on Modal's side; results are then collected one
+        # call at a time. A dropped client stream (gRPC "Connection lost") only interrupts the
+        # waiting, never the runs, unlike one long map() whose loss takes every pending run with it.
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            calls = list(pool.map(lambda spec: _spawn(fn, spec, git_revision), todo))
+        for spec, call in zip(todo, calls):
+            res, error = _collect(fn, spec, call, git_revision)
+            if res is None:
+                yield {"run": spec.name, "status": "failed", "error": f"cloud: {error}"}
+                continue
+            blob = res.pop("archive", None)
+            out = runs_dir / res["run"]
+            if out.exists():
+                shutil.rmtree(out)
+            if blob:
+                _safe_extract(blob, runs_dir, res["run"])
+            res["backend"] = "modal"
+            yield res
+
+
+def _spawn(fn, spec, git_revision: str):
+    for wait in range(CLIENT_WAIT_RETRIES):
         try:
-            with modal.enable_output(), app.run():
-                fn = run_remote.with_options(max_containers=max(1, int(workers)))
-                for res in fn.map(
-                    [asdict(s) for s in todo], kwargs={"git_revision": git_revision}, order_outputs=False,
-                    return_exceptions=True,
-                ):
-                    if isinstance(res, BaseException):  # one input failed after Modal's retries
-                        errors.append(f"{type(res).__name__}: {res}")
-                        continue
-                    blob = res.pop("archive", None)
-                    name = res["run"]
-                    returned.add(name)
-                    out = runs_dir / name
-                    if out.exists():
-                        shutil.rmtree(out)
-                    if blob:
-                        _safe_extract(blob, runs_dir, name)
-                    res["backend"] = "modal"
-                    yield res
-        except Exception as exc:  # noqa: BLE001 - client-side loss (e.g. gRPC "Connection lost"): retry the rest
-            errors.append(f"{type(exc).__name__}: {exc}")
-        todo = [s for s in todo if s.name not in returned]
-        if not todo:
-            return
-        if attempt < CLIENT_ATTEMPTS:
-            print(f"cloud: {len(todo)} run(s) without a result ({errors[-1][:200]}); retrying them "
-                  f"(attempt {attempt + 1}/{CLIENT_ATTEMPTS})", flush=True)
-    for spec in todo:  # still lost after every attempt: a named failure, so the next invocation re-runs it
-        yield {"run": spec.name, "status": "failed", "error": "cloud: " + (errors[-1] if errors else "no result returned")}
+            return fn.spawn(asdict(spec), git_revision)
+        except Exception as exc:  # noqa: BLE001
+            if not _transient(exc):
+                raise
+            time.sleep(min(30.0, 2.0 * (wait + 1)))
+    return fn.spawn(asdict(spec), git_revision)
+
+
+def _transient(exc: BaseException) -> bool:
+    """Client-side connection trouble (worth waiting again) rather than a failed run."""
+    name = type(exc).__name__
+    return isinstance(exc, (ConnectionError, OSError)) or name in ("StreamTerminatedError", "GRPCError", "ConnectionError")
+
+
+def _collect(fn, spec, call, git_revision: str) -> tuple[dict | None, str | None]:
+    """Wait for one spawned run; re-wait on connection loss, re-spawn a run lost on Modal's side."""
+    attempts, waits = 1, 0
+    while True:
+        try:
+            return call.get(timeout=POLL_TIMEOUT_S), None
+        except (TimeoutError, modal.exception.TimeoutError):
+            continue  # still running
+        except Exception as exc:  # noqa: BLE001 - classify below
+            if _transient(exc) and waits < CLIENT_WAIT_RETRIES:
+                waits += 1
+                time.sleep(min(30.0, 2.0 * waits))
+                continue
+            if attempts < CLIENT_ATTEMPTS:  # the run itself was lost (container crash after Modal's retries)
+                attempts += 1
+                print(f"cloud: {spec.name} lost ({type(exc).__name__}: {str(exc)[:120]}); resubmitting "
+                      f"(attempt {attempts}/{CLIENT_ATTEMPTS})", flush=True)
+                call = _spawn(fn, spec, git_revision)
+                continue
+            return None, f"{type(exc).__name__}: {exc}"
 
 
 @contextmanager
