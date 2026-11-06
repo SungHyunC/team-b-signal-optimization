@@ -545,6 +545,26 @@ def test_an_ev_departing_in_the_settle_window_is_checked_for_closures(topo):
     assert open_env.conn.vehicle.calls == 0  # nothing closed: the EV keeps its dispatched route
 
 
+def test_settle_routing_is_not_counted_as_closure_rerouting(topo):
+    """Routing departures on the static weights after a reopening is not a closure re-route: it must
+    not inflate rerouted / reroute_calls in the summary (dx-33)."""
+    env, runtime = _settling_runtime(topo, {"c1": ["W0_J1", "J1_J2"], "c2": ["W0_J1", "J1_N1"]})
+    env.conn.vehicle.rerouteTraveltime = lambda vid, current=False: (
+        setattr(env.conn.vehicle, "calls", env.conn.vehicle.calls + 1),
+        env.conn.vehicle.routes.__setitem__(vid, ["W0_J1", "J1_J2", "J2_J3"]),
+    )
+    runtime._after_events(env.t, departed=("c1", "c2"), arrived=())
+    assert env.conn.vehicle.calls == 2  # both departures were routed on the static weights
+    assert runtime.report()["reroute_calls"] == 0 and runtime.report()["rerouted"] == 0
+    assert "c1" in runtime._touched and "c2" in runtime._touched  # next_tls must not trust stale subscriptions
+    # a departure with a closure still ahead goes through the counted safety net, as outside the window
+    blocked_env, blocked = _settling_runtime(topo, {"c3": ["W0_J1", "J1_J2", "J2_J3", "J3_J4"]}, closed=["J2_J3"])
+    blocked_env.conn.vehicle.rerouteTraveltime = lambda vid, current=False: blocked_env.conn.vehicle.routes.__setitem__(
+        vid, ["W0_J1", "J1_N1", "N1_N2", "N2_N3", "N3_J3", "J3_J4"])
+    blocked._after_events(blocked_env.t, departed=("c3",), arrived=())
+    assert blocked.report()["reroute_calls"] == 1 and blocked.report()["rerouted"] == 1 and not blocked._retry
+
+
 def test_failed_scheduled_events_are_reported_with_details(topo):
     from teamb.scenarios.events import ScenarioRuntime
 

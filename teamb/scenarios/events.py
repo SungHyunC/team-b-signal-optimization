@@ -486,23 +486,35 @@ class ScenarioRuntime:
 
     def _route_departures(self, departed) -> None:
         """After a reopening: route every newly departed trip on the static weights (module
-        docstring, item 4). A trip that still has a closed edge ahead afterwards is retried
-        every step. EVs keep the route they were dispatched with unless a closure lies ahead
-        on it: a road closed after dispatch_ev but before SUMO inserted the EV is on its fixed
-        route (_reroute_around only sees vehicles already in the network), so the departure
-        safety net (_check_departures) still applies to them."""
-        v = self.conn.vehicle
+        docstring, item 4).
+
+        A departure with a closed edge ahead goes through the departure safety net instead, as
+        outside the window (_check_departures: counted in rerouted / reroute_calls, retried every
+        step until it avoids the closure). That includes EVs, which otherwise keep the route they
+        were dispatched with: a road closed after dispatch_ev but before SUMO inserted the EV is
+        on its fixed route (_reroute_around only sees vehicles already in the network). The
+        settle routing itself is not a closure re-route and, like _reroute_all at the reopening,
+        is not counted."""
         for vid in departed:
-            if vid in self.evs:
-                if self.closed:
-                    self._check_departures((vid,))
-                continue
             try:
-                route = v.getRoute(vid)
+                route = self._blocked_route(vid) if self.closed else None
             except traci.TraCIException:
                 continue
-            if not self._reroute(vid, route) and self.closed:
+            if route is not None:
+                if not self._reroute(vid, route):
+                    self._retry.add(vid)
+            elif vid not in self.evs and not self._settle_reroute(vid) and self.closed:
                 self._retry.add(vid)
+
+    def _settle_reroute(self, vid: str) -> bool:
+        """Route one departure on the current (static) weights without counting it as a closure
+        re-route; True if no closed edge is ahead of it afterwards."""
+        try:
+            self._touched.add(vid)
+            self.conn.vehicle.rerouteTraveltime(vid, False)
+            return not self.closed or not self._route_blocked(vid)
+        except traci.TraCIException:
+            return False
 
     # --- navigation-app re-routing while closures last ------------------------------
     def _subscribe_travel_times(self) -> None:
