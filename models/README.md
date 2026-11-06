@@ -9,9 +9,24 @@ Trained artifacts that controllers load at run time. Owner: AI & security (Yunse
 
 ## rl_qtable.json
 
-A tabular Q-function for the shared junction policy: 288 states × 2 actions (keep / switch),
-plus visit counts, the feature definition, training metadata (episodes, seeds, wall time,
-hyper-parameters, the training curve) and a SHA-256 checksum.
+The default model since November 2026: a tabular Q-function for the shared junction policy with
+the **v2 features** (576 states = the v1 state × a "green blocked" bit: after 15 s of green, at
+least half of the green axis' cars, and at least 4, are still stopped) × 2 actions, plus visit
+counts (`visit_unit = "transitions"`), the feature definition, training metadata and a SHA-256
+checksum (`2d1f2c0d…` for the file itself).
+
+- **Training**: 2,000 full-length episodes on Modal (48 containers, about 35 min), each drawing one
+  of rush_hour, special_event, emergency, road_closure, sinkhole_cross, earthquake, off_peak and a
+  demand scale U(0.75, 1.25); seeds 1,001,000+ (training seed 1), replay buffer 96 episodes.
+- **Selection**: chosen on validation seeds 900-909 (never used for training or the final test)
+  against three other candidates trained the same week: v1 features × 2,000 episodes, this model
+  resumed for 3,840 more episodes at demand 0.75-1.4, and a fresh v2 run of 5,760 episodes. More
+  episodes did not help the tabular policy; see
+  [the RL retraining study](../docs/results/studies/rl-retraining-2026-11/README.md).
+- **Result** on the final test seeds 201-230 (7 scenarios × demand 0.75/1.0/1.25): the flood
+  that broke the first model (169 s/veh at 100 % demand) drops to 87 s/veh, about max-pressure's
+  88 s; it beats max-pressure off-peak and at the stadium surge, but loses in the earthquake.
+  Details in [the confirmation study](../docs/results/studies/controller-confirmation-2026-11/README.md).
 
 - **Retrain** (about 5–15 min, 2 SUMO runs at a time):
   `python -m teamb.controllers.rl_train` (defaults: 60 episodes × 1800 s of rush hour)
@@ -34,7 +49,7 @@ hyper-parameters, the training curve) and a SHA-256 checksum.
   from scratch for pure transition counts. The controller's low-confidence fallback
   (`fallback_min_visits`, default 20) compares against these counts, so on a legacy or mixed
   file it trusts states that saw fewer real transitions.
-- Small enough (~17 KB) to commit; regenerate it instead of editing it by hand.
+- Small enough (~136 KB) to commit; regenerate it instead of editing it by hand.
 
 ## rl_qtable_v1_rush_hour.json
 
