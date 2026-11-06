@@ -10,7 +10,8 @@ A run counts as finished (see :func:`run_status`) only if its ``summary.json`` p
 marked ``"complete": false``, no ``error.json`` sits next to it, and ``sim_time_s`` reached the
 run's end time. Before a finished run is skipped, its saved ``run_spec.json`` is compared with
 the requested spec; a mismatch is reported as a failure instead of silently reusing another
-run's results. A failed or interrupted run (including Ctrl-C) leaves ``error.json`` and no
+run's results. A finished run of exactly the requested spec in a folder with the pre-rename name
+(no ``__e<end>``, coverage rounded to a whole percent) is renamed to today's name and reused. A failed or interrupted run (including Ctrl-C) leaves ``error.json`` and no
 ``summary.json``, so the next invocation runs it again.
 
 Runs execute in parallel worker processes (``workers``); each worker starts its own SUMO.
@@ -364,16 +365,52 @@ def run_status(run_dir: str | Path, *, expected_end: float | None = None,
     return "ok", summary, None
 
 
+def legacy_run_name(spec: RunSpec) -> str:
+    """The directory name the runner gave `spec` before end_time and exact coverage were part of
+    the run name (evaluation-2, ext-89): no __e suffix, coverage rounded to a whole percent."""
+    sampling = spec.sampling.replace(":", "-")
+    pre = "" if spec.ev_preemption else "__nopre"
+    return f"{spec.scenario_variant}__{spec.variant}__s{spec.seed}__c{round(spec.coverage * 100)}__{sampling}{pre}"
+
+
+def adopt_legacy_run(spec: RunSpec, runs_dir: str | Path) -> str | None:
+    """Rename a finished run of exactly `spec` from its legacy folder name to spec.name, so an
+    experiment made before the rename resumes instead of re-running every run (and leaving the old
+    folder behind as a duplicate). Returns the old folder name, or None if nothing was adopted.
+
+    Only a folder whose saved run_spec.json maps to spec.name under today's naming rule is taken
+    (the same explicit end_time, not merely the same effective end), and only a finished run."""
+    runs_dir = Path(runs_dir)
+    old, new = runs_dir / legacy_run_name(spec), runs_dir / spec.name
+    if old == new or new.exists() or not old.is_dir():
+        return None
+    saved = read_json(old / "run_spec.json")
+    if canonical_run_name(saved) != spec.name or spec_mismatch(saved, spec):
+        return None
+    if run_status(old, expected_end=spec.end_time, default_end=scenario_end(spec))[0] != "ok":
+        return None
+    try:
+        old.rename(new)
+    except OSError:
+        return None
+    atomic_write_json(new / "run_spec.json", {**saved, "name": spec.name, "renamed_from": old.name})
+    return old.name
+
+
 def check_resume(spec: RunSpec, runs_dir: str | Path) -> dict | None:
     """The result for a run that need not execute again, or None if it must (re-)run.
 
-    {"status": "skipped", "summary"} for a finished run of exactly this spec; {"status": "failed",
+    {"status": "skipped", "summary"} for a finished run of exactly this spec (plus "renamed_from"
+    when it was adopted from its legacy folder name, see adopt_legacy_run); {"status": "failed",
     "error": "spec mismatch: ..."} when the directory holds a finished run of a different spec
     (its results are kept, never reused). Failed, interrupted or truncated runs return None.
     Also used by the cloud backend, so local and Modal runs resume the same way."""
     out = Path(runs_dir) / spec.name
+    adopted = None
     if not out.is_dir():
-        return None
+        adopted = adopt_legacy_run(spec, runs_dir)
+        if adopted is None:
+            return None
     status, summary, _ = run_status(out, expected_end=spec.end_time, default_end=scenario_end(spec))
     saved = read_json(out / "run_spec.json")
     if status != "ok" or not isinstance(saved, dict):
@@ -384,7 +421,10 @@ def check_resume(spec: RunSpec, runs_dir: str | Path) -> dict | None:
             "run": spec.name, "status": "failed",
             "error": f"spec mismatch: {'; '.join(diff)}. {out} holds a different run; delete it or re-run with --force",
         }
-    return {"run": spec.name, "status": "skipped", "summary": summary}
+    done = {"run": spec.name, "status": "skipped", "summary": summary}
+    if adopted:
+        done["renamed_from"] = adopted
+    return done
 
 
 def run_one(spec_dict: dict, runs_dir: str, force: bool = False) -> dict:
@@ -443,7 +483,8 @@ def _progress_line(i: int, n: int, res: dict) -> str:
         return f"[{i}/{n}] {res['run']}: FAILED {res['error']}"
     s = res.get("summary") or {}
     delay = s.get("mean_delay_s")
-    tag = "skipped (already done)" if res["status"] == "skipped" else f"{res.get('wall_total_s', 0):.1f} s wall"
+    renamed = f", folder renamed from {res['renamed_from']}" if res.get("renamed_from") else ""
+    tag = f"skipped (already done{renamed})" if res["status"] == "skipped" else f"{res.get('wall_total_s', 0):.1f} s wall"
     return f"[{i}/{n}] {res['run']}: delay {delay} s/veh, unfinished {s.get('unfinished_pct')} %, {tag}"
 
 

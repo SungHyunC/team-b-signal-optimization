@@ -188,6 +188,48 @@ def test_resume_refuses_a_directory_that_holds_another_spec(tmp_path, fake_env):
     assert run_one(asdict(SPEC), str(tmp_path), force=True)["status"] == "ok"
 
 
+def _legacy_run(root, spec: RunSpec, *, sim_time: float, **saved):
+    from teamb.experiments.runner import legacy_run_name
+
+    old = root / legacy_run_name(spec)
+    old.mkdir()
+    (old / "run_spec.json").write_text(json.dumps({**asdict(spec), "name": old.name, **saved}))
+    (old / "summary.json").write_text(json.dumps({"mean_delay_s": 5.0, "sim_time_s": sim_time}))
+    return old
+
+
+def test_resume_adopts_a_finished_run_from_its_legacy_folder_name(tmp_path, fake_env):
+    from teamb.experiments.runner import _progress_line
+
+    spec = RunSpec("rush_hour", "fixed_time", 1, 0.125, end_time=600.0)
+    old = _legacy_run(tmp_path, spec, sim_time=600.0)
+    assert old.name == "rush_hour__fixed_time__s1__c12__uniform" and spec.name.endswith("__c12.5__uniform__e600")
+    res = run_one(asdict(spec), str(tmp_path))
+    assert res["status"] == "skipped" and res["renamed_from"] == old.name and fake_env.calls == 0
+    new = tmp_path / spec.name
+    assert not old.exists() and (new / "summary.json").exists()
+    assert json.loads((new / "run_spec.json").read_text())["name"] == spec.name
+    assert "renamed from rush_hour__fixed_time__s1__c12__uniform" in _progress_line(1, 1, res)
+    assert run_one(asdict(spec), str(tmp_path))["status"] == "skipped" and fake_env.calls == 0
+
+
+def test_resume_leaves_other_legacy_folders_alone(tmp_path, fake_env):
+    # a default run (no end_time) is not adopted by an explicit --end of the same length: its
+    # folder is the default spec's own current name
+    spec = RunSpec("rush_hour", "fixed_time", 1, 1.0, end_time=4500.0)
+    old = _legacy_run(tmp_path, spec, sim_time=4500.0, end_time=None)
+    assert run_one(asdict(spec), str(tmp_path))["status"] == "ok" and fake_env.calls == 1 and old.exists()
+    # another coverage in the rounded folder, an unfinished run and a failed run are not adopted
+    for i, (saved, sim, error) in enumerate((({"coverage": 0.12}, 600.0, False), ({}, 300.0, False), ({}, 600.0, True))):
+        root = tmp_path / str(i)
+        root.mkdir()
+        spec = RunSpec("rush_hour", "fixed_time", 1, 0.125, end_time=600.0)
+        old = _legacy_run(root, spec, sim_time=sim, **saved)
+        if error:
+            (old / "error.json").write_text(json.dumps({"error": "boom"}))
+        assert check_resume(spec, root) is None and old.exists() and not (root / spec.name).exists()
+
+
 def test_spec_mismatch_treats_default_end_as_the_scenario_duration():
     spec = RunSpec("rush_hour", "fixed_time", 1, 1.0)
     from teamb.experiments.runner import scenario_end
