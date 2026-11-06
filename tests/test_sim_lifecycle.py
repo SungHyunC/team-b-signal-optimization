@@ -167,7 +167,11 @@ def test_disabling_preemption_clears_the_preempting_junctions(tmp_path):
             env.step()
         assert env.frame()["preempting"]
         env.handle_command({"type": "set_preemption", "enabled": False})
-        assert env.frame()["preempting"] == []  # the twin publishes this frame right away
+        frame = env.frame()  # the twin publishes this frame right away: it must agree with itself
+        assert frame["preempting"] == []
+        assert all(js.preempted_by is None for js in env.supervisor.junctions.values())
+        assert all(s["preempted_by"] is None for s in frame["signals"].values())
+        assert all(s["preempted_by"] is None for s in env.spat()["junctions"].values())
         env.step()
         assert env.frame()["preempting"] == []
         assert all(js.preempted_by is None for js in env.supervisor.junctions.values())

@@ -429,7 +429,12 @@ class SimEnv:
         if kind == "set_preemption":
             self.ev_preemption = bool(params.get("enabled", True))
             if not self.ev_preemption:
+                # The frame published right away (preempting, signals, SPaT) must show no preemption.
+                # apply_safe_action rewrites preempted_by from the requests every step, so this only
+                # clears it early.
                 self._ev_active = set()
+                for js in self.supervisor.junctions.values():
+                    js.preempted_by = None
             return {"ok": True, "ev_preemption": self.ev_preemption}
         if kind in EVENT_KINDS:  # every scenario event type is also a twin command
             return {"ok": True, "result": getattr(self.runtime, kind)(**params)}
