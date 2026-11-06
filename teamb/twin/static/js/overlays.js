@@ -171,6 +171,13 @@ export class ClosureOverlay {
     this.amberOff = new THREE.MeshStandardMaterial({ color: '#4a3a10' });
     this.coneGeo = new THREE.ConeGeometry(0.22, 0.75, 10).translate(0, 0.375, 0);
     this.coneMat = new THREE.MeshStandardMaterial({ color: '#ff6a13', roughness: 0.6 });
+    // Shared by every closure (closures come and go with every seek of the online demo): only
+    // the per-closure water texture, water material and label are created and disposed per item.
+    this.lampGeo = new THREE.SphereGeometry(0.1, 8, 6);
+    this.holeGeo = new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2);
+    this.holeMat = new THREE.MeshStandardMaterial({ color: '#16110d', roughness: 1 });
+    this.rimGeo = new THREE.RingGeometry(1, 1.22, 28).rotateX(-Math.PI / 2);
+    this.rimMat = new THREE.MeshStandardMaterial({ color: '#6b5843', roughness: 1 });
   }
 
   update(frame) {
@@ -218,10 +225,10 @@ export class ClosureOverlay {
       site.position.set(mid[0], 0, -mid[1]);
       site.rotation.y = -f.heading * DEG;
       if (cause === 'sinkhole') {
-        const hole = new THREE.Mesh(new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#16110d', roughness: 1 }));
+        const hole = new THREE.Mesh(this.holeGeo, this.holeMat);
         hole.position.y = 0.09;
         hole.scale.set(f.width * 0.4, 1, f.width * 0.85);
-        const rim = new THREE.Mesh(new THREE.RingGeometry(1, 1.22, 28).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#6b5843', roughness: 1 }));
+        const rim = new THREE.Mesh(this.rimGeo, this.rimMat);
         rim.position.y = 0.095;
         rim.scale.copy(hole.scale);
         site.add(hole, rim);
@@ -247,7 +254,7 @@ export class ClosureOverlay {
         b.rotation.y = -f.heading * DEG;
         b.scale.setScalar(Math.min(1, f.width / n / 2.3));
         b.castShadow = true;
-        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), this.amberOn);
+        const lamp = new THREE.Mesh(this.lampGeo, this.amberOn);
         lamp.position.set(0, 1.42, 0);
         b.add(lamp);
         lights.push(lamp);
@@ -274,6 +281,7 @@ export class ClosureOverlay {
     const item = this.items.get(edge);
     if (!item) return;
     this.scene.remove(item.group);
+    // Everything else in the group (barricades, cones, lamps, sinkhole) uses the shared resources.
     item.label.userData.dispose();
     if (item.tex) item.tex.dispose();
     if (item.water) item.water.material.dispose();
@@ -336,10 +344,14 @@ export class AttackOverlay {
   update(frame) {
     this.positions = frame.phantoms || [];
     if (this.positions.length > this.capacity) {
-      this.scene.remove(this.phones);
+      const old = this.phones;
+      this.scene.remove(old);
+      old.dispose(); // frees its instance buffers on the GPU (the shared geometry stays)
       this.capacity = this.positions.length * 2;
-      this.phones = new THREE.InstancedMesh(this.phones.geometry, this.phoneMat, this.capacity);
+      this.phones = new THREE.InstancedMesh(old.geometry, this.phoneMat, this.capacity);
+      this.phones.count = 0;
       this.phones.frustumCulled = false;
+      this.phones.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.phones.renderOrder = 5;
       this.scene.add(this.phones);
     }

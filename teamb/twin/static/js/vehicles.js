@@ -170,7 +170,10 @@ class KindLayer {
   }
 
   alloc(capacity) {
-    for (const m of this.meshes) this.parent.remove(m);
+    for (const m of this.meshes) {
+      this.parent.remove(m);
+      m.dispose(); // frees the instance buffers on the GPU; the model geometry is shared and stays
+    }
     this.capacity = capacity;
     this.paint = instanced(this.model.paint, paintMat, capacity, { colors: true, shadow: true });
     this.detail = instanced(this.model.detail, detailMat, capacity, { shadow: true });

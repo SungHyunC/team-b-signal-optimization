@@ -12,21 +12,27 @@
 // panels never have to re-render themselves. Static labels in index.html carry data-i18n
 // (text) or data-i18n-title (tooltip) and are translated by translatePage().
 
-const KO = {};
+const KO = Object.create(null); // no inherited keys: t("constructor") stays "constructor"
 const STORE_KEY = 'twin.lang';
 export const LANGS = { en: 'EN', ko: '한국어' };
 export const lang = detect();
 
+/** True only for a language code we ship (not for inherited keys such as 'constructor'). */
+export function isLang(code) {
+  return typeof code === 'string' && Object.prototype.hasOwnProperty.call(LANGS, code);
+}
+
 function detect() {
-  const asked = new URLSearchParams(location.search).get('lang');
-  if (asked && asked in LANGS) return asked;
+  // globalThis.*: the pure modules that import this one also run under `node --test tests/js/*.test.mjs`.
+  const asked = new URLSearchParams(globalThis.location?.search || '').get('lang');
+  if (isLang(asked)) return asked;
   try {
     const saved = localStorage.getItem(STORE_KEY);
-    if (saved && saved in LANGS) return saved;
+    if (isLang(saved)) return saved;
   } catch {
-    // storage blocked (private mode): fall through to the browser language
+    // storage blocked (private mode), or no storage at all: fall through to the browser language
   }
-  return (navigator.language || '').toLowerCase().startsWith('ko') ? 'ko' : 'en';
+  return (globalThis.navigator?.language || '').toLowerCase().startsWith('ko') ? 'ko' : 'en';
 }
 
 /** Register Korean translations: { 'English text': '한국어', 'With {var}': '{var} 포함' }. */
@@ -147,7 +153,8 @@ export function translatePage(root = document) {
 }
 
 /** EN | 한국어 buttons. stateParams() returns URL parameters that bring the viewer back to
- *  the same moment after the reload (scenario, controller, start, speed, ...). */
+ *  the same moment after the reload (scenario, controller, start, speed, ...); a null value
+ *  removes that parameter from the URL. */
 export function mountLanguageSwitch(root, stateParams = () => ({})) {
   for (const [code, label] of Object.entries(LANGS)) {
     const b = document.createElement('button');
@@ -161,14 +168,17 @@ export function mountLanguageSwitch(root, stateParams = () => ({})) {
 }
 
 export function switchLanguage(next, params = {}) {
-  if (next === lang || !(next in LANGS)) return;
+  if (next === lang || !isLang(next)) return;
   try {
     localStorage.setItem(STORE_KEY, next);
   } catch {
     // the URL parameter below still carries the choice
   }
   const url = new URL(location.href);
-  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === '') url.searchParams.delete(k); // e.g. a demand= left over from an earlier link
+    else url.searchParams.set(k, v);
+  }
   url.searchParams.set('lang', next);
   location.replace(url.toString());
 }

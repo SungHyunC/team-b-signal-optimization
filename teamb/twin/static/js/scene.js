@@ -155,6 +155,19 @@ export function createView(host, geometry) {
     }
   }
 
+  // A failing layer or recorder hook must not stop the render loop: log it (once per hook) and go on.
+  const failedHooks = new Set();
+  function runHooks(hooks, now, dt) {
+    for (const fn of hooks) {
+      try {
+        fn(now, dt);
+      } catch (err) {
+        if (!failedHooks.has(fn)) console.error('render hook failed', err);
+        failedHooks.add(fn);
+      }
+    }
+  }
+
   function tick(now) {
     const rawDt = (now - last) / 1000;
     const dt = Math.min(0.1, rawDt);
@@ -166,7 +179,7 @@ export function createView(host, geometry) {
       return;
     }
     // Layers first (vehicles move to this frame's positions), then the camera that may follow them.
-    for (const fn of frameHooks) fn(now, dt);
+    runHooks(frameHooks, now, dt);
     if (flight) {
       const k = clamp((now - flight.t0) / flight.dur, 0, 1);
       const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; // ease in-out
@@ -194,7 +207,7 @@ export function createView(host, geometry) {
     controls.update();
     updateShadowCamera();
     renderer.render(scene, camera);
-    for (const fn of afterHooks) fn(now, dt);
+    runHooks(afterHooks, now, dt);
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
