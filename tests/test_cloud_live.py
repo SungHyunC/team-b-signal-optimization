@@ -171,3 +171,44 @@ def test_binary_websocket_frame_gets_an_error_reply(open_client):
         ws.send_text('{"type": "ping", "id": 7}')  # the connection is still usable
         pong = ws.receive_json()
         assert pong["type"] == "reply" and pong["id"] == 7 and pong["ok"] is True
+
+
+# --- WebSocket Origin check (twin-security-8) ----------------------------------------------
+def _ws_hello(client, **headers):
+    with client.websocket_connect("/ws", headers=headers) as ws:
+        return ws.receive_json()["type"]
+
+
+def test_websocket_rejects_foreign_origin_without_token(open_client):
+    with pytest.raises(WebSocketDisconnect) as exc:
+        _ws_hello(open_client, origin="https://evil.example")
+    assert exc.value.code == 1008
+    with pytest.raises(WebSocketDisconnect):
+        _ws_hello(open_client, origin="null")  # file:// pages and sandboxed iframes
+    assert _ws_hello(open_client, origin="http://testserver") == "hello"  # the twin's own pages
+    assert _ws_hello(open_client) == "hello"  # scripts send no Origin
+
+
+def test_websocket_origin_behind_proxy_and_allow_list(open_client, monkeypatch):
+    # A proxy (Render) may forward the public host separately.
+    assert _ws_hello(open_client, origin="https://twin.example.org",
+                     **{"x-forwarded-host": "twin.example.org"}) == "hello"
+    monkeypatch.setenv("TWIN_ALLOWED_ORIGINS", "https://team-b.github.io, http://localhost:5173")
+    assert _ws_hello(open_client, origin="https://team-b.github.io") == "hello"
+    assert _ws_hello(open_client, origin="http://localhost:5173") == "hello"
+    with pytest.raises(WebSocketDisconnect):
+        _ws_hello(open_client, origin="https://evil.example")
+
+
+def test_origin_allowed_unit(monkeypatch):
+    monkeypatch.delenv("TWIN_ALLOWED_ORIGINS", raising=False)
+    ok = access.origin_allowed
+    assert ok(None, ("anything",))
+    assert ok("http://127.0.0.1:8000", ("127.0.0.1:8000",))
+    assert ok("https://Twin.Example.org", ("twin.example.org:443",))
+    assert not ok("http://127.0.0.1:9999", ("127.0.0.1:8000",))
+    assert not ok("http://localhost:8000", ("127.0.0.1:8000",))
+    assert not ok("https://evil.example", ("127.0.0.1:8000", None))
+    assert not ok("not a url", ("127.0.0.1:8000",))
+    monkeypatch.setenv("TWIN_ALLOWED_ORIGINS", "*")
+    assert ok("https://evil.example", ("127.0.0.1:8000",))

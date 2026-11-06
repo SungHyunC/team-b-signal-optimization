@@ -236,6 +236,10 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
     # --- WebSocket ------------------------------------------------------------------
     @app.websocket("/ws")
     async def websocket(ws: WebSocket):
+        if not access.origin_allowed(ws.headers.get("origin"), (ws.headers.get("host"), ws.headers.get("x-forwarded-host"))):
+            # Another website trying to drive this twin from a visitor's browser (no CORS for WebSockets).
+            await ws.close(code=1008, reason="origin not allowed")
+            return
         if not access.authenticated(ws.cookies.get(access.COOKIE)):
             await ws.close(code=1008, reason="login required")
             return
