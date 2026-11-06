@@ -739,3 +739,15 @@ def test_search_job_runs_in_a_background_process():
     kinds = [m[0] for m in messages]
     assert "progress" in kinds and kinds[-1] == "result", messages[-1:]
     assert 60 <= messages[-1][1]["plan"]["cycle"] <= 150
+
+
+def test_max_pressure_plus_is_max_pressure_with_rho_quarter(tmp_path):
+    """The promoted controller must be exactly the screened configuration, nothing else."""
+    from teamb.sim.env import SimEnv
+
+    runs = {}
+    for name, params in (("plus", ("max_pressure_plus", None)), ("rho", ("max_pressure", {"rho": 0.25}))):
+        env = SimEnv("rush_hour", params[0], seed=3, end_time=1500, controller_params=params[1], output_dir=tmp_path / name)
+        runs[name] = env.run()
+    for key in ("mean_delay_s", "completed", "signal_switches", "unfinished"):
+        assert runs["plus"][key] == runs["rho"][key], key

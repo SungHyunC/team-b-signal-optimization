@@ -34,8 +34,9 @@ Data sources (`source`):
 `defense=True` ignores probe entries flagged `trusted: false` or claiming more cars than
 the lanes can hold, and uses the loop detector there instead (defense.py).
 
-Registered twice: `max_pressure` (detectors) and `max_pressure_probe` (probes, no
-defense) so the security test is one dropdown away.
+Registered three times: `max_pressure` (detectors), `max_pressure_probe` (probes, no
+defense) so the security test is one dropdown away, and `max_pressure_plus` (detectors,
+rho = 0.25, the hysteresis setting that passed the 30-seed regression screen).
 
 Lost-time-aware hysteresis (`rho`, default 0 = off): every switch costs 5 s of yellow +
 all-red, which matters most when queues are long. With rho > 0 the green switches only if
@@ -244,3 +245,22 @@ class MaxPressureProbeController(MaxPressureController):
 
     def __init__(self, source: str = "probe", defense: bool = False, **params):
         super().__init__(source=source, defense=defense, **params)
+
+
+@register
+class MaxPressurePlusController(MaxPressureController):
+    """`max_pressure` with lost-time-aware hysteresis (rho = 0.25), the setting that passed the
+    prespecified regression screen on 30 fresh paired seeds in all 21 conditions (7 scenarios x
+    demand 0.75/1.0/1.25; docs/results/studies/controller-confirmation-2026-11/). Everything else,
+    including every other default, is the original controller's; pass rho to override."""
+
+    name = "max_pressure_plus"
+    label = "Max-pressure+ (lost-time aware)"
+    description = (
+        "Max-pressure that only switches when the other axis' pressure beats the current one by an extra "
+        "25 % (every switch costs 5 s of yellow + all-red). Passed the 30-seed regression screen in all 21 "
+        "scenario/demand conditions; biggest gains in heavy traffic and disasters."
+    )
+
+    def __init__(self, rho: float = 0.25, **params):
+        super().__init__(rho=rho, **params)

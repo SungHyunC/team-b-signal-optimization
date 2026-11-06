@@ -17,7 +17,7 @@ export const MAX_IMPORT_BYTES = 100000;
 export const FALLBACK_SCHEMA = Object.freeze({
   schema_version: SCHEMA_VERSION,
   scenarios: Object.freeze(['rush_hour', 'off_peak', 'special_event', 'emergency', 'road_closure', 'sinkhole_cross', 'earthquake', 'fake_data_attack']),
-  controllers: Object.freeze(['fixed_time', 'coordinated', 'actuated', 'max_pressure', 'max_pressure_probe', 'ai_recommender', 'rl']),
+  controllers: Object.freeze(['fixed_time', 'coordinated', 'actuated', 'max_pressure', 'max_pressure_plus', 'max_pressure_probe', 'ai_recommender', 'rl']),
   limits: Object.freeze({ seed: Object.freeze([0, 2147483647]), demand_scale: Object.freeze([0.1, 3.0]), duration_s: Object.freeze([1200, 10800]) }),
 });
 
