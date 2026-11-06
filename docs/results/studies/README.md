@@ -13,8 +13,12 @@ README with the workflow run, commit, date and exactly what is included.
 | [controller-pilot-15](controller-pilot-15/README.md) | 15 | first spillback-aware variant: held back | [#41959366607](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41959366607) | `912e680` |
 | [calibration-24](calibration-24/README.md) | 24 | picked penalty 1.25, threshold 8 for confirmation | [#41968041524](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968041524) | `1568f72` |
 | [confirmation-360](confirmation-360/README.md) | 360 | spillback-aware variant rejected | [#41968750840](https://github.com/SungHyunC/team-b-signal-optimization/actions/runs/41968750840) | `cd556b8` |
+| [controller-confirmation-2026-11](controller-confirmation-2026-11/README.md) | 3,780 (+600 screen) | `max_pressure_plus` promoted; closure-aware variant and retrained RL not | Modal, `teamb exp run --backend modal` | `aa0c16c` |
+| [rl-retraining-2026-11](rl-retraining-2026-11/README.md) | 13,600 training episodes, 1,260 validation runs | picked the new default RL table | Modal, `teamb train-rl --backend modal` | `ea44faa`, `f05fee4` |
 
-All runs used SUMO 1.28.0 and passed the strict per-run audit (`validation.json`).
+All runs used SUMO 1.28.0 and passed the strict per-run audit (`validation.json`). The November 2026
+studies ran on Modal cloud containers instead of GitHub Actions; their folders name the code
+revision instead of a workflow run.
 
 **Included per experiment:** `report.md` and `report.json` (paired comparison, intervals, all
 metrics), `summary.csv` (one row per run), `validation.json` (strict audit: completeness, code
