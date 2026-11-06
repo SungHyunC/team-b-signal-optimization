@@ -11,6 +11,7 @@ HTTP
     POST /api/control      {"action": "play"|"pause"|"step"|"reset"|"speed"|"jump", "speed": 5, "t": 1200}
     POST /api/command      a SimEnv command, e.g. {"type": "dispatch_ev", "origin": "W0_J1", "destination": "J4_E5"}
     GET  /api/results      experiment reports (results/experiments/*/report.json)
+    GET  /api/sandbox/schema  allowed scenarios, controllers and limits of the Scenario Sandbox JSON
     GET  /api/v1/...       signal data for navigation apps (teamb/api/signal_data.py)
 
 WebSocket /ws
@@ -39,6 +40,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response, HTMLResp
 from fastapi.staticfiles import StaticFiles
 
 from teamb import config
+from teamb import sandbox as sandbox_contract
 from teamb.twin import meta, access
 from teamb.twin.session import (
     CALL_TIMEOUT_S, Client, Hub, SessionBusy, SessionConfig, TwinSession, dumps, parse_control,
@@ -257,6 +259,11 @@ button{background:#215b90;color:white;border:0;cursor:pointer}small{color:#acbdd
     @app.get("/api/results")
     def get_results():
         return meta.list_reports(reports_dir)
+
+    @app.get("/api/sandbox/schema")
+    def get_sandbox_schema():
+        """The Scenario Sandbox contract (teamb/sandbox.py): what the builder may export."""
+        return sandbox_contract.schema()
 
     # --- signal data for navigation apps (owned by teamb/api) ---------------------------
     try:
