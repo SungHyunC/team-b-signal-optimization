@@ -436,10 +436,14 @@ def run_env(name, tmp_path, *, end=240.0, coverage=0.25, params=None, on_step=No
     env.controller.propose_action = checked
     env.start()
     tls.update(env.topology.tls_ids)
-    while env.t < env.end_time:
-        env.step()
-        if on_step:
-            on_step(env)
+    try:
+        while env.t < env.end_time:
+            env.step()
+            if on_step:
+                on_step(env)
+    except BaseException:
+        env.close()  # never leave a SUMO process behind when a step fails
+        raise
     return env, env.close()
 
 
@@ -503,6 +507,15 @@ def test_ai_recommender_sync_search_then_approve(tmp_path):
     env = SimEnv("rush_hour", "ai_recommender", seed=3, coverage=0.5, end_time=200, controller_params=params,
                  output_dir=tmp_path / "ai")
     env.start()
+    try:
+        _sync_search_then_approve(env)
+    finally:
+        summary = env.close()  # never leave SUMO running if an assertion fails
+    assert summary["controller_errors"] == 0 and summary["fallback_steps"] == 0
+    assert any(p.suffix == ".json" for p in (tmp_path / "cache").iterdir())
+
+
+def _sync_search_then_approve(env):
     ctl = env.controller
     while env.t < 125:
         env.step()
@@ -522,9 +535,6 @@ def test_ai_recommender_sync_search_then_approve(tmp_path):
         env.step()
         state = env.supervisor.state(env.t)
         assert ctl.propose_action(state) == {j: ctl.plan.axis_at(j, env.t) for j in state["junctions"]}
-    summary = env.close()
-    assert summary["controller_errors"] == 0 and summary["fallback_steps"] == 0
-    assert any(p.suffix == ".json" for p in (tmp_path / "cache").iterdir())
 
 
 def test_search_job_runs_in_a_background_process():
